@@ -25,15 +25,18 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 
 | # | Bead | Gate | Moves | Done-test | Size | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| 61 | G3 on the Windows ARM64 headless server: the x86 fork client plays a round, a map change and a reconnect with 8 bots | G3 | K6 | the round's console text on both ends | M | next (win-arm64) |
-| 63 | G3 on the Linux amd64 headless server: the x86 fork client plays a round, a map change and a reconnect with 8 bots | G3 | K6 | the round's console text on both ends | M | next (linux) |
-| 64 | G3 on the Linux arm64 headless server: the x86 fork client plays a round, a map change and a reconnect with 8 bots | G3 | K6 | the round's console text on both ends | M | next (linux-arm64) |
-| 65 | G3 on the macOS arm64 headless server: the x86 fork client plays a round, a map change and a reconnect with 8 bots | G3 | K6 | the round's console text on both ends | M | next (mac) |
+| 61 | G3 on the Windows ARM64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | next (win-arm64) |
+| 63 | G3 on the Linux amd64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | next (linux) |
+| 64 | G3 on the Linux arm64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | next (linux-arm64) |
+| 65 | G3 on the macOS arm64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | next (mac) |
 | 60 | G5 Windows ARM64: the native client plays a round, a map change and a reconnect on a fork server (#184) | G5 | gate | console text on both ends; ASan clean | M | next (win-arm64) |
 | 58 | G5 client UBSan-clean: fix the triaged client reports (flattened arrays, misaligned access, LCG overflow) | G5 | gate | a client leg logs 0 UBSan reports | M | started: shared-code sites (linux-arm64) |
-| 36 | G4a evidence: a stock Steam 1.8 client joins the windows-x86 server | G4a | gate | a retail client connects under the `steam18` profile; capture confirms protocol 7, gamename, shortversion (#531 table) | M | running (win-arm64, #182); Linux amd64 passes all 4 retail pairings |
+| 36 | G4a evidence: a stock Steam 1.8 client joins the windows-x86 server | G4a | gate | a retail client connects under the `steam18` profile; capture confirms protocol 7, gamename, shortversion (#531 table) | M | yoga: discovery, connect and 2 map changes pass; left: browser, spawn and fire, reconnect (#182) |
+| 66 | G6: the macOS `.app` bundles its runtime ([ADR-0011](decisions/0011-macos-client-bundles-its-runtime.md)) | G6 | K6 | a clean account without Homebrew plays a LAN round; `otool -L` shows no `/opt/homebrew` | L | not started; Mesa findings on #804 |
 
 Other `burndown` issues are off these gates or wait on the owner.
+
+**Resume here:** the 2026-10-25 wind-down state (open PRs, pushed branches, hosts) is in [#804](https://github.com/jm2/kisakcod/issues/804) (pinned); gate each open PR, then open the listed branches, then rows 61-65, 60, 66.
 
 ## Blocked on owner
 
@@ -43,14 +46,14 @@ Other `burndown` issues are off these gates or wait on the owner.
 | Steamworks legal decision; release packaging, including the 64-bit client release recipe (#263, #290) | WS-8, G6, K6 |
 | CoD4x census ([ADR-0005](decisions/0005-cod4x-compatibility.md)); approve `CHARTER.md` and the ADRs | all |
 | Turn on private vulnerability reporting (#293) | SECURITY.md |
-| Retail-fidelity call on #208 (should Z_Malloc out-of-memory be fatal again); #189's question | the sweep |
+| Retail-fidelity call on #208 (should Z_Malloc out-of-memory be fatal again) | the sweep |
 | Later: GPU runner; Apple Developer ID | G5; G6 |
 
 ## Decided by the owner
 
 - `steam18` auth: option A, the CD-key hash accepted unchecked as the ban key ([NET_STEAM18](design/NET_STEAM18.md) §8), 2026-10-07.
-- Retail data is on every agent host, for local manual runs only; never in CI or the repo. The Steam 1.8 reference build is in [NET_STEAM18](design/NET_STEAM18.md) §5.
-- Coordination and merges: the first responsive host in order antec, antec-win, mbp16-m1max, macmini-m1, yoga-slim7x; subagent limits are AGENTS.md rule 23 (2026-10-15).
+- The Steam 1.8 reference build is in [NET_STEAM18](design/NET_STEAM18.md) §5.
+- Coordination and merges: the first responsive host of antec, antec-win, mbp16-m1max, macmini-m1, yoga-slim7x (2026-10-15).
 - Miles and Bink are dropped on every target, x86 included: OpenAL Soft and FFmpeg everywhere, Windows through vcpkg, 2026-10-22.
 - Version 0.1.0 is the first display version (#688); 64-bit builds load unverified asset families by default, `+set db_unverified64 0` restores the guard (#689); the developer autoexec runs only with `+set com_devAutoexec 1` (#693), 2026-10-22.
 - 0.1.0 ships the D3D9 and dxvk-native clients; native Vulkan (#713) comes after 0.1.0 ([ADR-0010](decisions/0010-interim-renderers-ship-in-0-1-0.md)), 2026-10-25.
@@ -62,6 +65,6 @@ Merge SHAs are in `git log`.
 
 - Gates: G0 passed (row 46, #178). G1 closed (#179). G2 passed (row 54, #180): K4 25/25 (row 37), guard on, 30 min under ASan/UBSan on Linux amd64 and ASan on Win64.
 - G3's first target (row 47): an x86 client played a round, map changes and a reconnect on the Win64 server with 8 bots.
-- G5's interim clients: Win64 D3D9 (row 55) and the Linux and macOS dxvk-native clients (rows 56, 57) play on a fork server and on a Steam 1.8 server (row 59), ASan clean (#184). Audio and cinematics go through OpenAL Soft and FFmpeg (rows 41, 51).
+- G5's interim clients: Win64 D3D9 (row 55) and the Linux and macOS dxvk-native clients (rows 56, 57) play on a fork server and on a Steam 1.8 server (row 59), ASan clean (#184).
 - 1.8 parity (row 53, #692): imports done, no dvar missing, per-frame play matches retail. All 21 maps rotate under ASan, and LAN play passes on five platforms (row 52).
-- Owner's issue sweep, 2026-10-25: 31 PRs merged and 20 issues closed; each other open issue has a dated triage comment.
+- Owner's issue sweep, 2026-10-25: 42 PRs merged and 28 issues closed; each other open issue has a dated triage comment.

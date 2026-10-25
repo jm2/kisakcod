@@ -8,7 +8,7 @@ Owner: operator.
 | --- | --- |
 | Upstream | `SwagSoftware/KisakCOD`, branch `master` (remote `upstream`) |
 | Last synced | `8aadf94c` (the merge-base; upstream has no newer commits) |
-| Fork position | about 1,750 commits ahead, 0 behind (2026-10-18) |
+| Fork position | about 2,100 commits ahead, 0 behind (2026-10-25) |
 
 ## Policy
 

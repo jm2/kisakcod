@@ -40,7 +40,9 @@ a reconnect on the Win64 server with 8 bots. G5's interim clients are done:
 the Win64 D3D9 client and the Linux and macOS dxvk-native clients play on a
 fork server and on a Steam 1.8 server, ASan-clean; Windows ARM64's run is
 left. Vulkan (#713) comes after 0.1.0.
-G4a's wire identity waits on the owner's captures; G4b and G6 haven't started.
+G4a is under way: a stock 1.8 client joins the x86 server and stays through
+map changes (#182), and the wire captures wait on the owner. G3 (#181), G4b
+(#183) and G6 (#185) are open; G4b and G6 haven't started.
 
 ```mermaid
 graph LR
