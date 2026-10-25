@@ -18,6 +18,7 @@ const char *g_printFormat = nullptr;
 const char *g_printArg = nullptr;
 const char kName[] = "decal_100%s";
 const char kExpected[] = "ReloadMaterialTextures: Material '%s' is not currently loaded.\n";
+char g_formatted[] = "(name formatted into the format)";
 }
 
 // Reached only for a loaded material, or by its hash lookup.
@@ -46,8 +47,7 @@ const char *__cdecl Cmd_Argv(int)
 
 char *__cdecl va(const char *, ...)
 {
-    static char formatted[] = "(name formatted into the format)";
-    return formatted;
+    return g_formatted;
 }
 
 void QDECL Com_Printf(int, const char *fmt, ...)
