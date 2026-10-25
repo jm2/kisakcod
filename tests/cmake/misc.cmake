@@ -1189,6 +1189,25 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_tests_properties(configure-gpu-fallback-posix-client PROPERTIES TIMEOUT 20)
 endif()
 
+# AimAssist_ConvertToClipBounds (aim_assist/aim_assist.cpp): the max row of
+# a [2][3] box is bounds[1], not (*bounds)[3..5]. Linux clang, client defines.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-aim-assist-clip-bounds-tests aim_assist_clip_bounds_tests.cpp
+        ${SRC_DIR}/aim_assist/aim_assist.cpp ${SRC_DIR}/universal/com_math.cpp com_math_test_stubs.cpp)
+    target_include_directories(kisakcod-aim-assist-clip-bounds-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-aim-assist-clip-bounds-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-aim-assist-clip-bounds-tests PRIVATE KISAK_MP UNIX)
+    target_compile_options(kisakcod-aim-assist-clip-bounds-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-aim-assist-clip-bounds-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-aim-assist-clip-bounds-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-aim-assist-clip-bounds-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-aim-assist-clip-bounds-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME aim-assist-clip-bounds-contracts COMMAND kisakcod-aim-assist-clip-bounds-tests)
+endif()
+
 # String_Alloc (ui/ui_utils.cpp) at 64-bit: its list node is a stringDef_s,
 # not 8 bytes. Linux and clang only, as above; the client's defines.
 if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
@@ -1323,25 +1342,6 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
         set_target_properties(${t} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
     endforeach()
     set_tests_properties(browser-hc-od-1-8 PROPERTIES TIMEOUT 20)
-endif()
-
-# AimAssist_ConvertToClipBounds (aim_assist/aim_assist.cpp): the max row of
-# a [2][3] box is bounds[1], not (*bounds)[3..5]. Linux clang, client defines.
-if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
-    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    add_executable(kisakcod-aim-assist-clip-bounds-tests aim_assist_clip_bounds_tests.cpp
-        ${SRC_DIR}/aim_assist/aim_assist.cpp ${SRC_DIR}/universal/com_math.cpp com_math_test_stubs.cpp)
-    target_include_directories(kisakcod-aim-assist-clip-bounds-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
-    target_compile_features(kisakcod-aim-assist-clip-bounds-tests PRIVATE cxx_std_20)
-    target_compile_definitions(kisakcod-aim-assist-clip-bounds-tests PRIVATE KISAK_MP UNIX)
-    target_compile_options(kisakcod-aim-assist-clip-bounds-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
-    target_link_options(kisakcod-aim-assist-clip-bounds-tests PRIVATE -Wl,--gc-sections)
-    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
-        target_compile_options(kisakcod-aim-assist-clip-bounds-tests PRIVATE -fsanitize-address-globals-dead-stripping)
-        target_link_options(kisakcod-aim-assist-clip-bounds-tests PRIVATE -Wl,-z,start-stop-gc)
-    endif()
-    set_target_properties(kisakcod-aim-assist-clip-bounds-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-    add_test(NAME aim-assist-clip-bounds-contracts COMMAND kisakcod-aim-assist-clip-bounds-tests)
 endif()
 
 # FS_ReferencedIwdPureChecksums (universal/com_files.cpp): each call sends only
