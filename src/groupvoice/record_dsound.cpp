@@ -35,7 +35,11 @@ void __cdecl DSOUNDRecord_UpdateSample(dsound_sample_t *pRecSample)
     if (g_recording_initialized)
     {
         if (pRecSample->DSCB->GetCurrentPosition(&dwCapturePos, &dwReadPos) < 0)
+        {
+            // dwReadPos is unset: send nothing this frame.
             Com_PrintError(9, "Error: Failed to get cursor positions \n");
+            return;
+        }
         if (dwReadPos >= pRecSample->dwCaptureOffset)
             lLockSize = dwReadPos - pRecSample->dwCaptureOffset;
         else
@@ -142,7 +146,8 @@ dsound_sample_t *__cdecl DSOUNDRecord_NewSample()
 
 int __cdecl DSOUNDRecord_DestroySample(dsound_sample_t *pRecSample)
 {
-    if (!g_recording_initialized)
+    // Samples are NULL when playback init failed.
+    if (!g_recording_initialized || !pRecSample)
         return 0;
     if (pRecSample->DSB)
     {
@@ -237,8 +242,6 @@ HRESULT __cdecl DSOUNDRecord_Start(dsound_sample_t *pRecSample)
 
 HRESULT __cdecl DSOUNDRecord_Stop(dsound_sample_t *pRecSample)
 {
-    HRESULT hr; // [esp+0h] [ebp-4h]
-
     if (!g_recording_initialized)
         return -1;
     if (!pRecSample->DSCB)
@@ -252,12 +255,10 @@ HRESULT __cdecl DSOUNDRecord_Stop(dsound_sample_t *pRecSample)
         g_current_sample = 0;
         g_currently_recording = 0;
     }
-    hr = pRecSample->DSCB->Release();
-    if (hr < 0)
-        Com_PrintError(9, "Error releasing recording buffer\n");
-    else
-        pRecSample->DSCB = 0;
-    return hr;
+    // Release returns the new reference count, not an HRESULT.
+    pRecSample->DSCB->Release();
+    pRecSample->DSCB = 0;
+    return S_OK;
 }
 
 int __cdecl DSOUNDRecord_Init(bool bCallDsoundInit)
@@ -280,14 +281,11 @@ int __cdecl DSOUNDRecord_Init(bool bCallDsoundInit)
 
 void __cdecl DSOUNDRecord_Shutdown()
 {
-    HRESULT hr; // [esp+0h] [ebp-4h]
-
-    hr = 0;
+    // Release returns the new reference count, not an HRESULT, so there is
+    // no failure to report.
     if (g_pDSCaptureInstance)
-        hr = g_pDSCaptureInstance->Release();
+        g_pDSCaptureInstance->Release();
     g_pDSCaptureInstance = 0;
-    if (hr < 0)
-        Com_PrintError(9, "Error releasing direct sound instance!  %s\n", hr);
 }
 
 void __cdecl Record_SetRecordingCallback(int32_t(__cdecl *new_audioCallback)(audioSample_t *))

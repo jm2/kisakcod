@@ -100,6 +100,31 @@ set_tests_properties(voice-codec-gate-contracts PROPERTIES TIMEOUT 120)
 kisakcod_ilp32(kisakcod-voice-gate-tests
     voice-codec-gate-contracts)
 
+# The shipped receive-side wrapper (groupvoice/decode.cpp) over the same codec
+# build: one narrowband frame decodes to one frame of PCM and nothing more.
+add_executable(kisakcod-voice-decode-sample-tests
+    voice_decode_sample_tests.cpp
+    ${SRC_DIR}/groupvoice/decode.cpp
+    ${SPEEX_CODEC_SOURCES}
+)
+target_include_directories(kisakcod-voice-decode-sample-tests PRIVATE
+    "${SPEEX_CONFIG_TYPES_DIR}")
+target_include_directories(kisakcod-voice-decode-sample-tests SYSTEM PRIVATE
+    ${SRC_DIR} ${DEPS_DIR})
+target_compile_features(kisakcod-voice-decode-sample-tests PRIVATE cxx_std_20)
+target_compile_definitions(kisakcod-voice-decode-sample-tests PRIVATE KISAK_MP)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(kisakcod-voice-decode-sample-tests PRIVATE m)
+endif()
+set_target_properties(kisakcod-voice-decode-sample-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME voice-decode-sample-contracts
+    COMMAND kisakcod-voice-decode-sample-tests
+)
+kisakcod_ilp32(kisakcod-voice-decode-sample-tests
+    voice-decode-sample-contracts)
+
 # The OpenAL Soft Miles shim (sound/snd_openal.cpp) on OpenAL Soft's null
 # backend, which needs no audio device, with its libavcodec ADPCM decoder. It
 # builds where pkg-config finds openal and libavcodec; KISAK_TEST_OPENAL makes

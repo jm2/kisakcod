@@ -220,7 +220,11 @@ void __cdecl DSound_SampleFrame(dsound_sample_t *sample)
     {
         hr = sample->DSB->GetCurrentPosition(&dwPlayPos, &dwWritePos);
         if (hr < 0)
+        {
+            // dwPlayPos is unset: skip this frame rather than act on it.
             Com_Printf(9, "Error: Failed to get cursor positions \n");
+            return;
+        }
         dwWritePos = sample->currentOffset;
         if (sample->stopPosition < 0)
         {
@@ -301,7 +305,9 @@ dsound_sample_t *__cdecl DSound_NewSample()
         return sample;
 
     Com_Printf(9, "Error: Failed to create DirectSound play buffer\n");
-    sample->DSB->Release();
+    // A failed CreateSoundBuffer returns no interface.
+    if (sample->DSB)
+        sample->DSB->Release();
     sample->DSB = 0;
 
     return 0;
@@ -318,7 +324,7 @@ char __cdecl DSound_StopSample(dsound_sample_t *sample)
     sample->stopPosition = -1;
     sample->channel = -1;
     sample->playing = 0;
-    if (sample->DSB->SetCurrentPosition(0) < 0)
+    if (sample->DSB && sample->DSB->SetCurrentPosition(0) < 0)
         Com_Printf(9, "Error: Failed to set current position to %i when playing sound buffer!\n", sample->lastOffset);
     return 1;
 }

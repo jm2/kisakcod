@@ -72,11 +72,19 @@ int32_t __cdecl Decode_Sample(char *buffer, int32_t maxLength, int16_t *out, int
 
     speex_bits_read_from(&decodeBits, buffer, maxLength);
     if (speex_decode(g_decoder, &decodeBits, v6))
-        v5 = 0;
-    else
-        v5 = 2 * frame_size;
+        return 0;
+    // speex_decode writes one decoder frame: convert exactly that many
+    // samples, clamped to int16, and return their byte count. The caller's
+    // frame_size is the encoder's (the same for a matching bandwidth).
+    v5 = g_decode_frame_size;
+    if (v5 > 4096)
+        v5 = 4096;
     for (i = 0; i < v5; ++i)
-        out[i] = v6[i];
-    return v5;
+    {
+        const float s = v6[i];
+        out[i] = s >= 32767.0f ? 32767 : s <= -32768.0f ? -32768 : static_cast<int16_t>(s);
+    }
+    (void)frame_size;
+    return 2 * v5;
 }
 
