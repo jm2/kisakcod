@@ -1049,8 +1049,8 @@ void __cdecl R_LoadLightmaps(GfxBspLoad *load)
                 "%s\n\t(s_world.lightmapCount) = %i",
                 "(s_world.lightmapCount <= ((93 * 1024 * 1024) / ((1024 * 1024 * 1 * 1) + (512 * 512 * 4 * 2))))",
                 s_world.lightmapCount);
-        s_world.lightmapPrimaryTextures = (GfxTexture*)Hunk_Alloc(4 * s_world.lightmapCount, "R_LoadLightmaps", 20);
-        s_world.lightmapSecondaryTextures = (GfxTexture*)Hunk_Alloc(4 * s_world.lightmapCount, "R_LoadLightmaps", 20);
+        s_world.lightmapPrimaryTextures = (GfxTexture*)Hunk_Alloc(sizeof(GfxTexture) * s_world.lightmapCount, "R_LoadLightmaps", 20);
+        s_world.lightmapSecondaryTextures = (GfxTexture*)Hunk_Alloc(sizeof(GfxTexture) * s_world.lightmapCount, "R_LoadLightmaps", 20);
     }
     else
     {
@@ -4172,7 +4172,7 @@ uint32_t __cdecl R_OptimalSModelResourceStats(GfxWorld *world, GfxSModelSurfStat
     iassert( world );
     if (!world->dpvs.smodelCount)
         return 0;
-    drawInstArray = (const GfxStaticModelDrawInst **)Hunk_AllocateTempMemory(4 * world->dpvs.smodelCount, "R_AssignSModelCacheResources");
+    drawInstArray = (const GfxStaticModelDrawInst **)Hunk_AllocateTempMemory(sizeof(*drawInstArray) * world->dpvs.smodelCount, "R_AssignSModelCacheResources");
     for (smodelIter = 0; smodelIter != world->dpvs.smodelCount; ++smodelIter)
         drawInstArray[smodelIter] = &world->dpvs.smodelDrawInsts[smodelIter];
     //std::_Sort<int *, int, bool(__cdecl *)(int, int)>(
