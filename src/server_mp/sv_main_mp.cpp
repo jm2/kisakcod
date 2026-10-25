@@ -14,6 +14,7 @@
 #include <universal/com_files.h>
 #include <universal/info_string.h>
 #include <qcommon/threads.h>
+#include <qcommon/sys_local.h>
 #include <script/scr_variable.h>
 #ifndef KISAK_DEDI_HEADLESS
 #include <client/client.h>
@@ -634,6 +635,77 @@ void __cdecl SVC_Info(netadr_t from)
     NET_OutOfBandPrint(NS_SERVER, from, response);
 }
 
+// KISAK: getstatus and getinfo answer a few bytes with a few kilobytes, so a
+// spoofed source turns an unlimited server into a UDP amplifier (#186). Leaky
+// buckets as in ioquake3's SVC_RateLimit: per source address (port ignored),
+// then for the server as a whole. LAN and loopback queries are never limited.
+namespace
+{
+struct QueryBucket
+{
+    netadrtype_t type;
+    uint8_t ip[4];
+    int lastTime;
+    int burst;
+};
+
+constexpr int kQueryBuckets = 1024;
+constexpr int kAddressBurst = 10;
+constexpr int kAddressPeriodMs = 1000;
+constexpr int kGlobalBurst = 20;
+constexpr int kGlobalPeriodMs = 50;
+
+QueryBucket s_queryBuckets[kQueryBuckets];
+QueryBucket s_queryGlobalBucket;
+
+// Leaks one token per period; true once the burst is used up.
+bool SV_QueryBucketLimited(QueryBucket &bucket, int burst, int period, int now)
+{
+    const int interval = now - bucket.lastTime;
+    const int expired = interval / period;
+    if (interval < 0 || expired > burst)
+    {
+        bucket.burst = 0;
+        bucket.lastTime = now;
+    }
+    else
+    {
+        bucket.burst = bucket.burst > expired ? bucket.burst - expired : 0;
+        bucket.lastTime = now - interval % period;
+    }
+    if (bucket.burst < burst)
+    {
+        ++bucket.burst;
+        return false;
+    }
+    return true;
+}
+} // namespace
+
+bool __cdecl SV_QueryRateLimited(netadr_t from, int now)
+{
+    if (NET_IsLocalAddress(from) || Sys_IsLANAddress(from))
+        return false;
+
+    uint32_t hash = from.type;
+    for (const uint8_t byte : from.ip)
+        hash = hash * 31u + byte;
+    QueryBucket &bucket = s_queryBuckets[hash % kQueryBuckets];
+    const bool sameSource = bucket.type == from.type && !memcmp(bucket.ip, from.ip, sizeof(bucket.ip));
+    // A slot whose source has gone quiet passes to the new one; two busy
+    // sources that hash alike share it.
+    if (!sameSource && (!bucket.burst || now - bucket.lastTime > kAddressBurst * kAddressPeriodMs))
+    {
+        bucket = {};
+        bucket.type = from.type;
+        memcpy(bucket.ip, from.ip, sizeof(bucket.ip));
+        bucket.lastTime = now;
+    }
+    if (SV_QueryBucketLimited(bucket, kAddressBurst, kAddressPeriodMs, now))
+        return true;
+    return SV_QueryBucketLimited(s_queryGlobalBucket, kGlobalBurst, kGlobalPeriodMs, now);
+}
+
 void __cdecl SV_ConnectionlessPacket(netadr_t from, msg_t *msg)
 {
     char *fromAddr; // [esp+0h] [ebp-1Ch]
@@ -693,7 +765,8 @@ void __cdecl SV_ConnectionlessPacket(netadr_t from, msg_t *msg)
     if (!I_stricmp(c, "getstatus"))
     {
         SV_UpdateLastTimeMasterServerCommunicated(from);
-        SVC_Status(from);
+        if (!SV_QueryRateLimited(from, static_cast<int>(Sys_Milliseconds())))
+            SVC_Status(from);
     }
     else if (!I_stricmp(c, "v"))
     {
@@ -701,7 +774,8 @@ void __cdecl SV_ConnectionlessPacket(netadr_t from, msg_t *msg)
     }
     else if (!I_stricmp(c, "getinfo"))
     {
-        SVC_Info(from);
+        if (!SV_QueryRateLimited(from, static_cast<int>(Sys_Milliseconds())))
+            SVC_Info(from);
         SV_UpdateLastTimeMasterServerCommunicated(from);
     }
     else if (!I_stricmp(c, "getchallenge"))

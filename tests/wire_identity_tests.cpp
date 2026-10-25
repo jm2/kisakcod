@@ -166,6 +166,25 @@ WEAK bool __cdecl NET_OutOfBandPrint(netsrc_t, netadr_t, const char *data)
     g_reply = data ? data : "";
     return true;
 }
+// The connectionless path: one out-of-band line per packet, at a test clock.
+int g_now = 0;
+std::string g_packetLine;
+WEAK std::uint32_t KISAK_CDECL Sys_Milliseconds() { return static_cast<std::uint32_t>(g_now); }
+WEAK void __cdecl MSG_BeginReading(msg_t *) {}
+WEAK void __cdecl SV_Netchan_AddOOBProfilePacket(int) {}
+WEAK char *__cdecl MSG_ReadStringLine(msg_t *)
+{
+    static char line[1024];
+    std::snprintf(line, sizeof(line), "%s", g_packetLine.c_str());
+    return line;
+}
+WEAK void __cdecl SV_UpdateLastTimeMasterServerCommunicated(netadr_t) {}
+WEAK void __cdecl SV_VoicePacket(netadr_t, msg_t *) { std::abort(); }
+WEAK void __cdecl SV_AuthorizeIpPacket(netadr_t) { std::abort(); }
+WEAK void __cdecl SVC_RemoteCommand(netadr_t) { std::abort(); }
+WEAK int __cdecl MSG_ReadShort(msg_t *) { std::abort(); }
+WEAK int __cdecl MSG_ReadByte(msg_t *) { std::abort(); }
+WEAK void __cdecl MSG_ReadData(msg_t *, uint8_t *, int) { std::abort(); }
 WEAK const char *__cdecl SV_Cmd_Argv(int arg) { return arg >= 0 && arg < g_argc && g_argv[arg] ? g_argv[arg] : ""; }
 WEAK int __cdecl SV_Cmd_Argc() { return g_argc; }
 WEAK void __cdecl SV_AddOperatorCommands() {}
@@ -444,6 +463,46 @@ int main(int argc, char **argv)
         Dvar_SetIntByName("sv_floodprotect", 4);
         sv.state = SS_DEAD;
         std::memset(&cl, 0, sizeof(cl));
+    }
+
+    // getinfo/getstatus are rate-limited per source and overall (#186): a
+    // burst of 10 from one address, then one per second; loopback is exempt.
+    {
+        auto queries = [](netadr_t from, const char *line, int count) {
+            int replies = 0;
+            for (int i = 0; i < count; ++i)
+            {
+                g_packetLine = std::string(line) + " q";
+                Command(line, "q"); // the tokenizer stub only parses connect
+                g_reply.clear();
+                msg_t msg{};
+                SV_ConnectionlessPacket(from, &msg);
+                replies += !g_reply.empty();
+            }
+            return replies;
+        };
+        g_now = 100000;
+        CHECK(queries(Remote(), "getinfo", 12) == 10);
+        CHECK(queries(Remote(), "getstatus", 1) == 0); // the same bucket
+        g_now += 1000;
+        CHECK(queries(Remote(), "getinfo", 2) == 1);
+        netadr_t other = Remote();
+        other.ip[3] = 10;
+        CHECK(queries(other, "getinfo", 3) == 3); // another source has its own
+        netadr_t loopback{};
+        loopback.type = NA_LOOPBACK;
+        CHECK(queries(loopback, "getinfo", 40) == 40);
+
+        // Many sources at once hit the server-wide cap of 20 per burst.
+        g_now += 60000;
+        int replies = 0;
+        for (int i = 0; i < 30; ++i)
+        {
+            netadr_t spoofed = Remote();
+            spoofed.ip[2] = static_cast<uint8_t>(i);
+            replies += queries(spoofed, "getinfo", 1);
+        }
+        CHECK(replies == 20);
     }
 
     if (g_failures == 0)
