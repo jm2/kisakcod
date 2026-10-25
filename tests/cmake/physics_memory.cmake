@@ -274,4 +274,6 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
         ${SRC_DIR}/qcommon/cm_showcollision.cpp)
     kisakcod_phys_contact_test(physics-post-step-jitter-reset 2
         ${SRC_DIR}/physics/phys_ode.cpp)
+    kisakcod_phys_contact_test(physics-near-callback-context 3
+        ${SRC_DIR}/physics/phys_ode.cpp)
 endif()

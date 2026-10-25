@@ -1,5 +1,6 @@
 // phys_brush_contact_tests.cpp: physics bodies touching world geometry at
-// 64-bit (NOW row 22, #242 items 1 and 2).
+// 64-bit (NOW row 22, #242 items 1 and 2), and the frame context the
+// collision callbacks read (#243 item 1).
 //
 // The brush callbacks decoded their contexts (InputOutput, BrushBrushData,
 // BrushTrimeshData) as ILP32 words and byte offsets, and the post-step
@@ -12,6 +13,8 @@
 //      a box, a brush and a brushmodel resting 0.5 units deep in a world
 //      brush, and a brushmodel resting on a terrain triangle.
 //   2: phys_ode: dxPostProcessIslands resets each world's jitter regions.
+//   3: phys_ode: Phys_RunFrame hands the inter-body near callback a
+//      FrameInfo, as it does the world collision (#243 item 1).
 // The engine boundary is weak: the engine TUs replace the stubs they define.
 
 #include <cmath>
@@ -282,6 +285,85 @@ int main()
     }
     for (int w = 0; w < PHYS_WORLD_COUNT; ++w)
         CHECK(std::memcmp(physGlob.worldData[w].jitterRegions, g_regions[w], sizeof(g_regions[w])) == 0);
+    if (g_failures)
+        std::fprintf(stderr, "%d check(s) failed\n", g_failures);
+    return g_failures ? 1 : 0;
+}
+
+#elif PHYS_TEST_SUBJECT == 3
+
+extern bool physInited;
+extern const dvar_t *phys_dumpcontacts, *phys_mcv, *phys_mcv_ragdoll, *phys_csl, *phys_qsi;
+void __cdecl ODE_CollideSimpleSpaceWithGeomNoAABBTest(dxSpace *space, dxGeom *geom, void *data);
+
+// Phys_RunFrame's ODE calls. The space collisions only record the context
+// they were handed; the step does nothing.
+WEAK void Dvar_SetBool(dvar_s *, bool) {}
+WEAK void dWorldSetCFM(dWorldID, dReal) {}
+WEAK void dWorldSetERP(dWorldID, dReal) {}
+WEAK void dWorldSetContactMaxCorrectingVel(dWorldID, dReal) {}
+WEAK void dWorldSetContactSurfaceLayer(dWorldID, dReal) {}
+WEAK void dWorldSetQuickStepNumIterations(dWorldID, int) {}
+WEAK void dWorldSetAutoDisableLinearThreshold(dWorldID, dReal) {}
+WEAK void dWorldSetAutoDisableAngularThreshold(dWorldID, dReal) {}
+WEAK void dWorldSetAutoDisableTime(dWorldID, dReal) {}
+WEAK void dWorldSetGravity(dWorldID, dReal, dReal, dReal) {}
+WEAK void dWorldQuickStep(dWorldID, dReal) {}
+WEAK void dGeomEnable(dGeomID) {}
+WEAK void dGeomDisable(dGeomID) {}
+// Phys_NearCallback's calls: the recording collisions never run it.
+[[noreturn]] static void NoPairs() { std::exit(4); }
+WEAK void *dBodyGetData(dBodyID) { NoPairs(); }
+WEAK dBodyID dGeomGetBody(dGeomID) { NoPairs(); }
+WEAK int dAreConnectedExcluding(dBodyID, dBodyID, int) { NoPairs(); }
+WEAK int dCollide(dGeomID, dGeomID, int, dContactGeom *, int) { NoPairs(); }
+WEAK void Phys_ReduceContacts(dxBody *, const ContactList *, ContactList *) { NoPairs(); }
+WEAK void Phys_CreateJointForEachContact(ContactList *, dxBody *, dxBody *, const dSurfaceParameters *, PhysWorld)
+{
+    NoPairs();
+}
+
+namespace
+{
+// The two words a FrameInfo holds, as each collision saw them.
+int g_pairContext[2] = {-1, -1};
+int g_worldContext[2] = {-1, -1};
+int g_pairCalls = 0;
+int g_worldCalls = 0;
+dxWorld g_world;
+dvar_t g_on;
+dvar_t g_off;
+}  // namespace
+
+WEAK void dSpaceCollide(dSpaceID, void *data, dNearCallback *)
+{
+    ++g_pairCalls;
+    std::memcpy(g_pairContext, data, sizeof(g_pairContext));
+}
+WEAK void ODE_CollideSimpleSpaceWithGeomNoAABBTest(dxSpace *, dxGeom *, void *data)
+{
+    ++g_worldCalls;
+    std::memcpy(g_worldContext, data, sizeof(g_worldContext));
+}
+
+// With phys_interBodyCollision on, the body-vs-body collision reads the same
+// {localClientNum, worldIndex} as the body-vs-world one.
+int main()
+{
+    g_on.current.enabled = true;
+    physInited = true;
+    for (const dvar_t **dvar : {&phys_dumpcontacts, &phys_cfm, &phys_erp, &phys_mcv, &phys_mcv_ragdoll, &phys_csl,
+                                &phys_qsi, &phys_autoDisableLinear, &phys_autoDisableAngular, &phys_autoDisableTime,
+                                &phys_visibleTris, &phys_gravity})
+        *dvar = &g_off;
+    phys_interBodyCollision = &g_on;
+    physGlob.world[PHYS_WORLD_FX] = &g_world;
+    physGlob.worldGeom = reinterpret_cast<dxGeom *>(&g_world);
+    Phys_RunFrame(0, PHYS_WORLD_FX, 0.05f);
+    CHECK(g_pairCalls == 1);
+    CHECK(g_worldCalls == 1);
+    CHECK(g_pairContext[0] == 0 && g_pairContext[1] == PHYS_WORLD_FX);
+    CHECK(g_worldContext[0] == 0 && g_worldContext[1] == PHYS_WORLD_FX);
     if (g_failures)
         std::fprintf(stderr, "%d check(s) failed\n", g_failures);
     return g_failures ? 1 : 0;

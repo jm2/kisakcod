@@ -5979,12 +5979,15 @@ void __cdecl Phys_RunFrame(int localClientNum, PhysWorld worldIndex, float secon
     dWorldSetGravity(world, down[0], down[1], down[2]);
     {
         PROF_SCOPED("Phys_Collide");
-        if (phys_interBodyCollision->current.enabled)
-            dSpaceCollide(physGlob.space[worldIndex], &worldIndex, Phys_NearCallback);
-        if (physGlob.worldData[worldIndex].collisionCallback)
-            physGlob.worldData[worldIndex].collisionCallback();
+        // Phys_NearCallback reads its context as a FrameInfo, as the world
+        // collision does; the decompile passed &worldIndex, whose second
+        // word is past the parameter (#243).
         frameInfo.localClientNum = localClientNum;
         frameInfo.worldIndex = worldIndex;
+        if (phys_interBodyCollision->current.enabled)
+            dSpaceCollide(physGlob.space[worldIndex], &frameInfo, Phys_NearCallback);
+        if (physGlob.worldData[worldIndex].collisionCallback)
+            physGlob.worldData[worldIndex].collisionCallback();
         ODE_CollideSimpleSpaceWithGeomNoAABBTest(physGlob.space[worldIndex], physGlob.worldGeom, &frameInfo);
     }
     {
