@@ -276,4 +276,15 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
         ${SRC_DIR}/physics/phys_ode.cpp)
     kisakcod_phys_contact_test(physics-near-callback-context 3
         ${SRC_DIR}/physics/phys_ode.cpp)
+    # ode.cpp's globals hold ODE spaces and geoms, so their TUs link too.
+    kisakcod_phys_contact_test(physics-ode-full-contact-group 4
+        ${SRC_DIR}/physics/ode/ode.cpp
+        ${SRC_DIR}/physics/ode/collision_space.cpp
+        ${SRC_DIR}/physics/ode/collision_kernel.cpp
+        ${SRC_DIR}/physics/ode/collision_std.cpp
+        ${SRC_DIR}/physics/ode/collision_transform.cpp
+        ${SRC_DIR}/physics/ode/collision_util.cpp
+        ${SRC_DIR}/physics/ode/mass.cpp
+        ${SRC_DIR}/physics/ode/matrix.cpp
+        ${SRC_DIR}/physics/ode/odemath.cpp)
 endif()

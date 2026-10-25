@@ -1730,7 +1730,8 @@ void dJointGroupEmpty(dJointGroupID group)
     int i;
 
     dAASSERT(group);
-    dAASSERT(group->num < ODE_WORLD_MAX_JOINT_COUNT);
+    // dJointCreateContact fills a group to ODE_WORLD_MAX_JOINT_COUNT (#238).
+    dAASSERT(group->num <= ODE_WORLD_MAX_JOINT_COUNT);
 
     for (i = group->num - 1; i >= 0; --i)
     {
