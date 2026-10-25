@@ -83,18 +83,18 @@ cspField_t s_vehicleFields[33] =
   { "suspensionTravel", 140, 6 },
   { "maxBodyPitch", 124, 6 },
   { "maxBodyRoll", 128, 6 },
-  { "turretWeapon", 144, 0 },
+  { "turretWeapon", 144, 2 },
   { "turretHorizSpanLeft", 208, 6 },
   { "turretHorizSpanRight", 212, 6 },
   { "turretVertSpanUp", 216, 6 },
   { "turretVertSpanDown", 220, 6 },
   { "turretRotRate", 224, 6 },
-  { "lowIdleSnd", 228, 0 },
-  { "highIdleSnd", 292, 0 },
-  { "lowEngineSnd", 356, 0 },
-  { "highEngineSnd", 420, 0 },
-  { "turretSpinSnd", 484, 0 },
-  { "turretStopSnd", 548, 0 },
+  { "lowIdleSnd", 228, 2 },
+  { "highIdleSnd", 292, 2 },
+  { "lowEngineSnd", 356, 2 },
+  { "highEngineSnd", 420, 2 },
+  { "turretSpinSnd", 484, 2 },
+  { "turretStopSnd", 548, 2 },
   { "engineSndSpeed", 620, 6 }
 }; // idb
 
@@ -414,15 +414,24 @@ void __cdecl G_VehUnlinkPlayer(gentity_s *ent, gentity_s *player)
 
     client = player->client;
 
+    // A player script-linked to the vehicle, not seated in it, has no seat to
+    // leave; G_EntUnlink removes the link itself.
+    if ((client->ps.pm_flags & PMF_VEHICLE_ATTACHED) == 0)
+        return;
+
     iassert(player->r.ownerNum.isDefined());
     iassert(ent == player->r.ownerNum.ent());
 
-    if ((client->ps.pm_flags & PMF_VEHICLE_ATTACHED) == 0)
-        Com_Error(ERR_DROP, "G_VehUnlinkPlayer: Player is not using a vehicle");
-
     veh = ent->scr_vehicle;
-
-    iassert(veh);
+    if (!veh)
+    {
+        // The vehicle was freed under its rider: release the player only.
+        player->r.ownerNum.setEnt(NULL);
+        client->ps.pm_flags &= ~PMF_VEHICLE_ATTACHED;
+        client->ps.weapFlags &= ~0x80u;
+        client->ps.viewlocked_entNum = ENTITYNUM_NONE;
+        return;
+    }
 
     veh->flags &= ~1u;
     angles[0] = client->ps.viewangles[0];
@@ -546,7 +555,8 @@ gentity_s *__cdecl GetCollisionMap(const char *modelname)
     for (i = 0; i < level.num_entities; ++i)
     {
         ent = &g_entities[i];
-        if (ent->r.inuse && ent->classname == scr_const.script_vehicle_collmap)
+        // A collision map with no targetname names no model.
+        if (ent->r.inuse && ent->classname == scr_const.script_vehicle_collmap && ent->targetname)
         {
             targetname = SL_ConvertToString(ent->targetname);
             if (Com_IsLegacyXModelName(targetname))
@@ -2348,10 +2358,9 @@ void __cdecl VEH_GroundPlant(gentity_s *ent, int32_t gravity, float frameTime)
     info = &s_vehicleInfos[veh->infoIdx];
     iassert((info->type == VEH_WHEELS_4) || (info->type == VEH_TANK));
 
-    if (info->type)
-        numWheels = 6;
-    else
-        numWheels = 4;
+    // The MP wheel arrays (wheelPos, vehicle_physic_t's wheel state,
+    // boneIndex.wheel, s_wheelTags) hold 4 wheels; a 6-wheel loop ran past them.
+    numWheels = 4;
 
     contents = 529;
 

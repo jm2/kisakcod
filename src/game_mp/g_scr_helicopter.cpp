@@ -487,8 +487,10 @@ void __cdecl Helicopter_Controller(const gentity_s *pSelf, int32_t *partBits)
 
     if (!pSelf)
         MyAssertHandler(".\\game_mp\\g_scr_helicopter.cpp", 346, 0, "%s", "pSelf");
+    // freehelicopter clears scr_vehicle but leaves the entity, its DObj and
+    // this handler; a trace can still pose it.
     if (!pSelf->scr_vehicle)
-        MyAssertHandler(".\\game_mp\\g_scr_helicopter.cpp", 347, 0, "%s", "pSelf->scr_vehicle");
+        return;
     veh = pSelf->scr_vehicle;
     obj = Com_GetServerDObj(pSelf->s.number);
     if (!obj)
@@ -514,6 +516,8 @@ void __cdecl Helicopter_Controller(const gentity_s *pSelf, int32_t *partBits)
 
 void __cdecl Helicopter_Think(gentity_s *ent)
 {
+    if (!ent->scr_vehicle) // freed by freehelicopter
+        return;
     Scr_Vehicle_Think(ent);
     ent->nextthink = level.time + 50;
 }
