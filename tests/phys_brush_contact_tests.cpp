@@ -1,6 +1,7 @@
 // phys_brush_contact_tests.cpp: physics bodies touching world geometry at
-// 64-bit (NOW row 22, #242 items 1 and 2), and the frame context the
-// collision callbacks read (#243 item 1).
+// 64-bit (NOW row 22, #242 items 1 and 2), the frame context the
+// collision callbacks read (#243 item 1) and ODE's full contact group
+// (#238 item 1).
 //
 // The brush callbacks decoded their contexts (InputOutput, BrushBrushData,
 // BrushTrimeshData) as ILP32 words and byte offsets, and the post-step
@@ -17,6 +18,8 @@
 //   2: phys_ode: dxPostProcessIslands resets each world's jitter regions.
 //   3: phys_ode: Phys_RunFrame hands the inter-body near callback a
 //      FrameInfo, as it does the world collision (#243 item 1).
+//   4: ODE's ode.cpp: a contact group filled to capacity empties without
+//      an ODE assert (#238 item 1).
 // The engine boundary is weak: the engine TUs replace the stubs they define.
 
 #include <cmath>
@@ -408,6 +411,53 @@ int main()
     CHECK(g_worldCalls == 1);
     CHECK(g_pairContext[0] == 0 && g_pairContext[1] == PHYS_WORLD_FX);
     CHECK(g_worldContext[0] == 0 && g_worldContext[1] == PHYS_WORLD_FX);
+    if (g_failures)
+        std::fprintf(stderr, "%d check(s) failed\n", g_failures);
+    return g_failures ? 1 : 0;
+}
+
+
+#elif PHYS_TEST_SUBJECT == 4
+
+#include <physics/ode/joint.h>
+
+namespace
+{
+int g_odeAsserts = 0;
+dxWorld g_world;
+dxJointGroup g_group;
+dSurfaceParameters g_surface;
+dContactGeom g_contact;
+}  // namespace
+
+// ODE's asserts report through dDebug, which ends the process; count them.
+WEAK extern "C" void dDebug(int, const char *msg, ...)
+{
+    std::fprintf(stderr, "ODE assert: %s\n", msg ? msg : "?");
+    ++g_odeAsserts;
+}
+// A contact joint's own setup is joint.cpp's; this check only counts joints.
+WEAK void jointInit(dxJoint *) {}
+// ODE's global spaces and geoms are built at startup; nothing here frees
+// pooled memory or takes a lock.
+WEAK bool Pool_Free(poolstorage_t, pooldata_t *, void *) noexcept { std::exit(4); }
+WEAK void Sys_EnterCriticalSection(int) {}
+WEAK void Sys_LeaveCriticalSection(int) {}
+
+// dJointCreateContact fills a group to ODE_WORLD_MAX_JOINT_COUNT and then
+// refuses; emptying the full group asserts nothing and detaches every joint.
+int main()
+{
+    int created = 0;
+    while (dJointCreateContact(&g_world, &g_group, &g_surface, &g_contact))
+        ++created;
+    CHECK(created == ODE_WORLD_MAX_JOINT_COUNT);
+    CHECK(g_group.num == ODE_WORLD_MAX_JOINT_COUNT);
+    dJointGroupEmpty(&g_group);
+    CHECK(g_odeAsserts == 0);
+    CHECK(g_group.num == 0);
+    CHECK(g_world.nj == 0);
+    CHECK(g_world.firstjoint == nullptr);
     if (g_failures)
         std::fprintf(stderr, "%d check(s) failed\n", g_failures);
     return g_failures ? 1 : 0;
