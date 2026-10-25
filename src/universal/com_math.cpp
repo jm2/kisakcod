@@ -1376,7 +1376,7 @@ void __cdecl MatrixInverse44(const mat4x4 &mat, mat4x4& dst)
 
     det = 1.0 / det;
     for (i = 0; i < 16; ++i)
-        (dst)[0][i] = (dst)[0][i] * det;
+        (dst)[i >> 2][i & 3] = (dst)[i >> 2][i & 3] * det; // KISAK: rows, not [0][0..15]
 }
 
 void __cdecl MatrixTransformVector44(const vec4r vec, const mat4x4 &mat, vec4r out)
@@ -3181,11 +3181,11 @@ void __cdecl InfinitePerspectiveMatrix(float (*mtx)[4], float tanHalfFovX, float
 
     memset((uint8_t *)mtx, 0, sizeof(mat4x4));
 
-    (*mtx)[0] = MAX_11BIT_FLT / tanHalfFovX;
-    (*mtx)[5] = MAX_11BIT_FLT / tanHalfFovY;
-    (*mtx)[10] = MAX_11BIT_FLT;
-    (*mtx)[11] = 1.0f;
-    (*mtx)[14] = -zNear * MAX_11BIT_FLT;
+    mtx[0][0] = MAX_11BIT_FLT / tanHalfFovX;
+    mtx[1][1] = MAX_11BIT_FLT / tanHalfFovY;
+    mtx[2][2] = MAX_11BIT_FLT;
+    mtx[2][3] = 1.0f;
+    mtx[3][2] = -zNear * MAX_11BIT_FLT;
 }
 
 void __cdecl ClearBounds(float *mins, float *maxs)
@@ -3438,11 +3438,11 @@ void __cdecl FinitePerspectiveMatrix(float (*mtx)[4], float tanHalfFovX, float t
 
     memset((uint8_t *)mtx, 0, 0x40u);
 
-    (*mtx)[0] = 1.0 / tanHalfFovX;
-    (*mtx)[5] = 1.0 / tanHalfFovY;
-    (*mtx)[10] = -zFar / (zNear - zFar);
-    (*mtx)[11] = 1.0;
-    (*mtx)[14] = zNear * zFar / (zNear - zFar);
+    mtx[0][0] = 1.0 / tanHalfFovX;
+    mtx[1][1] = 1.0 / tanHalfFovY;
+    mtx[2][2] = -zFar / (zNear - zFar);
+    mtx[2][3] = 1.0;
+    mtx[3][2] = zNear * zFar / (zNear - zFar);
 }
 
 // KISAKTODO: double check this function's logic
