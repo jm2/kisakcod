@@ -775,6 +775,28 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     endforeach()
 endif()
 
+# Console, key-binding and server-browser buffer bounds (#197): the production
+# client TUs at native width, with the rest of the engine weak.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-client-input-buffer-tests client_input_buffer_tests.cpp
+        ${SRC_DIR}/client/cl_console.cpp ${SRC_DIR}/client/cl_keys.cpp
+        ${SRC_DIR}/client_mp/cl_main_pc_mp.cpp ${SRC_DIR}/universal/q_shared.cpp)
+    target_compile_definitions(kisakcod-client-input-buffer-tests PRIVATE KISAK_MP UNIX)
+    target_include_directories(kisakcod-client-input-buffer-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    add_dependencies(kisakcod-client-input-buffer-tests update_build_number)
+    target_compile_features(kisakcod-client-input-buffer-tests PRIVATE cxx_std_20)
+    target_compile_options(kisakcod-client-input-buffer-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-client-input-buffer-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-client-input-buffer-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-client-input-buffer-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-client-input-buffer-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME client-input-buffers COMMAND kisakcod-client-input-buffer-tests)
+    set_tests_properties(client-input-buffers PROPERTIES TIMEOUT 20)
+endif()
+
 # 64-bit pointer truncations on headless server paths (WS-3 silent hazards):
 # the production TUs at 64-bit, one executable per subject (see the test's
 # header). Linux, clang and 64-bit only, for the reasons the dvar test gives;
