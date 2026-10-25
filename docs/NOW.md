@@ -42,7 +42,7 @@ Other `burndown` issues are off these gates or wait on the owner.
 | CoD4x census ([ADR-0005](decisions/0005-cod4x-compatibility.md)); approve `CHARTER.md` and the ADRs | all |
 | Close G1 (#179): its exit evidence holds | G1 |
 | Turn on private vulnerability reporting (#293) | SECURITY.md |
-| Retail-fidelity calls on #217, #204, #208 and #214 item 5; #189's question | the sweep |
+| Retail-fidelity call on #208 (should Z_Malloc out-of-memory be fatal again); #189's question | the sweep |
 | UAC on yoga for the CD key | 36 |
 | Later: GPU runner; Apple Developer ID | G5; G6 |
 
