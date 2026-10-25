@@ -421,7 +421,7 @@ bool TryUnpackFxSystemDisk32(
         || source.msecNow < 0
         || source.msecDraw < -1
         || source.gfxCloudCount < 0
-        || source.gfxCloudCount > 256
+        || source.gfxCloudCount > static_cast<std::int32_t>(MAX_ELEMS) // the frame's drawn-cloud count, not the 256-slot scene add
         || !PoolCountAndFreeHeadAreValid<MAX_ELEMS>(
             source.firstFreeElem, source.activeElemCount)
         || !PoolCountAndFreeHeadAreValid<MAX_TRAIL_ELEMS>(
