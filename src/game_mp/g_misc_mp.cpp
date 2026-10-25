@@ -39,6 +39,16 @@ void __cdecl SP_light(gentity_s *self)
 
     if (G_SpawnInt("pl#", "0", &primaryLightIndex))
     {
+        // The index comes from map content: refuse one the world doesn't have.
+        if (primaryLightIndex < 0 || static_cast<uint32_t>(primaryLightIndex) >= comWorld.primaryLightCount)
+        {
+            Com_Error(
+                ERR_DROP,
+                "light entity uses primary light %i, but the map has %u",
+                primaryLightIndex,
+                comWorld.primaryLightCount);
+            return;
+        }
         light = G_GetPrimaryLight(primaryLightIndex);
 
         self->s.index.primaryLight = (uint16_t)primaryLightIndex;
