@@ -1023,9 +1023,9 @@ void __cdecl R_GetMarkFragmentBounds(
 
     for (coord = 0; coord < 3; ++coord)
     {
-        v7 = I_fabs((*axis)[coord]);
-        v6 = I_fabs((*axis)[coord + 3]);
-        v5 = I_fabs((*axis)[coord + 6]);
+        v7 = I_fabs(axis[0][coord]);
+        v6 = I_fabs(axis[1][coord]);
+        v5 = I_fabs(axis[2][coord]);
         offset = (v7 + v6 + v5) * radius;
         mins[coord] = origin[coord] - offset;
         maxs[coord] = origin[coord] + offset;
@@ -1044,14 +1044,14 @@ void __cdecl R_GetMarkFragmentClipPlanes(const float *origin, const float (*axis
     planeIndex = 0;
     for (axisIndex = 0; axisIndex < 3; ++axisIndex)
     {
-        v5 = &(*planes)[4 * planeIndex];
-        v6 = (float *)&(*axis)[3 * axisIndex];
+        v5 = planes[planeIndex];
+        v6 = (float *)axis[axisIndex];
         *v5 = *v6;
         v5[1] = v6[1];
         v5[2] = v6[2];
         v5[3] = Vec3Dot(v5, origin) - radius;
         planeIndexa = planeIndex + 1;
-        v4 = &(*planes)[4 * planeIndexa];
+        v4 = planes[planeIndexa];
         *v4 = -*v6;
         v4[1] = -v6[1];
         v4[2] = -v6[2];
@@ -1283,7 +1283,7 @@ bool __cdecl R_MarkFragments_BrushSurface(
                     fragmentPointCount,
                     clipPoints[pingPong],
                     clipPoints[pingPong == 0],
-                    &(*clipPlanes)[4 * planeIndex]);
+                    clipPlanes[planeIndex]);
 
                 if (!fragmentPointCount)
                     goto LABEL_6;
@@ -1614,11 +1614,11 @@ void __cdecl R_Mark_TransformClipPlanes(const float (*inClipPlanes)[4], float (*
 
     for (planeIndex = 0; planeIndex != 6; ++planeIndex)
     {
-        (*outClipPlanes)[4 * planeIndex] = Vec3Dot(&(*inClipPlanes)[4 * planeIndex], (const float *)matrix);
-        (*outClipPlanes)[4 * planeIndex + 1] = Vec3Dot(&(*inClipPlanes)[4 * planeIndex], &(*matrix)[3]);
-        (*outClipPlanes)[4 * planeIndex + 2] = Vec3Dot(&(*inClipPlanes)[4 * planeIndex], &(*matrix)[6]);
-        v3 = (float)(*inClipPlanes)[4 * planeIndex + 3] - Vec3Dot(&(*inClipPlanes)[4 * planeIndex], &(*matrix)[9]);
-        (*outClipPlanes)[4 * planeIndex + 3] = v3;
+        outClipPlanes[planeIndex][0] = Vec3Dot(inClipPlanes[planeIndex], matrix[0]);
+        outClipPlanes[planeIndex][1] = Vec3Dot(inClipPlanes[planeIndex], matrix[1]);
+        outClipPlanes[planeIndex][2] = Vec3Dot(inClipPlanes[planeIndex], matrix[2]);
+        v3 = (float)inClipPlanes[planeIndex][3] - Vec3Dot(inClipPlanes[planeIndex], matrix[3]);
+        outClipPlanes[planeIndex][3] = v3;
     }
 }
 
@@ -1810,9 +1810,9 @@ int __cdecl R_AddMarkFragment_1_(
     {
         clipPointCount = R_ChopPolyBehindPlane(
             clipPointCount,
-            &(*clipPoints)[9 * pingPong],
-            &(*clipPoints)[9 * (pingPong == 0)],
-            &(*planes)[4 * planeIndex]);
+            clipPoints[pingPong],
+            clipPoints[(pingPong == 0)],
+            planes[planeIndex]);
         if (clipPointCount > 9)
             MyAssertHandler(
                 ".\\r_marks.cpp",
@@ -1849,7 +1849,7 @@ int __cdecl R_AddMarkFragment_1_(
     for (pointIndex = 0; pointIndex < clipPointCount; ++pointIndex)
     {
         point = &points[pointIndex];
-        clipPoint = &(*clipPoints)[9 * pingPong + pointIndex];
+        clipPoint = &clipPoints[pingPong][pointIndex];
         point->xyz[0] = clipPoint->xyz[0];
         point->xyz[1] = clipPoint->xyz[1];
         point->xyz[2] = clipPoint->xyz[2];
@@ -1990,9 +1990,9 @@ int __cdecl R_AddMarkFragment_0_(
     {
         clipPointCount = R_ChopPolyBehindPlane(
             clipPointCount,
-            &(*clipPoints)[9 * pingPong],
-            &(*clipPoints)[9 * (pingPong == 0)],
-            &(*planes)[4 * planeIndex]);
+            clipPoints[pingPong],
+            clipPoints[(pingPong == 0)],
+            planes[planeIndex]);
 
         iassert(clipPointCount <= 3 + 6);
 
@@ -2022,7 +2022,7 @@ int __cdecl R_AddMarkFragment_0_(
     for (pointIndex = 0; pointIndex < clipPointCount; ++pointIndex)
     {
         point = &points[pointIndex];
-        clipPoint = &(*clipPoints)[9 * pingPong + pointIndex];
+        clipPoint = &clipPoints[pingPong][pointIndex];
         point->xyz[0] = clipPoint->xyz[0];
         point->xyz[1] = clipPoint->xyz[1];
         point->xyz[2] = clipPoint->xyz[2];
@@ -2153,9 +2153,9 @@ void __cdecl DObjSkelMatToMatrix43(const DObjSkelMat *inSkelMat, float (*outMatr
     } while (v4);
     v7 = inSkelMat->origin[2];
     v8 = inSkelMat->origin[1];
-    (*outMatrix)[9] = inSkelMat->origin[0];
-    (*outMatrix)[10] = v8;
-    (*outMatrix)[11] = v7;
+    outMatrix[3][0] = inSkelMat->origin[0];
+    outMatrix[3][1] = v8;
+    outMatrix[3][2] = v7;
 }
 
 char  R_MarkFragments_AnimatedXModel_VertList(
@@ -2388,7 +2388,7 @@ char __cdecl R_MarkFragments_XModelSurface_Basic(
     float localOriginTranslated[3]; // [esp+98h] [ebp-Ch] BYREF
 
     for (dim = 0; dim != 3; ++dim)
-        Vec3Scale(&(*modelAxis)[3 * dim], modelScale, surfTransform[dim]);
+        Vec3Scale(modelAxis[dim], modelScale, surfTransform[dim]);
     surfTransform[3][0] = *modelOrigin;
     surfTransform[3][1] = modelOrigin[1];
     surfTransform[3][2] = modelOrigin[2];
