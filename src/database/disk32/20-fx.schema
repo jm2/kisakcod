@@ -4,21 +4,21 @@
 # visual or trail token means its records follow inline. Samples and a
 # trail's vertices and indices hold no pointer and stay in block 4.
 
-record FxFloatRange 0x08 runtime=FxFloatRange header=EffectsCore/fx_effect_def.h copy=scalars
+record FxFloatRange 0x08 runtime=FxFloatRange header=universal/fx_effect_def.h copy=scalars
     0x00 base                    f32
     0x04 amplitude               f32
 
-record FxIntRange 0x08 runtime=FxIntRange header=EffectsCore/fx_effect_def.h copy=scalars
+record FxIntRange 0x08 runtime=FxIntRange header=universal/fx_effect_def.h copy=scalars
     0x00 base                    i32
     0x04 amplitude               i32
 
 # Looping elements read it as an interval and a count, one-shot elements as a
 # count range; both views share the two words.
-record FxSpawnDefLooping 0x08 runtime=FxSpawnDefLooping header=EffectsCore/fx_effect_def.h copy=scalars
+record FxSpawnDefLooping 0x08 runtime=FxSpawnDefLooping header=universal/fx_effect_def.h copy=scalars
     0x00 intervalMsec            i32
     0x04 count                   i32
 
-record FxTrailDef 0x1C runtime=FxTrailDef header=EffectsCore/fx_effect_def.h copy=scalars
+record FxTrailDef 0x1C runtime=FxTrailDef header=universal/fx_effect_def.h copy=scalars
     0x00 scrollTimeMsec          i32
     0x04 repeatDist              i32
     0x08 splitDist               i32
@@ -27,7 +27,7 @@ record FxTrailDef 0x1C runtime=FxTrailDef header=EffectsCore/fx_effect_def.h cop
     0x14 indCount                i32
     0x18 inds                    pointer   # indCount 16-bit indices
 
-record FxElemDef 0xFC runtime=FxElemDef header=EffectsCore/fx_effect_def.h copy=scalars
+record FxElemDef 0xFC runtime=FxElemDef header=universal/fx_effect_def.h copy=scalars
     0x00 flags                   i32
     0x04 spawn                   struct    of=FxSpawnDefLooping
     0x0C spawnRange              struct    of=FxFloatRange
@@ -71,7 +71,7 @@ record FxElemDef 0xFC runtime=FxElemDef header=EffectsCore/fx_effect_def.h copy=
     0xFA useItemClip             u8
     0xFB unused                  u8[1]
 
-record FxEffectDef 0x20 runtime=FxEffectDef header=EffectsCore/fx_effect_def.h copy=scalars
+record FxEffectDef 0x20 runtime=FxEffectDef header=universal/fx_effect_def.h copy=scalars
     asset member=fx pool=Load_FxEffectDefAsset kind=FxEffectDef alias=inserted body=custom label=effect slot=const
     0x00 name                    xstring
     0x04 flags                   i32

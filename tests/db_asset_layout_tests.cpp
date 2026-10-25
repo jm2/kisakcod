@@ -184,19 +184,15 @@ void TestFailClosedPolicy()
            "a 64-bit client keeps technique sets guarded: no client leg has compared them");
 #endif
 
-    // FX and Impact FX hold a pair, but only the FX zone adapter can apply it.
-    Expect(
-        IsLoadPermitted(db::asset_layout::kFx, true, true),
-        "64-bit targets must load FX while the FX zone adapter is bound");
-    Expect(
-        IsLoadPermitted(db::asset_layout::kImpactFx, true, true),
-        "64-bit targets must load impact FX while the FX zone adapter is bound");
-    Expect(
-        !IsLoadPermitted(db::asset_layout::kFx, true, false),
-        "64-bit targets must refuse FX with no adapter: the loader would fall back");
-    Expect(
-        !IsLoadPermitted(db::asset_layout::kImpactFx, true, false),
-        "64-bit targets must refuse impact FX with no adapter: the loader would fall back");
+    // K4 counts FX and Impact FX, whose disk32 loaders never use the FX zone
+    // adapter, so they load at 64-bit whether or not one is bound.
+    Expect(IsLoadPermitted(db::asset_layout::kFx, true, true), "64-bit targets must load FX with an adapter");
+    Expect(IsLoadPermitted(db::asset_layout::kImpactFx, true, true),
+           "64-bit targets must load impact FX with an adapter");
+    Expect(IsLoadPermitted(db::asset_layout::kFx, true, false),
+           "64-bit targets must load FX with no adapter: K4 counts it");
+    Expect(IsLoadPermitted(db::asset_layout::kImpactFx, true, false),
+           "64-bit targets must load impact FX with no adapter: K4 counts it");
 }
 
 // --- The gate itself raises ERR_DROP whenever the load is not permitted. ---
@@ -229,29 +225,13 @@ void TestGateRefusals()
     Expect(allowedFx, "FX at 64-bit must load while the adapter is bound");
     Expect(g_comErrorCalls == 0, "a permitted 64-bit load must not raise");
 
-    // The same family is refused at 64-bit once the adapter is gone: that is
-    // the path a headless build or an unbound zone takes into the legacy
-    // retail-record walk.
+    // With no adapter, as a headless build runs, the K4-verified FX families
+    // still load at 64-bit and raise nothing.
     ResetError();
-    const bool refusedFx =
-        DB_AdmitAssetFamilyLoad(db::asset_layout::kFx, "fx", true, false);
-    Expect(!refusedFx, "FX at 64-bit must be refused with no adapter");
-    Expect(g_comErrorCalls == 1, "an adapter-less FX refusal must raise");
-    Expect(g_lastCode == ERR_DROP, "an adapter-less FX refusal must raise ERR_DROP");
-    Expect(NamedMentions("fx"), "an adapter-less FX refusal must name the family");
-    Expect(
-        FormatMentions("adapter"),
-        "an adapter-less FX refusal must name the adapter reason");
-
-    ResetError();
-    const bool refusedImpact = DB_AdmitAssetFamilyLoad(
-        db::asset_layout::kImpactFx, "impactfx", true, false);
-    Expect(!refusedImpact, "impact FX at 64-bit must be refused with no adapter");
-    Expect(g_comErrorCalls == 1, "an adapter-less impact-FX refusal must raise");
-    Expect(g_lastCode == ERR_DROP, "an adapter-less impact-FX refusal must raise ERR_DROP");
-    Expect(
-        NamedMentions("impactfx"),
-        "an adapter-less impact-FX refusal must name the family");
+    const bool headlessFx = DB_AdmitAssetFamilyLoad(db::asset_layout::kFx, "fx", true, false);
+    const bool headlessImpact = DB_AdmitAssetFamilyLoad(db::asset_layout::kImpactFx, "impactfx", true, false);
+    Expect(headlessFx && headlessImpact, "FX and impact FX at 64-bit must load with no adapter");
+    Expect(g_comErrorCalls == 0, "an adapter-less FX load must not raise");
 
     // With no adapter at 32-bit the legacy walk is still sound, so the gate
     // keeps admitting the FX families exactly as the x86 baseline did.
