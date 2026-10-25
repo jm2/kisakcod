@@ -516,6 +516,20 @@ void TestGoldenRecordAndConversion()
     }
 }
 
+// gfxCloudCount counts the clouds the last frame drew, before the 256-slot
+// scene add can refuse one; an archive taken with more than 256 visible must
+// still restore (vid_restart in a smoky scene).
+void TestCloudCountBeyondSceneSlots()
+{
+    auto bytes = MakeGoldenBytes();
+    StoreI32(&bytes, GFX_CLOUD_COUNT_OFFSET, 300);
+    FxSystem output{};
+    archive::FxSystemDisk32Metadata metadata{};
+    InitializeSentinels(&output, &metadata);
+    CHECK(archive::TryUnpackFxSystemDisk32(SystemFromBytes(bytes), &output, &metadata));
+    CHECK(output.gfxCloudCount == 300);
+}
+
 void TestVisibilitySelectorOrientations()
 {
     for (const std::array<std::uint8_t, 2> selectors : {
@@ -678,7 +692,7 @@ void TestInvalidScalarAndBooleanFields()
         {ACTIVE_TRAIL_COUNT_OFFSET, -1},
         {ACTIVE_TRAIL_COUNT_OFFSET, static_cast<std::int32_t>(MAX_TRAILS + 1)},
         {GFX_CLOUD_COUNT_OFFSET, -1},
-        {GFX_CLOUD_COUNT_OFFSET, 257},
+        {GFX_CLOUD_COUNT_OFFSET, static_cast<std::int32_t>(MAX_ELEMS + 1)},
         {ACTIVE_SPOT_EFFECT_COUNT_OFFSET, -1},
         {ACTIVE_SPOT_EFFECT_COUNT_OFFSET, 2},
         {ACTIVE_SPOT_ELEM_COUNT_OFFSET, -1},
@@ -1401,6 +1415,7 @@ int main()
     CHECK(explicitAddress.value == UINT32_C(0xFEDCBA98));
 
     TestGoldenRecordAndConversion();
+    TestCloudCountBeyondSceneSlots();
     TestVisibilitySelectorOrientations();
     TestCameraValidationAndReadiness();
     TestInvalidScalarAndBooleanFields();
