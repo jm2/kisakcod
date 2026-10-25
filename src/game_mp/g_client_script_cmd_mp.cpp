@@ -2011,6 +2011,12 @@ void __cdecl PlayerCmd_ClonePlayer(scr_entref_t entref)
             0,
             "%s",
             "client->sess.connected != CON_DISCONNECTED");
+    // A spectator, or a player who never spawned, has no server DObj to copy.
+    if (!Com_GetServerDObj(client->ps.clientNum))
+    {
+        Scr_Error("clonePlayer: the player has no model to clone");
+        return;
+    }
     body = G_SpawnPlayerClone();
     body->s.clientNum = client->ps.clientNum;
     body->s.lerp.eFlags = body->s.lerp.eFlags & 2 | client->ps.eFlags & 0xFFFFFFFD | 0xA0000;

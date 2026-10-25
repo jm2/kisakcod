@@ -22,6 +22,7 @@
 #include <game_mp/g_main_mp.h>
 #include <game_mp/g_public_mp.h>
 #include <game_mp/g_utils_mp.h>
+#include <script/scr_variable.h>
 #include <script/scr_vm.h>
 #include <server/sv_game.h>
 #include <server_mp/server_mp.h>
@@ -48,6 +49,8 @@ struct Seen
     gentity_s *touchSelf = nullptr;
     gentity_s *touchOther = nullptr;
     char command[64] = {};
+    gentity_s *addedEntity = nullptr;
+    bool madeArray = false;
 };
 Seen seen;
 
@@ -63,6 +66,7 @@ char g_vaText[256] = "";
 uint32_t g_numParam = 1;
 uint32_t g_constString = 0;
 float g_float = 0.0f;
+int g_offset = -1; // what Scr_GetOffset returns for the key
 
 [[maybe_unused]] gentity_s *Ent(int n)
 {
@@ -102,11 +106,15 @@ WEAK void Scr_ObjectError(const char *error) { seen.objectError = error; }
 WEAK void Scr_AddString(const char *) {}
 WEAK void Scr_AddFloat(float) {}
 WEAK void Scr_AddObject(uint32_t) {}
-WEAK void Scr_AddEntity(gentity_s *) {}
+WEAK void Scr_AddEntity(gentity_s *ent) { seen.addedEntity = ent; }
 WEAK void Scr_AddEntityNum(uint32_t, uint32_t) {}
 WEAK void Scr_Notify(gentity_s *, uint16_t, uint32_t) {}
 WEAK void Scr_NotifyNum(uint32_t, uint32_t, uint32_t, uint32_t) {}
 WEAK void Scr_Error(const char *) {}
+WEAK const char *Scr_GetString(uint32_t) { return "key"; }
+WEAK int Scr_GetOffset(uint32_t, const char *) { return g_offset; }
+WEAK void Scr_MakeArray() { seen.madeArray = true; }
+WEAK void Scr_AddArray() {}
 WEAK uint32_t Scr_GetNumParam() { return g_numParam; }
 WEAK uint32_t Scr_GetConstString(uint32_t) { return g_constString; }
 WEAK uint32_t Scr_GetConstStringIncludeNull(uint32_t) { return 0; }
@@ -358,6 +366,36 @@ static void VehicleUnlinkHandlesUnseatedAndFreed()
     g_client.ps.viewlocked_entNum = 0;
 }
 
+// g_spawn_mp.cpp Scr_GetEnt / Scr_GetEntArray: a client field's key comes back
+// from Scr_GetOffset as (index | 0xC000). It finds nothing, where the old code
+// indexed fields_1 with it, 768 KB past the 11-entry table.
+static void GetEntWithAClientFieldFindsNothing()
+{
+    level.num_entities = 64;
+    Ent(9)->targetname = 0x55;
+    g_constString = 0x55;
+    g_numParam = 2;
+
+    g_offset = 0xC000 | 3;
+    seen = Seen();
+    Scr_GetEnt();
+    CHECK(seen.addedEntity == nullptr);
+    Scr_GetEntArray();
+    CHECK(seen.addedEntity == nullptr && !seen.madeArray);
+
+    g_offset = 5; // targetname, an entity field: still found
+    seen = Seen();
+    Scr_GetEnt();
+    CHECK(seen.addedEntity == &g_entities[9]);
+    seen = Seen();
+    Scr_GetEntArray();
+    CHECK(seen.madeArray && seen.addedEntity == &g_entities[9]);
+
+    g_offset = -1;
+    g_constString = 0;
+    g_numParam = 1;
+}
+
 #elif GAME_MP_HAZARD_SUBJECT == 2
 // g_active_mp.cpp G_TouchTriggers: the touched trigger's own handler runs.
 static void TriggersDispatchTheirOwnHandler()
@@ -451,6 +489,7 @@ int main()
     CorpseReuseFindsThePlayer();
     GroundTraceKeepsTheWholeTrace();
     VehicleUnlinkHandlesUnseatedAndFreed();
+    GetEntWithAClientFieldFindsNothing();
 #elif GAME_MP_HAZARD_SUBJECT == 2
     TriggersDispatchTheirOwnHandler();
 #elif GAME_MP_HAZARD_SUBJECT == 3
