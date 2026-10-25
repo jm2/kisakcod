@@ -188,6 +188,7 @@ void __cdecl R_MarkFragments_Go(
     FxMarkPoint *points);
 char __cdecl R_MarkFragments_WorldBrushes(MarkInfo *markInfo);
 bool __cdecl R_AllowMarks(int surfIndex, const Material *markMaterialAsVoid);
+int __cdecl R_AllowMarksCallback(int surfIndex, void *markMaterial); // R_AABBTreeSurfaces_r's allowSurf signature
 bool __cdecl R_Mark_MaterialAllowsMarks(const Material *markReceiverMaterialHandle, const Material *markMaterialHandle);
 bool __cdecl R_MarkFragments_BrushSurface(
     MarkInfo *markInfo,

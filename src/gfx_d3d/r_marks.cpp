@@ -1141,7 +1141,7 @@ void __cdecl R_MarkFragments_Go(
             markInfo->origin[2]);
 }
 
-int(__cdecl *allowSurf[1])(int, void *) = { (int(*)(int, void*))R_AllowMarks };
+int(__cdecl *allowSurf[1])(int, void *) = { R_AllowMarksCallback }; // KISAK: typed thunk; R_AllowMarks returns bool and takes a Material *
 char __cdecl R_MarkFragments_WorldBrushes(MarkInfo *markInfo)
 {
     GfxSurface **surfacesArray[1]; // [esp+298h] [ebp-41Ch] BYREF
@@ -2554,4 +2554,9 @@ void __cdecl R_LerpModelMarkPoints(
 {
     Vec3Lerp(from->xyz, to->xyz, lerp, out->xyz);
     Vec3Lerp(from->vertWeights, to->vertWeights, lerp, out->vertWeights);
+}
+
+int __cdecl R_AllowMarksCallback(int surfIndex, void *markMaterial)
+{
+    return R_AllowMarks(surfIndex, static_cast<const Material *>(markMaterial));
 }
