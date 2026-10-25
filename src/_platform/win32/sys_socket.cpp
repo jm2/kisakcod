@@ -13,7 +13,13 @@
 #endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <mstcpip.h>
 #include <Windows.h>
+
+// mstcpip.h hides this behind a _WIN32_WINNT check; the value is fixed.
+#ifndef SIO_UDP_CONNRESET
+#define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
+#endif
 
 #include <qcommon/sys_socket.h>
 
@@ -138,6 +144,11 @@ SysSocketRecvStatus ClassifyRecvError(const int error) noexcept
 {
     if (error == WSAEWOULDBLOCK)
         return SysSocketRecvStatus::WouldBlock;
+    // An ICMP unreachable for an earlier send (a peer that left) is not a
+    // failure of this socket; win_net.cpp ignores it the same way.
+    // OpenUdpBound turns the report off, so this covers older stacks.
+    if (error == WSAECONNRESET || error == WSAENETRESET)
+        return SysSocketRecvStatus::WouldBlock;
     return SysSocketRecvStatus::SystemFailure;
 }
 } // namespace
@@ -172,6 +183,14 @@ SysSocketOpenStatus OpenUdpBound(
         closesocket(raw);
         return SysSocketOpenStatus::SystemFailure;
     }
+
+    // Without this, an ICMP port-unreachable for any earlier send fails the
+    // next recvfrom with WSAECONNRESET. That would be every receive after a
+    // client leaves. Best effort: ClassifyRecvError also maps the error.
+    BOOL reportReset = FALSE;
+    DWORD returned = 0;
+    (void)WSAIoctl(raw, SIO_UDP_CONNRESET, &reportReset, sizeof(reportReset),
+        nullptr, 0, &returned, nullptr, nullptr);
 
     sockaddr_in local{};
     local.sin_family = AF_INET;
@@ -654,33 +673,31 @@ SysSocketStreamPollStatus KISAK_CDECL Sys_SocketPollConnected(
     if (!handle || handle->handle == INVALID_SOCKET)
         return SysSocketStreamPollStatus::InvalidArgument;
 
-    // WSAPoll with a zero timeout observes connect completion on Windows
-    // the same way poll(POLLOUT) does on the POSIX backend. The previous
-    // select() form carried a struct timeval whose seconds member is a
-    // time_t even though the zero timeout is a pure duration; the poll
-    // keeps the identical wait semantics with no wall-clock year in the
-    // path, and failure flags arrive in the same single call.
+    // WSAPoll with a zero timeout observes connect completion the same way
+    // poll(POLLOUT) does on the POSIX backend. Before Windows 10 2004 it
+    // never reports a refused connect, which left the download pump waiting
+    // out its stall timeout, so a quiet poll also asks SO_ERROR: a recorded
+    // error is the refusal, zero means the handshake is still in flight.
     WSAPOLLFD descriptor{};
     descriptor.fd = handle->handle;
     descriptor.events = POLLOUT;
     const int ready = ::WSAPoll(&descriptor, 1, 0);
     if (ready == SOCKET_ERROR)
         return SysSocketStreamPollStatus::SystemFailure;
-    if (ready == 0)
-        return SysSocketStreamPollStatus::InProgress;
 
-    // Writability (or an error/hangup flag) ends the handshake; SO_ERROR
-    // names the outcome. Zero is established, anything else is the real
-    // refusal -- poll artifacts are never reported as Failed.
     int socketError = 0;
     int errorLength = sizeof(socketError);
     if (getsockopt(handle->handle, SOL_SOCKET, SO_ERROR,
             reinterpret_cast<char *>(&socketError), &errorLength)
         != 0)
         return SysSocketStreamPollStatus::SystemFailure;
-    if (socketError == 0)
-        return SysSocketStreamPollStatus::Ready;
-    return SysSocketStreamPollStatus::Failed;
+    if (socketError != 0)
+        return SysSocketStreamPollStatus::Failed;
+    if (ready == 0)
+        return SysSocketStreamPollStatus::InProgress;
+    // Readiness with no recorded error is an established connection; poll
+    // artifacts are never reported as Failed.
+    return SysSocketStreamPollStatus::Ready;
 }
 
 SysSocketStreamSendStatus KISAK_CDECL Sys_SocketSendStream(

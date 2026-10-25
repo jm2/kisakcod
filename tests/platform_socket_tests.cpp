@@ -796,6 +796,55 @@ bool StageHostResolution(SocketFixture &)
         && CheckResolveFailureContract();
 }
 
+// Closed-port contract: a datagram sent to a port nobody holds draws an ICMP
+// port-unreachable. Windows reports that on the sender's next receive as
+// WSAECONNRESET unless SIO_UDP_CONNRESET is off, and a server sending to a
+// client that just left hits it routinely. The receive must report
+// WouldBlock, never SystemFailure, and later traffic must still arrive.
+bool StageClosedPortSend(SocketFixture &fixture)
+{
+    SysSocketHandle gone = nullptr;
+    SysSocketAddress goneAddress{};
+    if (!OpenEphemeral(true, &gone, &goneAddress, "open closed-port socket"))
+        return false;
+    SysSocketAddress deadEndpoint{};
+    SysSocketAddress firstEndpoint{};
+    if (!Check(Sys_SocketMakeLoopbackAddress(goneAddress.port, &deadEndpoint)
+                && Sys_SocketMakeLoopbackAddress(fixture.firstAddress.port,
+                    &firstEndpoint),
+            "closed-port endpoints")
+        || !Check(Sys_SocketClose(&gone) == SysSocketCloseStatus::Closed,
+            "close closed-port socket"))
+        return false;
+
+    if (!Check(Sys_SocketSendTo(fixture.first, fixture.payload,
+                   sizeof(fixture.payload), &deadEndpoint)
+                == SysSocketSendStatus::Sent,
+            "send to closed port"))
+        return false;
+    // Give the ICMP reply time to come back before receiving.
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    for (int attempt = 0; attempt < 4; ++attempt)
+    {
+        if (!Check(Sys_SocketRecvFrom(fixture.first, fixture.received,
+                       sizeof(fixture.received), nullptr,
+                       &fixture.receivedBytes)
+                    == SysSocketRecvStatus::WouldBlock,
+                "recv after closed-port send is WouldBlock"))
+            return false;
+    }
+
+    return Check(Sys_SocketSendTo(fixture.second, fixture.payload,
+                     sizeof(fixture.payload), &firstEndpoint)
+                == SysSocketSendStatus::Sent,
+            "send after closed-port send")
+        && Check(RecvUntilDeadline(fixture.first, fixture.received,
+                     sizeof(fixture.received), nullptr,
+                     &fixture.receivedBytes)
+                == SysSocketRecvStatus::Received,
+            "recv after closed-port send");
+}
+
 // Teardown: close is unconditional, nulls the caller's handle, and a
 // second close is a no-op.
 bool StageTeardown(SocketFixture &fixture)
@@ -833,6 +882,7 @@ int main()
         &StageLoopbackSend, &StageLoopbackReply, &StageTruncationContract,
         &StageOversizeCapacityBoundary, &StageBroadcastOption,
         &StageExplicitBind, &StageInterfaceBind, &StageLocalAddresses, &StageExclusiveBind,
+        &StageClosedPortSend,
 #if defined(_WIN32)
         &StageExclusiveInterfaceBind,
 #endif
