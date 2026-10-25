@@ -1042,6 +1042,24 @@ if (WIN32 OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     kisakcod_ilp32(kisakcod-ui-localvars-tests ui-localvars)
 endif()
 
+# Ragdoll_Init (ragdoll/ragdoll.cpp) clears all 32 bodies at their native size.
+# Linux clang, the client's defines.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-ragdoll-init-tests ragdoll_init_tests.cpp ${SRC_DIR}/ragdoll/ragdoll.cpp)
+    target_include_directories(kisakcod-ragdoll-init-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-ragdoll-init-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-ragdoll-init-tests PRIVATE KISAK_MP UNIX)
+    target_compile_options(kisakcod-ragdoll-init-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-ragdoll-init-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-ragdoll-init-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-ragdoll-init-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-ragdoll-init-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME ragdoll-init-contracts COMMAND kisakcod-ragdoll-init-tests)
+endif()
+
 # CG_RegisterWeapon (cgame/cg_weapons.cpp) at 64-bit: the weapon's cursor-hint
 # icon. Linux and clang only, as above; the client's defines.
 if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
