@@ -3,6 +3,7 @@
 #endif
 
 #include "server_mp.h"
+#include "sv_rcon_gate.h"
 #include <qcommon/sys_time.h>
 #include <qcommon/cmd.h>
 
@@ -235,7 +236,7 @@ void __cdecl SV_FlushRedirect(char *outputbuf)
     NET_OutOfBandPrint(NS_SERVER, svs.redirectAddress, buf);
 }
 
-int lasttime;
+static sv_rcon::Gate s_rconGate;
 void __cdecl SVC_RemoteCommand(netadr_t from)
 {
     const char *v1; // eax
@@ -249,15 +250,18 @@ void __cdecl SVC_RemoteCommand(netadr_t from)
     int valid; // [esp+C08h] [ebp-18h]
     int len; // [esp+C0Ch] [ebp-14h]
     const char *password; // [esp+C10h] [ebp-10h]
-    int time; // [esp+C14h] [ebp-Ch]
+    int nowMsec; // [esp+C14h] [ebp-Ch]
     int i; // [esp+C18h] [ebp-8h]
 
-    time = Sys_Milliseconds();
-    if (!lasttime || time - lasttime >= 500)
+    nowMsec = Sys_Milliseconds();
+    sv_rcon::Source source;
+    source.type = static_cast<uint32_t>(from.type);
+    for (size_t octet = 0; octet < sizeof(source.ip); ++octet)
+        source.ip[octet] = from.ip[octet];
+    if (s_rconGate.Allow(source, nowMsec))
     {
-        lasttime = time;
         password = SV_Cmd_Argv(1);
-        if (*rcon_password->current.string && !strcmp(password, rcon_password->current.string))
+        if (*rcon_password->current.string && sv_rcon::PasswordMatches(password, rcon_password->current.string))
         {
             valid = 1;
             v6 = SV_Cmd_Argv(2);
