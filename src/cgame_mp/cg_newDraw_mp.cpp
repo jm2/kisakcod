@@ -1278,7 +1278,9 @@ void __cdecl CG_DrawPlayerSprintMeter(int32_t localClientNum, const rectDef_s *r
     {
         sprintLeft = PM_GetSprintLeft(ps, cgameGlob->time);
         maxSprint = BG_GetMaxSprintTime(ps);
-        sprint = sprintLeft / maxSprint;
+        // A fraction of the full meter: integer division made it all or
+        // nothing, and trapped when the max sprint time is 0.
+        sprint = maxSprint > 0 ? (float)sprintLeft / (float)maxSprint : 0.0f;
         if (sprint > 0.0f)
         {
             x = rect->x;
