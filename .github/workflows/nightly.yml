@@ -107,6 +107,10 @@ jobs:
         with:
           dotnet-version: 8.x
 
+      - uses: ./.github/actions/setup-vcpkg
+        with:
+          triplet: x86-windows
+
       - name: Restore DirectX SDK
         shell: pwsh
         run: |
@@ -134,6 +138,13 @@ jobs:
           --target KisakCOD-mp KisakCOD-dedi
           --parallel
 
+      # The client imports OpenAL Soft and FFmpeg (vcpkg copies them into bin/Release)
+      # and d3dx9_43.dll, which only the DirectX SDK package has. Ship them with the exe
+      # so the artifact starts next to a Steam 1.8 install on its own (#748).
+      - name: Stage D3DX9 runtime
+        shell: pwsh
+        run: Copy-Item "$env:DXSDK_NATIVE\release\bin\x86\D3DX9_43.dll" bin/Release/
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: KisakCOD-windows-x86-nosteam-Release
@@ -141,4 +152,5 @@ jobs:
             bin/Release/KisakCOD-mp.exe
             bin/Release/KisakCOD-mp.pdb
             bin/Release/KisakCOD-dedi.exe
+            bin/Release/*.dll
           if-no-files-found: error
