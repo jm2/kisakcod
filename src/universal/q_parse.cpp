@@ -534,6 +534,7 @@ parseInfo_t *__cdecl Com_ParseCSV(const char **data_p, int allowLineBreaks)
     uint32_t len; // [esp+8h] [ebp-Ch]
     parseInfo_t *pi; // [esp+Ch] [ebp-8h]
     ParseThreadInfo *parse; // [esp+10h] [ebp-4h]
+    bool unterminatedQuoted = false;
 
     parse = Com_GetParseThreadInfo();
     pi = &parse->parseInfo[parse->parseInfoNum];
@@ -559,20 +560,24 @@ parseInfo_t *__cdecl Com_ParseCSV(const char **data_p, int allowLineBreaks)
         }
         else if (*data == 34)
         {
+            // An unterminated quoted field ends with the text, at its NUL.
             for (dataa = data + 1; ; dataa += 2)
             {
-                while (*dataa != 34)
+                while (*dataa && *dataa != 34)
                 {
                     if (len < 0x3FF)
                         pi->token[len++] = *dataa;
                     ++dataa;
                 }
-                if (dataa[1] != 34)
+                if (!*dataa || dataa[1] != 34)
+                {
+                    unterminatedQuoted = !*dataa;
                     break;
+                }
                 if (len < 0x3FF)
                     pi->token[len++] = 34;
             }
-            data = dataa + 1;
+            data = *dataa ? dataa + 1 : dataa;
         }
         else
         {
@@ -583,7 +588,7 @@ parseInfo_t *__cdecl Com_ParseCSV(const char **data_p, int allowLineBreaks)
     }
     if (*data && *data != 10)
         ++data;
-    if (*data || len)
+    if (*data || len || unterminatedQuoted)
         v3 = data;
     else
         v3 = 0;
