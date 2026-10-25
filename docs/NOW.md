@@ -31,6 +31,7 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 | 65 | G3 on the macOS arm64 headless server: the x86 fork client plays a round, a map change and a reconnect with 8 bots | G3 | K6 | the round's console text on both ends | M | next (mac) |
 | 60 | G5 Windows ARM64: the native client plays a round, a map change and a reconnect on a fork server (#184) | G5 | gate | console text on both ends; ASan clean | M | next (win-arm64) |
 | 58 | G5 client UBSan-clean: fix the triaged client reports (flattened arrays, misaligned access, LCG overflow) | G5 | gate | a client leg logs 0 UBSan reports | M | started: shared-code sites (linux-arm64) |
+| 36 | G4a evidence: a stock Steam 1.8 client joins the windows-x86 server | G4a | gate | a retail client connects under the `steam18` profile; capture confirms protocol 7, gamename, shortversion (#531 table) | M | running (win-arm64, #182); Linux amd64 passes all 4 retail pairings |
 
 Other `burndown` issues are off these gates or wait on the owner.
 
@@ -43,7 +44,6 @@ Other `burndown` issues are off these gates or wait on the owner.
 | CoD4x census ([ADR-0005](decisions/0005-cod4x-compatibility.md)); approve `CHARTER.md` and the ADRs | all |
 | Turn on private vulnerability reporting (#293) | SECURITY.md |
 | Retail-fidelity call on #208 (should Z_Malloc out-of-memory be fatal again); #189's question | the sweep |
-| UAC on yoga for the CD key (row 36: a stock 1.8 client joins the windows-x86 server; Linux amd64 passes all 4 retail pairings) | 36, G4a |
 | Later: GPU runner; Apple Developer ID | G5; G6 |
 
 ## Decided by the owner
