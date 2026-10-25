@@ -344,7 +344,9 @@ void __cdecl Phys_TestAgainstEntities(const objInfo *input, Results *results)
 
     v13 = CM_AreaEntities(input->bounds[0], input->bounds[1], entityList, 1024, input->clipMask);
     MatrixIdentity33(out);
-    for (i = 0; i < v13; ++i)
+    // Each entity adds at most one contact (a capsule-box test); stop once
+    // the caller's contacts are full, or the next one lands past them (#243).
+    for (i = 0; i < v13 && results->contactCount < results->maxContacts; ++i)
     {
         v11 = &g_entities[entityList[i]];
         Vec3Avg(v11->r.absmax, v11->r.absmin, sum);
@@ -354,6 +356,8 @@ void __cdecl Phys_TestAgainstEntities(const objInfo *input, Results *results)
         Phys_AxisToOdeMatrix3((const float (*)[3])out, outMatrix);
         Phys_AxisToOdeMatrix3(input->R, boxRot);
         capRadius = v4 * 0.5;
+        dContactGeomExt *const added = &results->contacts[results->contactCount];
+        added->surfFlags = 0; // an entity contact has no surface; brush contacts set theirs
         results->contactCount += ODE_CollideCapsuleBox(
             input->pos,
             boxRot,
@@ -363,7 +367,7 @@ void __cdecl Phys_TestAgainstEntities(const objInfo *input, Results *results)
             capRadius,
             capHalfHeight,
             results->maxContacts - results->contactCount,
-            &results->contacts[results->contactCount].contact,
+            &added->contact,
             results->stride);
     }
 }
