@@ -39,7 +39,7 @@ void __cdecl R_InitStaticModelCache()
 static_model_leaf_t *SMC_GetLeaf(uint32_t cacheIndex)
 {
     iassert(cacheIndex);
-    static_model_leaf_t *retval = &s_cache.leafs[0][cacheIndex - 1];
+    static_model_leaf_t *retval = &s_cache.leafs[(cacheIndex - 1) / ARRAY_COUNT(s_cache.leafs[0])][(cacheIndex - 1) % ARRAY_COUNT(s_cache.leafs[0])]; // KISAK: tree, then leaf
     iassert((char *)retval == ((char *)&s_cache.leafs + (sizeof(static_model_leaf_t) * (cacheIndex - 1))));
     return retval;
 }
@@ -618,32 +618,32 @@ void __cdecl R_ClearAllStaticModelCacheRefs()
 
 void __cdecl SetupTransformUnitVec(const float4 *mtx, int (*fixedMtx)[3])
 {
-    (*fixedMtx)[0] = (int)(mtx->v[0] * (float)32768.0);
-    (*fixedMtx)[1] = (int)(mtx->v[1] * (float)32768.0);
-    (*fixedMtx)[2] = (int)(mtx->v[2] * (float)32768.0);
-    (*fixedMtx)[3] = (int)(mtx[1].v[0] * (float)32768.0);
-    (*fixedMtx)[4] = (int)(mtx[1].v[1] * (float)32768.0);
-    (*fixedMtx)[5] = (int)(mtx[1].v[2] * (float)32768.0);
-    (*fixedMtx)[6] = (int)(mtx[2].v[0] * (float)32768.0);
-    (*fixedMtx)[7] = (int)(mtx[2].v[1] * (float)32768.0);
-    (*fixedMtx)[8] = (int)(mtx[2].v[2] * (float)32768.0);
+    fixedMtx[0][0] = (int)(mtx->v[0] * (float)32768.0);
+    fixedMtx[0][1] = (int)(mtx->v[1] * (float)32768.0);
+    fixedMtx[0][2] = (int)(mtx->v[2] * (float)32768.0);
+    fixedMtx[1][0] = (int)(mtx[1].v[0] * (float)32768.0);
+    fixedMtx[1][1] = (int)(mtx[1].v[1] * (float)32768.0);
+    fixedMtx[1][2] = (int)(mtx[1].v[2] * (float)32768.0);
+    fixedMtx[2][0] = (int)(mtx[2].v[0] * (float)32768.0);
+    fixedMtx[2][1] = (int)(mtx[2].v[1] * (float)32768.0);
+    fixedMtx[2][2] = (int)(mtx[2].v[2] * (float)32768.0);
 }
 
 PackedUnitVec __cdecl LocalTransformUnitVec(PackedUnitVec in, const int (*fixedMtx)[3])
 {
     PackedUnitVec out; // [esp+0h] [ebp-10h]
 
-    out.array[0] = ((*fixedMtx)[3] * (in.array[3] + 192) * (in.array[1] - 127)
-        + (*fixedMtx)[0] * (in.array[3] + 192) * (in.array[0] - 127)
-        + (*fixedMtx)[6] * (in.array[3] + 192) * (in.array[2] - 127)
+    out.array[0] = (fixedMtx[1][0] * (in.array[3] + 192) * (in.array[1] - 127)
+        + fixedMtx[0][0] * (in.array[3] + 192) * (in.array[0] - 127)
+        + fixedMtx[2][0] * (in.array[3] + 192) * (in.array[2] - 127)
         + 1069547520) >> 23;
-    out.array[1] = ((*fixedMtx)[4] * (in.array[3] + 192) * (in.array[1] - 127)
-        + (*fixedMtx)[1] * (in.array[3] + 192) * (in.array[0] - 127)
-        + (*fixedMtx)[7] * (in.array[3] + 192) * (in.array[2] - 127)
+    out.array[1] = (fixedMtx[1][1] * (in.array[3] + 192) * (in.array[1] - 127)
+        + fixedMtx[0][1] * (in.array[3] + 192) * (in.array[0] - 127)
+        + fixedMtx[2][1] * (in.array[3] + 192) * (in.array[2] - 127)
         + 1069547520) >> 23;
-    out.array[2] = ((*fixedMtx)[5] * (in.array[3] + 192) * (in.array[1] - 127)
-        + (*fixedMtx)[2] * (in.array[3] + 192) * (in.array[0] - 127)
-        + (*fixedMtx)[8] * (in.array[3] + 192) * (in.array[2] - 127)
+    out.array[2] = (fixedMtx[1][2] * (in.array[3] + 192) * (in.array[1] - 127)
+        + fixedMtx[0][2] * (in.array[3] + 192) * (in.array[0] - 127)
+        + fixedMtx[2][2] * (in.array[3] + 192) * (in.array[2] - 127)
         + 1069547520) >> 23;
     out.array[3] = 64;
     return out;
