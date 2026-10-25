@@ -673,38 +673,31 @@ SysSocketStreamPollStatus KISAK_CDECL Sys_SocketPollConnected(
     if (!handle || handle->handle == INVALID_SOCKET)
         return SysSocketStreamPollStatus::InvalidArgument;
 
-    // A zero-timeout select() over a write set and an error set. Windows
-    // reports a failed non-blocking connect only in the error set; WSAPoll
-    // misses a refused connect before Windows 10 2004, which left the
-    // download pump waiting out its stall timeout. The timeval is a pure
-    // zero duration, not a wall-clock time.
-    fd_set writeSet;
-    fd_set errorSet;
-    FD_ZERO(&writeSet);
-    FD_ZERO(&errorSet);
-    FD_SET(handle->handle, &writeSet);
-    FD_SET(handle->handle, &errorSet);
-    timeval instant{};
-    const int ready = select(0, nullptr, &writeSet, &errorSet, &instant);
+    // WSAPoll with a zero timeout observes connect completion the same way
+    // poll(POLLOUT) does on the POSIX backend. Before Windows 10 2004 it
+    // never reports a refused connect, which left the download pump waiting
+    // out its stall timeout, so a quiet poll also asks SO_ERROR: a recorded
+    // error is the refusal, zero means the handshake is still in flight.
+    WSAPOLLFD descriptor{};
+    descriptor.fd = handle->handle;
+    descriptor.events = POLLOUT;
+    const int ready = ::WSAPoll(&descriptor, 1, 0);
     if (ready == SOCKET_ERROR)
         return SysSocketStreamPollStatus::SystemFailure;
-    if (ready == 0)
-        return SysSocketStreamPollStatus::InProgress;
 
-    // An error-set hit is a failed connect. Writability ends the handshake
-    // and SO_ERROR names the outcome: zero is established, anything else
-    // is the real refusal.
-    if (FD_ISSET(handle->handle, &errorSet))
-        return SysSocketStreamPollStatus::Failed;
     int socketError = 0;
     int errorLength = sizeof(socketError);
     if (getsockopt(handle->handle, SOL_SOCKET, SO_ERROR,
             reinterpret_cast<char *>(&socketError), &errorLength)
         != 0)
         return SysSocketStreamPollStatus::SystemFailure;
-    if (socketError == 0)
-        return SysSocketStreamPollStatus::Ready;
-    return SysSocketStreamPollStatus::Failed;
+    if (socketError != 0)
+        return SysSocketStreamPollStatus::Failed;
+    if (ready == 0)
+        return SysSocketStreamPollStatus::InProgress;
+    // Readiness with no recorded error is an established connection; poll
+    // artifacts are never reported as Failed.
+    return SysSocketStreamPollStatus::Ready;
 }
 
 SysSocketStreamSendStatus KISAK_CDECL Sys_SocketSendStream(
