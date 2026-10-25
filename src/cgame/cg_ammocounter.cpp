@@ -412,8 +412,10 @@ void __cdecl CG_DrawPlayerActionSlotDpad(
             {
                 if (ActionSlotIsActive(localClientNum, idx))
                 {
-                    x = rect->w * (float)MY_DIMS[idx + 4][0] + rect->x;
-                    y = rect->h * (float)MY_DIMS[idx + 4][1] + rect->y;
+                    // Each D-pad highlight sits at its MY_OFFSETS slot; MY_DIMS[idx + 4]
+                    // read past MY_DIMS into whatever followed it.
+                    x = rect->w * MY_OFFSETS[idx][0] + rect->x;
+                    y = rect->h * MY_OFFSETS[idx][1] + rect->y;
                     w = rect->w * (float)MY_DIMS[idx][0];
                     h = rect->h * (float)MY_DIMS[idx][1];
                     if ((uint32_t)idx > 1)

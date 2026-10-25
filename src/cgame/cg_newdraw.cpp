@@ -2831,7 +2831,7 @@ void __cdecl CG_DrawPlayerSprintMeter(
         {
             int32_t sprintLeft = PM_GetSprintLeft(&cgameGlob->predictedPlayerState, cgameGlob->time);
             int32_t maxSprint = BG_GetMaxSprintTime(&cgameGlob->predictedPlayerState);
-            float sprint = sprintLeft / maxSprint;
+            float sprint = (float)sprintLeft / (float)maxSprint;
 
             if (sprint > 0.0f)
             {
