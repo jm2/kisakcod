@@ -21,6 +21,23 @@ add_test(
     NAME xanim-load-bounded-cursor
     COMMAND kisakcod-xanim-load-tests)
 
+# buf_cursor_reset_test: ResetAll, which Com_ErrorCleanup runs, drops a
+# load that Com_Error abandoned between Activate and Deactivate.
+add_executable(kisakcod-buf-cursor-reset-tests
+    buf_cursor_reset_tests.cpp
+    ${SRC_DIR}/xanim/buf_cursor.cpp)
+target_include_directories(
+    kisakcod-buf-cursor-reset-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-buf-cursor-reset-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-buf-cursor-reset-tests)
+set_target_properties(
+    kisakcod-buf-cursor-reset-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME buf-cursor-error-reset
+    COMMAND kisakcod-buf-cursor-reset-tests)
+
 # xmodel_load_test: same cursor, scoped to xmodel patterns.
 add_executable(kisakcod-xmodel-load-tests
     xmodel_load_test.cpp
