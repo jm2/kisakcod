@@ -100,6 +100,13 @@ endif()
 if (UNIX AND NOT APPLE)
     target_link_options(${PROJECT_NAME} PRIVATE
         "-Wl,--version-script=${SCRIPTS_DIR}/platform/client_exports.map")
+    # clang links its sanitizer runtime into the executable, where the map
+    # above hides its malloc and operator new from shared libraries: libstdc++
+    # then allocates from glibc and ASan reports the free as a bad free. The
+    # shared runtime exports them itself.
+    if (CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_CXX_FLAGS MATCHES "-fsanitize=")
+        target_link_options(${PROJECT_NAME} PRIVATE -shared-libsan -frtlib-add-rpath)
+    endif()
 endif()
 set(KISAK_TARGET_NEEDS_CLIENT_MEDIA ON)
 
