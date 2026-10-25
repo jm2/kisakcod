@@ -58,7 +58,7 @@ void __cdecl R_FrustumClipPlanes(
     {
         for (term = 0; term < 4; ++term)
         {
-            frustumPlanes[planeIndex].coeffs[term] = Vec4Dot(&(*sidePlanes)[4 * planeIndex], viewProjMtx->m[term]);
+            frustumPlanes[planeIndex].coeffs[term] = Vec4Dot(sidePlanes[planeIndex], viewProjMtx->m[term]);
         }
         length = Vec3Length(frustumPlanes[planeIndex].coeffs);
         iassert( length > 0 );
@@ -1884,7 +1884,7 @@ uint32_t __cdecl R_PortalClipPlanesNoFrustum(
                 v5->coeffs[1] = v6[1];
                 v5->coeffs[2] = v6[2];
                 a = &planes[planeCount];
-                a->coeffs[3] = 0.001 - Vec3Dot(a->coeffs, &(*winding)[3 * windingVertIndex]);
+                a->coeffs[3] = 0.001 - Vec3Dot(a->coeffs, winding[windingVertIndex]);
                 a->side[0] = COERCE_INT(a->coeffs[0]) <= 0 ? 0 : 0xC;
                 a->side[1] = COERCE_INT(a->coeffs[1]) <= 0 ? 4 : 16;
                 a->side[2] = COERCE_INT(a->coeffs[2]) <= 0 ? 8 : 20;
@@ -1908,24 +1908,24 @@ void __cdecl R_GetSidePlaneNormals(const float (*winding)[3], uint32_t vertexCou
         vertexIndex = vertexCount - 1;
         for (vertexIndexNext = 0; vertexIndexNext < vertexCount; ++vertexIndexNext)
         {
-            Vec3Sub(&(*winding)[3 * vertexIndexNext], &(*winding)[3 * vertexIndex], delta);
-            Vec3Cross(dpvsGlob.viewOrg, delta, &(*normals)[3 * vertexIndex]);
-            Vec3Normalize(&(*normals)[3 * vertexIndex]);
+            Vec3Sub(winding[vertexIndexNext], winding[vertexIndex], delta);
+            Vec3Cross(dpvsGlob.viewOrg, delta, normals[vertexIndex]);
+            Vec3Normalize(normals[vertexIndex]);
             vertexIndex = vertexIndexNext;
         }
     }
     else
     {
         for (vertexIndex = 0; vertexIndex < vertexCount; ++vertexIndex)
-            Vec3Sub(&(*winding)[3 * vertexIndex], dpvsGlob.viewOrg, &delta[3 * vertexIndex]);
+            Vec3Sub(winding[vertexIndex], dpvsGlob.viewOrg, &delta[3 * vertexIndex]);
         v3 = &delta[3 * vertexCount];
         *v3 = delta[0];
         v3[1] = delta[1];
         v3[2] = delta[2];
         for (vertexIndex = 0; vertexIndex < vertexCount; ++vertexIndex)
         {
-            Vec3Cross(&delta[3 * vertexIndex + 3], &delta[3 * vertexIndex], &(*normals)[3 * vertexIndex]);
-            Vec3Normalize(&(*normals)[3 * vertexIndex]);
+            Vec3Cross(&delta[3 * vertexIndex + 3], &delta[3 * vertexIndex], normals[vertexIndex]);
+            Vec3Normalize(normals[vertexIndex]);
         }
     }
 }
@@ -2088,13 +2088,13 @@ double __cdecl R_FurthestPointOnWinding(const float (*points)[3], int pointCount
     float distMax; // [esp+20h] [ebp-4h]
 
     v7 = Vec3Dot(plane->coeffs, (const float *)points) + plane->coeffs[3];
-    v6 = Vec3Dot(plane->coeffs, &(*points)[3 * pointCount - 3]) + plane->coeffs[3];
+    v6 = Vec3Dot(plane->coeffs, points[pointCount - 1]) + plane->coeffs[3];
     if (v6 >= (double)v7)
     {
         distMax = v6;
         for (pointIndexa = pointCount - 2; pointIndexa > 0; --pointIndexa)
         {
-            v4 = Vec3Dot(plane->coeffs, &(*points)[3 * pointIndexa]) + plane->coeffs[3];
+            v4 = Vec3Dot(plane->coeffs, points[pointIndexa]) + plane->coeffs[3];
             if (v4 < (double)distMax)
                 break;
             distMax = v4;
@@ -2105,7 +2105,7 @@ double __cdecl R_FurthestPointOnWinding(const float (*points)[3], int pointCount
         distMax = v7;
         for (pointIndex = 1; pointIndex < pointCount - 1; ++pointIndex)
         {
-            v5 = Vec3Dot(plane->coeffs, &(*points)[3 * pointIndex]) + plane->coeffs[3];
+            v5 = Vec3Dot(plane->coeffs, points[pointIndex]) + plane->coeffs[3];
             if (v5 < (double)distMax)
                 break;
             distMax = v5;
@@ -2288,7 +2288,7 @@ const float (*__cdecl R_ChopPortalWinding(
     backCount = 0;
     for (vertexIndex = 0; vertexIndex < *vertexCount; ++vertexIndex)
     {
-        v12 = Vec3Dot(plane->coeffs, &(*vertsIn)[3 * vertexIndex]) + plane->coeffs[3];
+        v12 = Vec3Dot(plane->coeffs, vertsIn[vertexIndex]) + plane->coeffs[3];
         distForVert[vertexIndex] = v12 - EQUAL_EPSILON;
         sideForVert[vertexIndex] = 2;
         if (distForVert[vertexIndex] >= -EQUAL_EPSILON)
@@ -2316,8 +2316,8 @@ const float (*__cdecl R_ChopPortalWinding(
             {
                 if (sideForVert[vertexIndex] == 2)
                 {
-                    v10 = &(*vertsOut)[3 * newVertCount];
-                    v11 = (float *)&(*vertsIn)[3 * vertexIndex];
+                    v10 = vertsOut[newVertCount];
+                    v11 = (float *)vertsIn[vertexIndex];
                     *v10 = *v11;
                     v10[1] = v11[1];
                     v10[2] = v11[2];
@@ -2327,8 +2327,8 @@ const float (*__cdecl R_ChopPortalWinding(
                 {
                     if (!sideForVert[vertexIndex])
                     {
-                        v8 = &(*vertsOut)[3 * newVertCount];
-                        v9 = (float *)&(*vertsIn)[3 * vertexIndex];
+                        v8 = vertsOut[newVertCount];
+                        v9 = (float *)vertsIn[vertexIndex];
                         *v8 = *v9;
                         v8[1] = v9[1];
                         v8[2] = v9[2];
@@ -2337,13 +2337,13 @@ const float (*__cdecl R_ChopPortalWinding(
                     if (sideForVert[vertexIndex + 1] != 2 && sideForVert[vertexIndex + 1] != sideForVert[vertexIndex])
                     {
                         lerpFactor = distForVert[vertexIndex] / (distForVert[vertexIndex] - distForVert[vertexIndex + 1]);
-                        v = &(*vertsIn)[3 * ((vertexIndex + 1) % *vertexCount)];
-                        v7 = (*v - (float)(*vertsIn)[3 * vertexIndex]) * lerpFactor + (float)(*vertsIn)[3 * vertexIndex];
-                        (*vertsOut)[3 * newVertCount] = v7;
-                        v6 = (v[1] - (float)(*vertsIn)[3 * vertexIndex + 1]) * lerpFactor + (float)(*vertsIn)[3 * vertexIndex + 1];
-                        (*vertsOut)[3 * newVertCount + 1] = v6;
-                        v5 = (v[2] - (float)(*vertsIn)[3 * vertexIndex + 2]) * lerpFactor + (float)(*vertsIn)[3 * vertexIndex + 2];
-                        (*vertsOut)[3 * newVertCount++ + 2] = v5;
+                        v = vertsIn[(vertexIndex + 1) % *vertexCount];
+                        v7 = (*v - (float)vertsIn[vertexIndex][0]) * lerpFactor + (float)vertsIn[vertexIndex][0];
+                        vertsOut[newVertCount][0] = v7;
+                        v6 = (v[1] - (float)vertsIn[vertexIndex][1]) * lerpFactor + (float)vertsIn[vertexIndex][1];
+                        vertsOut[newVertCount][1] = v6;
+                        v5 = (v[2] - (float)vertsIn[vertexIndex][2]) * lerpFactor + (float)vertsIn[vertexIndex][2];
+                        vertsOut[newVertCount++][2] = v5;
                     }
                 }
             }
@@ -3102,7 +3102,7 @@ uint32_t __cdecl R_PortalClipPlanes(
                 v9->coeffs[1] = v10[1];
                 v9->coeffs[2] = v10[2];
                 a = &planes[planeCount];
-                a->coeffs[3] = 0.001 - Vec3Dot(a->coeffs, &(*winding)[3 * windingVertIndex]);
+                a->coeffs[3] = 0.001 - Vec3Dot(a->coeffs, winding[windingVertIndex]);
                 a->side[0] = COERCE_INT(a->coeffs[0]) <= 0 ? 0 : 0xC;
                 a->side[1] = COERCE_INT(a->coeffs[1]) <= 0 ? 4 : 16;
                 a->side[2] = COERCE_INT(a->coeffs[2]) <= 0 ? 8 : 20;
@@ -3132,13 +3132,13 @@ double __cdecl R_NearestPointOnWinding(const float (*points)[3], int pointCount,
     int pointIndexa; // [esp+1Ch] [ebp-8h]
 
     v7 = Vec3Dot(plane->coeffs, (const float *)points) + plane->coeffs[3];
-    v6 = Vec3Dot(plane->coeffs, &(*points)[3 * pointCount - 3]) + plane->coeffs[3];
+    v6 = Vec3Dot(plane->coeffs, points[pointCount - 1]) + plane->coeffs[3];
     if (v6 <= (double)v7)
     {
         distMin = v6;
         for (pointIndexa = pointCount - 2; pointIndexa > 0; --pointIndexa)
         {
-            v4 = Vec3Dot(plane->coeffs, &(*points)[3 * pointIndexa]) + plane->coeffs[3];
+            v4 = Vec3Dot(plane->coeffs, points[pointIndexa]) + plane->coeffs[3];
             if (v4 > (double)distMin)
                 break;
             distMin = v4;
@@ -3149,7 +3149,7 @@ double __cdecl R_NearestPointOnWinding(const float (*points)[3], int pointCount,
         distMin = v7;
         for (pointIndex = 1; pointIndex < pointCount - 1; ++pointIndex)
         {
-            v5 = Vec3Dot(plane->coeffs, &(*points)[3 * pointIndex]) + plane->coeffs[3];
+            v5 = Vec3Dot(plane->coeffs, points[pointIndex]) + plane->coeffs[3];
             if (v5 > (double)distMin)
                 break;
             distMin = v5;
@@ -3182,7 +3182,7 @@ void __cdecl R_ProjectPortal(
 
     for (windingVertIndex = 0; windingVertIndex < vertexCount; ++windingVertIndex)
     {
-        xyz = &(*winding)[3 * windingVertIndex];
+        xyz = winding[windingVertIndex];
 
         float w = xyz[0] * dpvsGlob.viewProjMtx->m[0][3]
             + xyz[1] * dpvsGlob.viewProjMtx->m[1][3]
@@ -3298,7 +3298,7 @@ uint32_t __cdecl R_AddBevelPlanes(
             for (windingVertIndex = 0; windingVertIndex < vertexCount; ++windingVertIndex)
             {
                 if (r_portalBevels->current.value < Vec3Dot(
-                    &(*windingNormals)[3 * windingVertIndex],
+                    windingNormals[windingVertIndex],
                     planes[planeCount].coeffs))
                 {
                     if ((r_showPortals->current.integer & 2) != 0)
