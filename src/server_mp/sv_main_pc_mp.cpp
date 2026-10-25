@@ -3,6 +3,7 @@
 #endif
 
 #include "server_mp.h"
+#include "sv_rcon_gate.h"
 #include <qcommon/sys_time.h>
 #include <qcommon/cmd.h>
 
@@ -235,7 +236,7 @@ void __cdecl SV_FlushRedirect(char *outputbuf)
     NET_OutOfBandPrint(NS_SERVER, svs.redirectAddress, buf);
 }
 
-int lasttime;
+static sv_rcon::Gate s_rconGate;
 void __cdecl SVC_RemoteCommand(netadr_t from)
 {
     const char *v1; // eax
@@ -253,11 +254,13 @@ void __cdecl SVC_RemoteCommand(netadr_t from)
     int i; // [esp+C18h] [ebp-8h]
 
     time = Sys_Milliseconds();
-    if (!lasttime || time - lasttime >= 500)
+    sv_rcon::Source source;
+    source.type = static_cast<uint32_t>(from.type);
+    memcpy(source.ip, from.ip, sizeof(source.ip));
+    if (s_rconGate.Allow(source, time))
     {
-        lasttime = time;
         password = SV_Cmd_Argv(1);
-        if (*rcon_password->current.string && !strcmp(password, rcon_password->current.string))
+        if (*rcon_password->current.string && sv_rcon::PasswordMatches(password, rcon_password->current.string))
         {
             valid = 1;
             v6 = SV_Cmd_Argv(2);

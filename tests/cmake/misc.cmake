@@ -1092,6 +1092,16 @@ add_test(NAME cl-cinematic-policy-contracts COMMAND kisakcod-cl-cinematic-policy
 # The Win32 CI leg runs the ilp32 label.
 kisakcod_ilp32(kisakcod-cl-cinematic-policy-tests cl-cinematic-policy-contracts)
 
+# The rcon password check and rate limits (server_mp/sv_rcon_gate.h).
+# Engine-free, so it builds on every test platform.
+add_executable(kisakcod-sv-rcon-gate-tests sv_rcon_gate_tests.cpp)
+target_include_directories(kisakcod-sv-rcon-gate-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-sv-rcon-gate-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-sv-rcon-gate-tests)
+set_target_properties(kisakcod-sv-rcon-gate-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(NAME sv-rcon-gate-contracts COMMAND kisakcod-sv-rcon-gate-tests)
+kisakcod_ilp32(kisakcod-sv-rcon-gate-tests sv-rcon-gate-contracts)
+
 # The "cinematic" command (client/cl_cin.cpp) in a multiplayer client: a
 # cinematic leaves a connecting or connected client's state alone. Linux and
 # clang only, as above; the client's defines. r_cinematic.h needs dxvk-native's
