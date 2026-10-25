@@ -858,6 +858,7 @@ void __cdecl G_ProcessIPBans();
 void __cdecl AddIP(char *str);
 int32_t __cdecl StringToFilter(char *s, ipFilter_s *f);
 void UpdateIPBans();
+bool __cdecl G_IsAddressBanned(const uint8_t *ip);
 void __cdecl Svcmd_AddIP_f();
 void __cdecl Svcmd_RemoveIP_f();
 void __cdecl Svcmd_EntityList_f();

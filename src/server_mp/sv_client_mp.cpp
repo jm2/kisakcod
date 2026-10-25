@@ -673,6 +673,12 @@ void __cdecl SV_DirectConnect(netadr_t from)
         Com_DPrintf(15, "    rejected connect from protocol version %i (should be %i)\n", version, Com_WireProtocol());
         return;
     }
+    if (from.type == NA_IP && G_IsAddressBanned(from.ip))
+    {
+        NET_OutOfBandPrint(NS_SERVER, from, "error\xA\x15" "This address is banned from the server");
+        Com_DPrintf(15, "    rejected connect from banned address %s\n", NET_AdrToString(from));
+        return;
+    }
     challenge = atoi(Info_ValueForKey(userinfo, "challenge"));
     qport = atoi(Info_ValueForKey(userinfo, "qport"));
     i = 0;

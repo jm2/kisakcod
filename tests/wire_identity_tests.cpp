@@ -267,6 +267,7 @@ WEAK void __cdecl Netchan_Setup(netsrc_t, netchan_t *chan, netadr_t adr, int qpo
     chan->qport = qport;
 }
 WEAK char *__cdecl ClientConnect(uint32_t, uint16_t) { return nullptr; }
+WEAK bool __cdecl G_IsAddressBanned(const uint8_t *) { return false; }
 WEAK void __cdecl ClientDisconnect(int32_t) {}
 // The permanent ban list is a file; there is none, so only temporary bans apply.
 WEAK int __cdecl FS_ReadFile(const char *, void **) { return -1; }

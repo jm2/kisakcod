@@ -1638,3 +1638,13 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     add_test(NAME fs-usedevdir-1-8 COMMAND kisakcod-fs-usedevdir-tests)
     set_tests_properties(fs-usedevdir-1-8 PROPERTIES TIMEOUT 20)
 endif()
+
+# The IP ban filters behind addip, removeip and g_banIPs (game/g_ipfilter.h).
+# Engine-free, so it builds on every test platform.
+add_executable(kisakcod-g-ipfilter-tests g_ipfilter_tests.cpp)
+target_include_directories(kisakcod-g-ipfilter-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-g-ipfilter-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-g-ipfilter-tests)
+set_target_properties(kisakcod-g-ipfilter-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(NAME g-ipfilter-contracts COMMAND kisakcod-g-ipfilter-tests)
+kisakcod_ilp32(kisakcod-g-ipfilter-tests g-ipfilter-contracts)
