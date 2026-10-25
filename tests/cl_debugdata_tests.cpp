@@ -44,7 +44,7 @@ void TestListsAreCopied()
 {
     std::memset(&cls.debug, 0, sizeof(cls.debug));
     cls.rendererStarted = 1;
-    std::strcpy(g_strings[1].text, "second");
+    std::snprintf(g_strings[1].text, sizeof(g_strings[1].text), "%s", "second");
     g_lines[0].depthTest = 7;
     cls.debug.svStrings.strings = g_strings;
     cls.debug.svStrings.num = 2;
