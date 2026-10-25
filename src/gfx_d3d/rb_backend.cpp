@@ -559,9 +559,9 @@ void __cdecl RB_StretchPicRotateSTCmd(GfxRenderCommandExecState *execState)
     iassert( gfxCmdBufSourceState.viewMode == VIEW_MODE_2D );
     RB_SetTessTechnique(cmd->material, TECHNIQUE_UNLIT);
     R_TrackPrims(&gfxCmdBufState, GFX_PRIM_STATS_HUD);
+    RB_CheckTessOverflow(4, 6); // KISAK: before the counts, as RotateXY; a flush resets them
     vertCount = tess.vertexCount;
     indexCount = tess.indexCount;
-    RB_CheckTessOverflow(4, 6);
     tess.vertexCount += 4;
     tess.indexCount += 6;
     tess.indices[indexCount] = vertCount + 3;

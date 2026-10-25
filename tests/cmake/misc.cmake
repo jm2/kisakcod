@@ -1445,6 +1445,28 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_tests_properties(cg-bg-callbacks-contracts PROPERTIES TIMEOUT 20)
 endif()
 
+# RB_StretchPicRotateSTCmd (gfx_d3d/rb_backend.cpp): after a tess overflow
+# flush the rotated quad starts the new batch. The renderer headers need d3d9.h:
+# Linux clang builds where pkg-config finds dxvk-d3d9.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND KISAK_CIN_TEST_DXVK_D3D9_FOUND)
+    add_executable(kisakcod-rb-rotate-st-tests rb_rotate_st_tests.cpp ${SRC_DIR}/gfx_d3d/rb_backend.cpp
+        ${SRC_DIR}/universal/com_math.cpp com_math_test_stubs.cpp)
+    target_include_directories(kisakcod-rb-rotate-st-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-rb-rotate-st-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-rb-rotate-st-tests PRIVATE KISAK_MP UNIX KISAK_DXVK_NATIVE)
+    target_compile_options(kisakcod-rb-rotate-st-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_libraries(kisakcod-rb-rotate-st-tests PRIVATE PkgConfig::KISAK_CIN_TEST_DXVK_D3D9)
+    target_link_options(kisakcod-rb-rotate-st-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-rb-rotate-st-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-rb-rotate-st-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-rb-rotate-st-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME rb-rotate-st-contracts COMMAND kisakcod-rb-rotate-st-tests)
+    set_tests_properties(rb-rotate-st-contracts PROPERTIES TIMEOUT 20)
+endif()
+
 # FS_PureServerSetLoadedIwds (qcommon/files.cpp) at 64-bit: a pure server's
 # iwd names survive to the next gamestate. Linux and clang only, as above; the
 # client's defines.
