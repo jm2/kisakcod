@@ -30,6 +30,8 @@ void Check(const bool ok, const char *const what)
 }
 
 snd_alias_list_t *g_hashSlots[4];
+SoundFile g_files[2];
+snd_alias_t g_aliases[2];
 }
 
 void __cdecl MyAssertHandler(const char *, int, int, const char *, ...)
@@ -89,8 +91,8 @@ void TestUnloadClearsOwnHead()
 // 64-bit head pointer.
 void TestUnloadSoundsUsesFullHead()
 {
-    static SoundFile files[2];
-    static snd_alias_t aliases[2];
+    SoundFile *const files = g_files;
+    snd_alias_t *const aliases = g_aliases;
     ResetGlobals();
     files[0].exists = 1;
     files[1].exists = 1;
