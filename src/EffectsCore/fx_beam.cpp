@@ -255,7 +255,7 @@ void __cdecl FX_Beam_GenerateVerts(FxGenerateVertsCmd *cmd)
 
                 for (dim = 0; dim != 4; ++dim)
                 {
-                    v8 = (int)((double)(endColor.array[dim] - beginColor.array[dim]) * alpha + (double)beginColor.array[dim]);
+                    v8 = segCount ? (int)((double)(endColor.array[dim] - beginColor.array[dim]) * alpha + (double)beginColor.array[dim]) : INT_MIN; // KISAK: 0 segments make alpha NaN; x86's cast gives INT_MIN
                     if (v8 >= 0)
                     {
                         if (v8 <= 255)
