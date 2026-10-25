@@ -65,7 +65,10 @@ void TestLongDigitRun()
 // same address must always parse the same way.
 void TestStableEncoding()
 {
-    uint32_t m1 = 0, c1 = 0, m2 = 0, c2 = 0;
+    uint32_t m1 = 0;
+    uint32_t c1 = 0;
+    uint32_t m2 = 0;
+    uint32_t c2 = 0;
     CHECK(g_ipfilter::Parse("172.16.0.0", &m1, &c1));
     CHECK(g_ipfilter::Parse("172.16", &m2, &c2));
     CHECK(m1 == m2 && c1 == c2);
