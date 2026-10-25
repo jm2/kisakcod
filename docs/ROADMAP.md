@@ -16,7 +16,7 @@ targets is the release gate (G6), not a precondition for testing.
 | **G3 Fork-peer play** | An x86 fork client joins the native server and plays a full round, a map change and a reconnect, with 8 test clients. | Win64, Windows ARM64, Linux amd64/arm64, macOS arm64 headless | K6 | 1-2 weeks per target after G2 |
 | **G4a Steam 1.8 on x86** | An unmodified Steam 1.8 client discovers, connects, plays, changes map and reconnects on the fork's x86 server. | Windows x86 | - | 6-12 weeks (12-20 if in-band formats changed); starts when captures arrive |
 | **G4b Steam 1.8 on native** | The G4a matrix against every G3 server. | 5 headless targets | K6 | Small, once G4a and G3 are done |
-| **G5 Native client** | A Win64 D3D9 interim client plays on a fork server, then on a Steam 1.8 server. Linux and macOS go through dxvk-native as an interim. Vulkan replaces both before G6. | Win64, then Linux, then macOS | K6 | Win64 D3D9 2-4 months after G2; dxvk-native +1-2 months; Vulkan 6-12 months |
+| **G5 Native client** | A Win64 D3D9 interim client plays on a fork server, then on a Steam 1.8 server. Linux and macOS go through dxvk-native. These clients ship in 0.1.0; native Vulkan comes after it ([ADR-0010](decisions/0010-interim-renderers-ship-in-0-1-0.md)). | Win64, then Linux, then macOS | K6 | Win64 D3D9 2-4 months after G2; dxvk-native +1-2 months; Vulkan 6-12 months |
 | **G6 Release** | 5 targets x 2 roles packaged; native client joins a Steam 1.8 server and a Steam 1.8 client joins a native server; macOS ad-hoc signed, not notarized ([ADR-0007](decisions/0007-macos-notarization-deferred.md)); provenance recorded. | All | K6 | After G5 |
 
 Windows ARM64 builds the Win64 source set and is not in G1 or G2; its first run is at G3. K1's `win64` is x64
@@ -31,14 +31,18 @@ FFmpeg (owner, 2026-10-22); no build links Miles or Bink.
 Estimates are ranges for one strong engineer, with low confidence. They don't
 convert to swarm time.
 
-**Where things stand (2026-10-21).** G1 is done. G2's loader is complete
-and loads every family by default (`db_unverified64`, validated after the fact); K4 is 19/25 and the 30-minute ASan/UBSan
-soak passes on lin64 and arm64 (NOW rows 37, 45). G5 ran ahead of G2 on that
-default: all five 64-bit clients are in-game on Steam 1.8 data, and POSIX
-clients play cinematics and audio through FFmpeg and OpenAL Soft. G4a's wire
-identity is built and waits on the owner's captures. G0's x86 server runs
-natively and under Wine; the client run waits on antec-win's console (row 46).
-G3's server pre-check runs 8 bots clean (row 47); G4b and G6 haven't started.
+**Where things stand (2026-10-25).** G0, G1 and G2 are done (#178-#180). The x86
+client and server play on Steam 1.8 data natively and under Wine (#178), and
+the 64-bit headless server loads every family with its guard on (K4 25/25)
+and passes the 30-minute ASan/UBSan proof on Linux amd64 and Win64 (#180).
+G3's first target passes: an x86 fork client plays a round, map changes and
+a reconnect on the Win64 server with 8 bots. G5's interim clients are done:
+the Win64 D3D9 client and the Linux and macOS dxvk-native clients play on a
+fork server and on a Steam 1.8 server, ASan-clean; Windows ARM64's run is
+left. Vulkan (#713) comes after 0.1.0.
+G4a is under way: a stock 1.8 client joins the x86 server and stays through
+map changes (#182), and the wire captures wait on the owner. G3 (#181), G4b
+(#183) and G6 (#185) are open; G4b and G6 haven't started.
 
 ```mermaid
 graph LR

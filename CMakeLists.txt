@@ -157,7 +157,7 @@ endif()
 # C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.44.35207\bin\Hostx86\x86
 set(USE_ASAN OFF)
 
-# Reproducible reference builds (M0 byte-parity gate). /Brepro pins the
+# Reproducible reference builds (the x86 byte-parity check). /Brepro pins the
 # embedded timestamp, PDB GUID, and __DATE__/__TIME__ inputs so the shared
 # retail reference translation units compile and link byte-identically across
 # the MP/SP/dedicated KISAK_BUILD_* variants. Off by default; the hosted

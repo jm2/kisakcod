@@ -15,9 +15,11 @@ Learn about the Development of KisakCOD here: [https://lwss.github.io/Duty-Of-Ki
 The engine currently produces Windows x86 multiplayer client and dedicated
 server binaries. Native 64-bit builds for Windows amd64, Windows ARM64, Linux
 amd64/arm64 and macOS arm64 are the port's targets. The headless server
-builds and smoke-runs in CI on all five. The 64-bit clients are in development:
-all five 64-bit clients reach in-game on retail data, through an opt-in
-loader path ([NOW](docs/NOW.md)). The network target is the original **Steam release of Call of Duty 4,
+builds and smoke-runs in CI on all five, and loads retail fast files with
+every asset family verified against x86. The 64-bit clients are pre-release;
+the Win64, Linux and macOS ones play on KisakCOD and Steam 1.8 servers, and 0.1.0
+ships them on D3D9 (Windows) and dxvk-native (Linux, macOS)
+([NOW](docs/NOW.md)). The network target is the original **Steam release of Call of Duty 4,
 version 1.8** (`1.8.13620`): native clients must join unmodified Steam 1.8
 servers, and unmodified Steam 1.8 clients must join KisakCOD servers.
 
@@ -112,7 +114,7 @@ remain a manual workflow.
 
 
 ```
-Keep in Mind: This is a ~20 year old game with some known exploits. We will try to fix these as we become aware of them.
+Keep in Mind: This is a ~20 year old game with some known exploits. We will try to fix these as we become aware of them. Report a vulnerability privately, as [SECURITY.md](SECURITY.md) describes, not in a public issue.
 However, there is a non-zero chance of some type of binary exploitation when playing online. Use a sandbox (Sandboxie?) for peace of mind. 
 ```
 

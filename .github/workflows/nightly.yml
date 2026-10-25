@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   windows-x86-parity:
-    # M0 exit gate: proves the shared retail reference bytes are byte-identical
+    # x86 byte-parity check: proves the shared retail reference bytes are byte-identical
     # across the Windows x86 MP/SP/dedicated baseline. Each preset is configured
     # with KISAK_REPRODUCIBLE_BUILD=ON so /Brepro pins the __DATE__/__TIME__ and
     # linker stamp inputs, and scripts/ci/compare-byte-parity.sh then hard-gates

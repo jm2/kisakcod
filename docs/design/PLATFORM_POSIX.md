@@ -31,6 +31,8 @@ Engine callers are outside `src/_platform`. A service is done only when a real t
 | `Sys_ProcessFreezeForCrash` | — | Mach backend (`sys_mach_crash.cpp`); Linux returns Unsupported | none | unwired |
 | `src/database/shader_cache.*` | — | — | none (yet in the headless set) | unwired; client item |
 
+Winsock (`sys_socket.cpp`): UDP sockets open with `SIO_UDP_CONNRESET` off, and `WSAECONNRESET`/`WSAENETRESET` map to WouldBlock, since Windows reports an earlier send's ICMP port-unreachable on the next `recvfrom` (#772). `WSAPoll` misses refused connects before Windows 10 2004, so `Sys_SocketPollConnected` reads `SO_ERROR` on every poll. Don't bring back `select()`/`timeval` (Codacy's Y2038 rule).
+
 ## What the headless server still needs
 
 Relaunch through `Sys_ProcessLaunch` instead of `Sys_QuitAndStartProcess` and `Sys_Spawn`: not queued. Fast-file reads already go through the portable `sys_file` service.

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# run-retail-fastfile-parity.sh — retail fast-file parity instrument and M5
+# run-retail-fastfile-parity.sh — retail fast-file parity instrument and
 # runtime-graph acceptance gate (ki-msb).
 #
 # Runs the fast-file capture harness on the host build (native64, Linux
@@ -39,7 +39,7 @@
 #       and is explicitly NOT a runtime-graph parity result.
 #
 #   m5-graph
-#       The M5 runtime-graph acceptance gate. Requires BOTH legs to carry
+#       The runtime-graph parity check. Requires BOTH legs to carry
 #       a runtime-graph capture kind (graph-*; the widened runtime-graph
 #       walk enrolls as capture_kind graph-v1 when the native64 loader
 #       path lands) AND verified leg identity: the host capture must
@@ -101,7 +101,7 @@ FASTFILE="${KISAK_RETAIL_FASTFILE:-}"
 REFERENCE_HASH_FILE=""
 EMIT_REFERENCE_FILE=""
 # instrument: compare any one declared capture kind, result named by kind.
-# m5-graph: M5 runtime-graph acceptance gate (graph-* captures + verified
+# m5-graph: the runtime-graph parity check (graph-* captures + verified
 # leg identity; envelope-only data fails).
 MODE="instrument"
 # The default preset follows the HOST leg: the documented windows-x86 mint
@@ -155,7 +155,7 @@ if [ "$MODE" != "instrument" ] && [ "$MODE" != "m5-graph" ]; then
 fi
 if [ "$MODE" = "m5-graph" ] && [ "$HOST_TRIPLE" = "$REF_TRIPLE" ]; then
     echo "run-retail-fastfile-parity: --mode m5-graph compares two DIFFERENT legs" >&2
-    echo "  (host=$HOST_TRIPLE ref=$REF_TRIPLE); same-triple parity is not an M5 result" >&2
+    echo "  (host=$HOST_TRIPLE ref=$REF_TRIPLE); same-triple parity is not a runtime-graph result" >&2
     usage_exit
 fi
 
@@ -360,14 +360,14 @@ if [ "$HOST_LEG" != "$HOST_TRIPLE" ]; then
 fi
 
 if [ -n "$EMIT_REFERENCE_FILE" ]; then
-    # An M5 runtime-graph reference must come from a runtime-graph capture;
+    # A runtime-graph reference must come from a runtime-graph capture;
     # minting an envelope reference under --mode m5-graph would stock the
     # gate with data that cannot prove runtime-graph parity.
     if [ "$MODE" = "m5-graph" ] && ! kind_is_graph "$HOST_KIND"; then
         echo "run-retail-fastfile-parity: FAIL --mode m5-graph requires a runtime-graph" >&2
         echo "  capture (graph-*); this harness produced capture_kind=$HOST_KIND." >&2
         echo "  Envelope captures hash fast-file bytes only — they prove envelope" >&2
-        echo "  consistency, NOT widened-runtime-graph parity. Mint M5 references" >&2
+        echo "  consistency, NOT widened-runtime-graph parity. Mint runtime-graph references" >&2
         echo "  only after the runtime-graph walk (graph-v1) lands." >&2
         exit 1
     fi
@@ -392,7 +392,7 @@ if [ -n "$EMIT_REFERENCE_FILE" ]; then
         echo "run-retail-fastfile-parity: OK reference emitted ($HOST_LEG leg, runtime-graph capture)"
     else
         echo "run-retail-fastfile-parity: OK reference emitted ($HOST_LEG leg, ENVELOPE capture:"
-        echo "  envelope-consistency reference only — NOT an M5 runtime-graph reference)"
+        echo "  envelope-consistency reference only — NOT a runtime-graph reference)"
     fi
     exit 0
 fi
@@ -476,7 +476,7 @@ echo "=== Comparing legs ==="
 echo "  host ($HOST_TRIPLE): capture_kind=$HOST_KIND domain=$HOST_DOMAIN platform=$HOST_PLATFORM leg=$HOST_LEG"
 echo "  ref  ($REF_TRIPLE): capture_kind=$REF_KIND domain=$REF_DOMAIN platform=${REF_PLATFORM:-<none>} leg=${REF_LEG:-<none>}"
 
-# --mode m5-graph is the M5 RUNTIME-GRAPH acceptance gate: envelope
+# --mode m5-graph is the RUNTIME-GRAPH parity check: envelope
 # captures hash fast-file bytes only and cannot satisfy it, no matter how
 # well the digests agree.
 if [ "$MODE" = "m5-graph" ]; then
@@ -519,14 +519,14 @@ fi
 # --mode m5-graph with graph-* captures and verified leg identity may speak
 # of widened-runtime-graph parity.
 if [ "$MODE" = "m5-graph" ]; then
-    echo "run-retail-fastfile-parity: OK widened-runtime-graph parity (M5; capture_kind=$HOST_KIND,"
+    echo "run-retail-fastfile-parity: OK widened-runtime-graph parity (capture_kind=$HOST_KIND,"
     echo "  host=$HOST_TRIPLE vs ref=$REF_TRIPLE, platform+leg identity verified)"
 elif kind_is_graph "$HOST_KIND"; then
     echo "run-retail-fastfile-parity: OK widened-graph digest matches (capture_kind=$HOST_KIND,"
-    echo "  host=$HOST_TRIPLE vs ref=$REF_TRIPLE; instrument mode — the M5 acceptance gate is --mode m5-graph)"
+    echo "  host=$HOST_TRIPLE vs ref=$REF_TRIPLE; instrument mode — the runtime-graph parity check is --mode m5-graph)"
 else
     echo "run-retail-fastfile-parity: OK envelope-consistency digest matches (capture_kind=$HOST_KIND,"
     echo "  host=$HOST_TRIPLE vs ref=$REF_TRIPLE)"
     echo "  NOTE: envelope captures hash fast-file bytes only — this is NOT a"
-    echo "  widened-runtime-graph parity result. The M5 acceptance gate is --mode m5-graph."
+    echo "  widened-runtime-graph parity result. The runtime-graph parity check is --mode m5-graph."
 fi

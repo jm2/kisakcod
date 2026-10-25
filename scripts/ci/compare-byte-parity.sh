@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# compare-byte-parity.sh — M0 acceptance gate for byte-identical reference parity
+# compare-byte-parity.sh — the x86 byte-parity check for byte-identical reference parity
 # across the Windows x86 hosted MP/SP/dedicated baselines.
 #
 # For each named build directory passed on the command line, this script:

@@ -27,14 +27,14 @@ BUDGETS = {  # path -> max bytes
     "docs/capability/manifest.json": 8 * KB,
     "docs/design/NATIVE64.md": 15 * KB,
     "docs/design/FASTFILE_LOADER.md": 12 * KB,
-    "docs/design/NET_STEAM18.md": 12 * KB,
+    "docs/design/NET_STEAM18.md": 13 * KB,
     "docs/design/PLATFORM_POSIX.md": 8 * KB,
     "docs/design/DETERMINISM.md": 5 * KB,
-    "docs/design/CLIENT.md": 15 * KB,
+    "docs/design/CLIENT.md": 18 * KB,
 }
 ADR_RE = re.compile(r"^docs/decisions/\d{4}-[a-z0-9-]+\.md$")
 ADR_BUDGET = 2 * KB
-DOCS_TOTAL = 100 * KB
+DOCS_TOTAL = 112 * KB
 NOW_MAX_AGE_DAYS = 10
 
 

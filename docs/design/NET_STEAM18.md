@@ -15,7 +15,7 @@ The only network reference is the original Steam release `1.8.13620`. The releas
 | Authorize / master | The `SV_AuthorizeRequest` call in the challenge path and `SV_MasterHeartbeat` are commented out. `masterServerName` still defaults to `cod4master.activision.com` | `sv_client_mp.cpp`, `sv_main_pc_mp.cpp`, `common.cpp` |
 | PunkBuster | Every `Pb*` hook is commented out and stays dead ([ADR-0002](../decisions/0002-punkbuster-out.md)). `getinfo` still sends a `pb` key from `sv_punkbuster` | `sv_main_mp.cpp` and others |
 
-**Result:** under `steam18` the server and client speak the community-sourced 1.8 identity, but no stock 1.8 peer has joined yet. That's NOW row 36, which needs the owner's captures (§5).
+**Result:** under `steam18` the server and client speak the community-sourced 1.8 identity, and a stock 1.8 client has joined the x86 server and stayed through two map changes (NOW row 36, #182). The owner's captures (§5) are still needed to confirm the values.
 
 ## 2. Stock handshake (1.0 and 1.7)
 
@@ -74,6 +74,14 @@ These points are community-sourced; confirm each by capture:
    - a download
    - rcon
 
+3. The retail server as a reference peer: from a temp copy (`iw3mp.exe`,
+   `mss32`, `binkw32`, `d3dx9_34`, `miles\`), run `iw3mp.exe +set dedicated 1`
+   with `fs_basepath` at the data and a fresh `fs_homepath` each run (a killed
+   run leaves "Run In Safe Mode?"). It reads `zone\` beside the exe, so add a
+   directory junction to the data's `zone`. It needs no Steam client, reports
+   `CoD4 MP 1.8 build 13620` and protocol 7, and LAN mode logs an empty GUID
+   in J;/Q; lines. Under Wine on antec it serves our clients over the LAN.
+
 **Privacy.**
 
 - Raw pcaps stay private. The CD key goes in plaintext to the authorize port, and `getchallenge` carries its MD5.
@@ -93,8 +101,7 @@ These points are community-sourced; confirm each by capture:
 **Test clients.** `scr_testclients` (and `addtestclient()`) spawn nothing
 unless `developer 1` and `developer_script 1` are set. A connect rejected on
 protocol logs only through `Com_DPrintf`, so a missing bot is silent without
-`developer 1`. Test clients send protocol 1, so a steam18 server rejects them
-until #641 (open) sends the server's wire protocol. The first
+`developer 1`. Test clients send the server's wire protocol (#641). The first
 int-stat `getstat` on a 64-bit server comes from a bot (#667).
 
 ## 7. Profiles
@@ -142,13 +149,13 @@ Replay the captured usercmds through the fork's `Pmove` (`bg_pmove.cpp`), and co
 | G4a | An unmodified Steam 1.8 client discovers, connects, plays, changes map and reconnects on the fork's **x86** server |
 | G4b | The G4a matrix against every native server that passed G3 |
 
-- **Work:** the `steam18` profile is done (#531, #532). The capture decoder and diff report (§6) and the G4a run (NOW row 36) wait on the captures.
+- **Work:** the `steam18` profile is done (#531, #532). The capture decoder and diff report (§6) wait on the captures. The G4a run is under way on yoga (NOW row 36, #182).
 - **Effort:** 6–12 weeks, or 12–20 if in-band formats changed. All of it can be built and tested on the x86 build, and it starts when the captures arrive.
 - **Evidence rules:** fork-peer evidence never counts for G4, and x86 evidence never counts for G4b ([CHARTER](../CHARTER.md), [ROADMAP](../ROADMAP.md)).
 
 ## 12. 1.8 executable changes (#692)
 
-Read from the local 1.8 `iw3mp.exe`; the SP exe is DRM-wrapped and unread, so SP keeps 1.0.
+Read from the local 1.8 `iw3mp.exe`; the SP exe is DRM-wrapped and unread, so SP keeps 1.0. The MP exe also has a French digit-key table after `keynames_localized` (#795).
 
 **Imported:** getinfo `hc`/`od` (#698); lean defaults (#701); `g_antilag` ROM (#702); `sv_floodprotect` (#705); `sv_pure` 1 (#717); `fs_usedevdir` (#725); browser `hc`/`od` filters (#726); debug defaults and flags (#730); only `iw_` IWDs from `fs_basepath/main` (#735).
 
