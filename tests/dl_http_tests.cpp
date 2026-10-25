@@ -208,6 +208,24 @@ void StageUrlParseBounds()
         "url-query-too-long");
     Check(url.path[0] == '\0', "url-query-too-long");
 
+    // `out` is written only on Ok: a failure after the host was copied (a
+    // path or credential that is too long) leaves the earlier result whole.
+    Check(Dl_ParseRedirectUrl("http://first.example/f.map", &url)
+            == DlUrlStatus::Ok,
+        "url-before-failure");
+    Check(Dl_ParseRedirectUrl(longPathUrl, &url) == DlUrlStatus::TooLong,
+        "url-path-too-long-after-ok");
+    Check(std::strcmp(url.host, "first.example") == 0
+            && std::strcmp(url.path, "/f.map") == 0,
+        "url-failure-keeps-out");
+    char longUserUrl[1400];
+    std::snprintf(longUserUrl, sizeof(longUserUrl),
+        "http://%s:pw@cdn.example.com/f.map", longQuery + 1);
+    Check(Dl_ParseRedirectUrl(longUserUrl, &url) == DlUrlStatus::TooLong,
+        "url-user-too-long-after-ok");
+    Check(std::strcmp(url.host, "first.example") == 0,
+        "url-credential-failure-keeps-out");
+
     // A component at exactly the bound still parses.
     char maxHost[256];
     for (int index = 0; index < 255; ++index)
