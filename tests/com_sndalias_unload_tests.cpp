@@ -4,7 +4,8 @@
 // g_sa.aliasInfo[system].head. The decompiled form reached it through
 // soundFileInfo[-4] with the x86 12-byte stride: at 64-bit that lands in the
 // wrong alias list for every system but the first, and the sounds path
-// truncated the pointer to 32 bits.
+// truncated the pointer to 32 bits. Com_PickSoundAliasFromList's seed step
+// must wrap as unsigned, as x86 does, not overflow a signed int.
 
 #include <universal/com_sndalias.h>
 
@@ -40,6 +41,10 @@ void __cdecl MyAssertHandler(const char *, int, int, const char *, ...)
 }
 
 void __cdecl Cmd_RemoveCommand(const char *)
+{
+}
+
+void __cdecl Com_PrintWarning(int, const char *, ...)
 {
 }
 
@@ -110,10 +115,33 @@ void TestUnloadSoundsUsesFullHead()
 }
 }
 
+namespace
+{
+snd_alias_t g_pick[2];
+
+// Two aliases from a seed whose step overflows int: the seed advances once,
+// with the x86 wrap.
+void TestPickWrapsSeed()
+{
+    snd_alias_t *const pick = g_pick;
+    ResetGlobals();
+    pick[0].probability = 1.0f;
+    pick[1].probability = 1.0f;
+    snd_alias_list_t list{};
+    list.head = pick;
+    list.count = 2;
+    g_sa.randSeed = 2531011;
+    Com_PickSoundAliasFromList(&list);
+    const uint32_t wrapped = static_cast<uint32_t>(214013ull * 2531011u + 2531011u);
+    Check(g_sa.randSeed == static_cast<int>(wrapped), "alias pick wraps the seed");
+}
+}
+
 int main()
 {
     TestUnloadClearsOwnHead();
     TestUnloadSoundsUsesFullHead();
+    TestPickWrapsSeed();
     if (g_failures)
         return 1;
     std::puts("com_sndalias unload: ok");
