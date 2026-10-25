@@ -663,6 +663,12 @@ void __cdecl RB_DrawProfileScript()
     float yb; // [esp+9Ch] [ebp-8h]
     int profileIndex; // [esp+A0h] [ebp-4h]
 
+    // The profiler is stubbed out: Profile_InitContext never publishes a
+    // profile stack, so there is no script profile to draw, and both views
+    // below would read through a null stack or an unbuilt source table.
+    if (!Sys_GetValue(0))
+        return;
+
     if (profile_script->current.enabled)
     {
         profile = Profile_GetScript();
