@@ -516,14 +516,9 @@ void __cdecl Scr_GetEnt()
     offset = Scr_GetOffset(0, key);
     if (offset >= 0)
     {
-        if (offset >= 10)
-            MyAssertHandler(
-                ".\\game_mp\\g_spawn_mp.cpp",
-                999,
-                0,
-                "%s",
-                "offset >= 0 && offset < static_cast<int>( ARRAY_COUNT( fields ) - 1 )");
-        if (fields_1[offset].type == F_STRING)
+        // A client field's offset carries the 0xC000 bit; only fields_1's own
+        // entries can be searched, so anything else finds nothing.
+        if (offset < static_cast<int32_t>(ARRAY_COUNT(fields_1) - 1) && fields_1[offset].type == F_STRING)
         {
             result = 0;
             i = 0;
@@ -570,14 +565,8 @@ void __cdecl Scr_GetEntArray()
         offset = Scr_GetOffset(0, key);
         if (offset >= 0)
         {
-            if (offset >= 10)
-                MyAssertHandler(
-                    ".\\game_mp\\g_spawn_mp.cpp",
-                    1064,
-                    0,
-                    "%s",
-                    "offset >= 0 && offset < static_cast<int>( ARRAY_COUNT( fields ) - 1 )");
-            if (fields_1[offset].type == F_STRING)
+            // As in Scr_GetEnt: only fields_1's own entries can be searched.
+            if (offset < static_cast<int32_t>(ARRAY_COUNT(fields_1) - 1) && fields_1[offset].type == F_STRING)
             {
                 Scr_MakeArray();
                 ia = 0;

@@ -34,6 +34,7 @@
 #include <universal/surfaceflags.h>
 #include <qcommon/cmd.h>
 #include <universal/com_files.h>
+#include <bgame/bg_weapon_model_safety.h>
 
 //   struct BuiltinFunctionDef *functions 827b5700     g_scr_main_mp.obj
 //   struct scr_data_t g_scr_data 82e8a4b8     g_scr_main_mp.obj
@@ -1020,20 +1021,10 @@ void Scr_GetWeaponModel()
     weaponModel = 0;
     if (iWeaponIndex)
     {
-        if (Scr_GetNumParam() == 2)
-        {
-            weaponModel = Scr_GetInt(1);
-            if (weaponModel < 0x100)
-            {
-                if (!BG_GetWeaponDef(iWeaponIndex)->worldModel[weaponModel])
-                    weaponModel = 0;
-            }
-            else
-            {
-                weaponModel = 0;
-            }
-        }
         WeaponDef = BG_GetWeaponDef(iWeaponIndex);
+        // An index outside worldModel[], or naming an empty slot, uses model 0.
+        if (Scr_GetNumParam() == 2)
+            weaponModel = bg::weapon_model::ResolveIndex(WeaponDef->worldModel, Scr_GetInt(1));
         Scr_AddString(XModelGetName(WeaponDef->worldModel[weaponModel]));
     }
     else
