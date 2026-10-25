@@ -58,6 +58,32 @@ add_test(
     COMMAND kisakcod-renderer-headless-seam-tests
 )
 
+# R_Cmd_ReloadMaterialTextures (gfx_d3d/r_material.cpp): the material name is a
+# Com_Printf argument, not part of the format. The renderer headers need d3d9.h:
+# Linux clang builds where pkg-config finds dxvk-d3d9.
+find_package(PkgConfig QUIET)
+if (PkgConfig_FOUND)
+    pkg_check_modules(KISAK_CIN_TEST_DXVK_D3D9 QUIET IMPORTED_TARGET dxvk-d3d9)
+endif()
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND KISAK_CIN_TEST_DXVK_D3D9_FOUND)
+    add_executable(kisakcod-r-material-reload-cmd-tests r_material_reload_cmd_tests.cpp
+        ${SRC_DIR}/gfx_d3d/r_material.cpp)
+    target_include_directories(kisakcod-r-material-reload-cmd-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-r-material-reload-cmd-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-r-material-reload-cmd-tests PRIVATE KISAK_MP UNIX KISAK_DXVK_NATIVE)
+    target_compile_options(kisakcod-r-material-reload-cmd-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_libraries(kisakcod-r-material-reload-cmd-tests PRIVATE PkgConfig::KISAK_CIN_TEST_DXVK_D3D9)
+    target_link_options(kisakcod-r-material-reload-cmd-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-r-material-reload-cmd-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-r-material-reload-cmd-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-r-material-reload-cmd-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME r-material-reload-cmd-contracts COMMAND kisakcod-r-material-reload-cmd-tests)
+    set_tests_properties(r-material-reload-cmd-contracts PROPERTIES TIMEOUT 20)
+endif()
+
 # The window setup's refresh-rate lookup over the sorted D3D9 display modes
 # (gfx_d3d/r_display_modes.cpp), which R_ClosestRefreshRateForMode calls.
 # The decompiled lookup indexed past dx.displayModes into a pointer table and

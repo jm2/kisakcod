@@ -1099,7 +1099,7 @@ void __cdecl Material_ReloadTextures(const Material *material)
 
 void __cdecl R_Cmd_ReloadMaterialTextures()
 {
-    char *v0; // eax
+    // (the decompiled va() result went here)
     Material *material; // [esp+0h] [ebp-8h]
     const char *name; // [esp+4h] [ebp-4h]
 
@@ -1115,8 +1115,8 @@ void __cdecl R_Cmd_ReloadMaterialTextures()
         }
         else
         {
-            v0 = va("ReloadMaterialTextures: Material '%s' is not currently loaded.\n", name);
-            Com_Printf(8, v0);
+            Com_Printf(8, "ReloadMaterialTextures: Material '%s' is not currently loaded.\n",
+                name); // KISAK: the name is an argument, not part of the format
         }
     }
     else
