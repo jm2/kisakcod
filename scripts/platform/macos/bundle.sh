@@ -1,0 +1,243 @@
+#!/usr/bin/env bash
+# Assemble KisakCOD-mp.app with its runtime (docs/decisions/0011).
+#
+# Every non-system dependency of the client is copied into Contents/Frameworks,
+# its install names are rewritten to @rpath, the bundled Vulkan loader is
+# pointed at the bundled KosmicKrisp ICD, and everything is ad-hoc signed.
+# The result is checked: any remaining absolute path outside the app is an
+# error, so a stray Homebrew reference cannot ship.
+#
+# Usage:
+#   bundle.sh --app <out.app> --client <KisakCOD-mp> --runtime-prefix <dir>
+#             --mesa-prefix <dir> --dxvk-lib <libdxvk_d3d9.0.dylib>
+#             [--licenses <dir>] [--version <short version>]
+set -euo pipefail
+
+APP="" CLIENT="" RUNTIME="" MESA="" DXVK="" LICENSES="" VERSION="0.1.0"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --app) APP="$2"; shift 2 ;;
+        --client) CLIENT="$2"; shift 2 ;;
+        --runtime-prefix) RUNTIME="$2"; shift 2 ;;
+        --mesa-prefix) MESA="$2"; shift 2 ;;
+        --dxvk-lib) DXVK="$2"; shift 2 ;;
+        --licenses) LICENSES="$2"; shift 2 ;;
+        --version) VERSION="$2"; shift 2 ;;
+        *) echo "bundle: unknown argument $1" >&2; exit 2 ;;
+    esac
+done
+for v in APP CLIENT RUNTIME MESA DXVK; do
+    [ -n "${!v}" ] || { echo "bundle: --$(echo $v | tr 'A-Z_' 'a-z-') is required" >&2; exit 2; }
+done
+for f in "$CLIENT" "$DXVK" "$RUNTIME/lib/libvulkan.1.dylib" "$MESA/lib/libvulkan_kosmickrisp.dylib"; do
+    [ -f "$f" ] || { echo "bundle: missing $f" >&2; exit 1; }
+done
+command -v install_name_tool >/dev/null || { echo "bundle: install_name_tool not found" >&2; exit 1; }
+command -v codesign >/dev/null || { echo "bundle: codesign not found" >&2; exit 1; }
+
+# Assemble into a fresh staging directory: an earlier run's frameworks must
+# never survive into a new bundle (an old copy would hide a pin bump).
+APP_DEST="$APP"
+STAGE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/kisakcod-bundle.XXXXXX")"
+APP="$STAGE_ROOT/KisakCOD-mp.app"
+CONTENTS="$APP/Contents"
+FRAMEWORKS="$CONTENTS/Frameworks"
+MACOS="$CONTENTS/MacOS"
+RESOURCES="$CONTENTS/Resources"
+ICD_DIR="$RESOURCES/vulkan/icd.d"
+mkdir -p "$MACOS" "$FRAMEWORKS" "$ICD_DIR" "$RESOURCES/licenses"
+cp -f "$CLIENT" "$MACOS/KisakCOD-mp"
+chmod +x "$MACOS/KisakCOD-mp"
+
+is_system() {
+    case "$1" in
+        /usr/lib/*|/System/*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# $1: Mach-O file. Prints its non-system dependency paths.
+deps_of() {
+    otool -L "$1" | tail -n +2 | awk '{print $1}' | while read -r dep; do
+        [ -n "$dep" ] || continue
+        is_system "$dep" && continue
+        echo "$dep"
+    done
+}
+
+# Copy a library (following symlinks) under the name dyld will look for.
+copy_lib() {
+    local src="$1" name dst
+    name="$(basename "$src")"
+    dst="$FRAMEWORKS/$name"
+    [ -f "$dst" ] && return 0
+    cp -Lf "$src" "$dst"
+    chmod u+w "$dst"
+}
+
+# Map a dyld reference to the file that implements it. @rpath names are
+# resolved against the prefixes the build linked; anything else is an error.
+resolve_dep() {
+    local dep="$1" name
+    case "$dep" in
+        @rpath/*|@loader_path/*) name="${dep##*/}" ;;
+        *) [ -f "$dep" ] && { echo "$dep"; return 0; }; return 1 ;;
+    esac
+    [ -n "$name" ] || return 1
+    local d
+    for d in "$FRAMEWORKS" "$RUNTIME/lib" "$MESA/lib" "$(dirname "$DXVK")"; do
+        if [ -f "$d/$name" ]; then echo "$d/$name"; return 0; fi
+    done
+    return 1
+}
+
+# Close over the client's dependencies, then add the two libraries dyld never
+# sees as links: the Vulkan loader (dxvk dlopens it) and the ICD (the loader
+# opens it from the manifest).
+QUEUE=()
+seen=" "
+add_src() {
+    local src="$1" name
+    if [ "$src" = "$CLIENT" ]; then
+        case "$seen" in *" KisakCOD-mp "*) return 0 ;; esac
+        seen="$seen KisakCOD-mp "
+        QUEUE+=("$MACOS/KisakCOD-mp")
+        return 0
+    fi
+    [ -f "$src" ] || { echo "bundle: cannot resolve $src" >&2; exit 1; }
+    name="$(basename "$src")"
+    case "$seen" in *" $name "*) return 0 ;; esac
+    seen="$seen$name "
+    copy_lib "$src"
+    QUEUE+=("$FRAMEWORKS/$name")
+}
+add_src "$CLIENT"        # the client itself is rewritten in place, not copied again
+add_src "$DXVK"
+add_src "$RUNTIME/lib/libvulkan.1.dylib"
+add_src "$MESA/lib/libvulkan_kosmickrisp.dylib"
+
+# The client's own libraries: resolve each dependency against the prefixes.
+i=0
+while [ $i -lt ${#QUEUE[@]} ]; do
+    lib="${QUEUE[$i]}"
+    i=$((i + 1))
+    orig="$lib"
+    while read -r dep; do
+        [ -n "$dep" ] || continue
+        name="${dep##*/}"
+        [ -f "$FRAMEWORKS/$name" ] && continue
+        if ! src="$(resolve_dep "$dep")"; then
+            echo "bundle: unresolved $dep in $orig" >&2
+            exit 1
+        fi
+        add_src "$src"
+    done < <(deps_of "$orig")
+done
+
+# Rewrite install names: ids to @rpath, references to @rpath/<name>.
+rewrite_refs() {
+    local file="$1" dep name
+    install_name_tool -add_rpath "@loader_path" "$file" 2>/dev/null || true
+    while read -r dep; do
+        [ -n "$dep" ] || continue
+        case "$dep" in
+            @rpath/*) continue ;;
+        esac
+        name="$(basename "$dep")"
+        if [ -f "$FRAMEWORKS/$name" ]; then
+            install_name_tool -change "$dep" "@rpath/$name" "$file"
+        fi
+    done < <(deps_of "$file")
+}
+
+for lib in "$FRAMEWORKS"/*.dylib; do
+    install_name_tool -id "@rpath/$(basename "$lib")" "$lib"
+done
+for lib in "$FRAMEWORKS"/*.dylib; do
+    rewrite_refs "$lib"
+done
+
+install_name_tool -add_rpath "@executable_path/../Frameworks" "$MACOS/KisakCOD-mp" 2>/dev/null || true
+rewrite_refs "$MACOS/KisakCOD-mp"
+
+# The bundled loader finds the bundled ICD relative to the manifest.
+cat > "$ICD_DIR/kosmickrisp_mesa_icd.json" <<JSON
+{
+    "ICD": {
+        "api_version": "1.4.354",
+        "library_path": "../../../Frameworks/libvulkan_kosmickrisp.dylib"
+    },
+    "file_format_version": "1.0.1"
+}
+JSON
+
+cat > "$CONTENTS/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key><string>en</string>
+    <key>CFBundleExecutable</key><string>KisakCOD-mp</string>
+    <key>CFBundleIdentifier</key><string>org.kisakcod.client</string>
+    <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+    <key>CFBundleName</key><string>KisakCOD</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>$VERSION</string>
+    <key>CFBundleVersion</key><string>$VERSION</string>
+    <key>LSMinimumSystemVersion</key><string>26.0</string>
+    <key>NSHighResolutionCapable</key><true/>
+</dict>
+</plist>
+PLIST
+mkdir -p "$MACOS" && printf 'APPL????' > "$CONTENTS/PkgInfo"
+
+if [ -n "$LICENSES" ] && [ -d "$LICENSES" ]; then
+    cp -f "$LICENSES"/* "$RESOURCES/licenses/" 2>/dev/null || true
+fi
+cat > "$RESOURCES/licenses/SOURCES.txt" <<SOURCES
+KisakCOD-mp.app bundles its runtime, built from source at these pins
+(docs/decisions/0011-macos-client-bundles-its-runtime.md):
+
+  Mesa (KosmicKrisp Vulkan driver)   26.2.4
+  Vulkan Loader                      1.4.363.0
+  SPIRV-Tools                        1.4.363.0   (linked into the driver)
+  zstd                               1.5.7
+  SDL3                               3.4.18
+  OpenAL Soft                        1.25.2      (LGPL-2.1)
+  FFmpeg                             9.0.2       (LGPL-2.1; bink demuxer,
+                                                   bink/binkaudio/adpcm_ima_wav
+                                                   decoders only)
+  dxvk (jm2/dxvk kisakcod-macos)     dac6ce62dada1f9fd2a3c347cd66580deecd6bca
+
+Device access is through Mesa's Metal driver; no GPU driver is bundled.
+SOURCES
+
+# Ad-hoc sign inside out; the app's signature covers the Frameworks.
+for lib in "$FRAMEWORKS"/*.dylib; do
+    codesign --force --sign - "$lib" >/dev/null 2>&1
+done
+codesign --force --sign - "$MACOS/KisakCOD-mp" >/dev/null 2>&1
+codesign --force --sign - "$APP" >/dev/null 2>&1
+
+# Verification: no absolute path outside the app and the system libraries.
+bad=0
+for file in "$MACOS/KisakCOD-mp" "$FRAMEWORKS"/*.dylib; do
+    while read -r dep; do
+        case "$dep" in
+            @rpath/*|@loader_path/*|/usr/lib/*|/System/*) ;;
+            *) echo "bundle: $file still references $dep" >&2; bad=1 ;;
+        esac
+    done < <(otool -L "$file" | tail -n +2 | awk '{print $1}')
+done
+if [ $bad -ne 0 ]; then
+    echo "bundle: FAILED verification" >&2
+    exit 1
+fi
+codesign --verify --deep --strict "$APP" >/dev/null 2>&1 || {
+    echo "bundle: signature verification failed" >&2; exit 1; }
+if [ -e "$APP_DEST" ]; then
+    mv "$APP_DEST" "$APP_DEST.replaced-$(date +%Y%m%d%H%M%S)"
+fi
+mv "$APP" "$APP_DEST"
+rmdir "$STAGE_ROOT"
+echo "bundle: $APP_DEST ok ($(ls "$APP_DEST/Contents/Frameworks" | wc -l | tr -d ' ') frameworks)"

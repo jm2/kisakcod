@@ -13,6 +13,11 @@
 #include <cstring>
 #include <string>
 
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#include <unistd.h>
+#endif
+
 #include <client/cl_sdl3.h>
 #include <client/cl_sdl3_keys.h>
 #include <gfx_d3d/r_init.h>
@@ -136,6 +141,29 @@ int __cdecl Sys_SetClipboardData(const char *text)
     return SDL_SetClipboardText(utf8.c_str()) ? 1 : 0;
 }
 
+#if defined(__APPLE__)
+// ADR-0011: the .app carries its Vulkan ICD, so the bundled loader finds it
+// without VK_DRIVER_FILES. A path the user set still wins, and a bare build
+// (no Resources/vulkan beside the binary) keeps the loader's own search.
+static void Posix_DefaultBundledVulkanDriver()
+{
+    if (getenv("VK_DRIVER_FILES") != nullptr || getenv("VK_ICD_FILENAMES") != nullptr)
+        return;
+    char executable[PATH_MAX];
+    uint32_t size = sizeof(executable);
+    if (_NSGetExecutablePath(executable, &size) != 0)
+        return;
+    std::string path(executable);
+    const size_t slash = path.find_last_of('/');
+    if (slash == std::string::npos)
+        return;
+    path.resize(slash); // .../KisakCOD-mp.app/Contents/MacOS
+    path += "/../Resources/vulkan/icd.d/kosmickrisp_mesa_icd.json";
+    if (access(path.c_str(), R_OK) == 0)
+        setenv("VK_DRIVER_FILES", path.c_str(), 0);
+}
+#endif
+
 /*
 ==================
 main
@@ -150,6 +178,9 @@ int main(int argc, char **argv)
     // aborts in Direct3DCreate9 when it is unset; the client window is SDL3.
     // A value the user set wins.
     setenv("DXVK_WSI_DRIVER", "SDL3", 0);
+#if defined(__APPLE__)
+    Posix_DefaultBundledVulkanDriver();
+#endif
     Sys_InstallQuitSignalHandlers();
     Sys_InitializeCriticalSections();
     Sys_InitMainThread();

@@ -24,7 +24,7 @@ else()
     # Homebrew's openal-soft is keg-only, so add its pkg-config dir.
     find_package(PkgConfig REQUIRED)
     foreach(_kisak_openal_prefix /opt/homebrew/opt/openal-soft /usr/local/opt/openal-soft)
-        if (APPLE AND EXISTS ${_kisak_openal_prefix}/lib/pkgconfig)
+        if (APPLE AND NOT KISAK_MACOS_BUNDLE AND EXISTS ${_kisak_openal_prefix}/lib/pkgconfig)
             set(ENV{PKG_CONFIG_PATH} "${_kisak_openal_prefix}/lib/pkgconfig:$ENV{PKG_CONFIG_PATH}")
         endif()
     endforeach()
