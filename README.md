@@ -112,7 +112,7 @@ remain a manual workflow.
 
 
 ```
-Keep in Mind: This is a ~20 year old game with some known exploits. We will try to fix these as we become aware of them.
+Keep in Mind: This is a ~20 year old game with some known exploits. We will try to fix these as we become aware of them. Report a vulnerability privately, as [SECURITY.md](SECURITY.md) describes, not in a public issue.
 However, there is a non-zero chance of some type of binary exploitation when playing online. Use a sandbox (Sandboxie?) for peace of mind. 
 ```
 

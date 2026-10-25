@@ -31,14 +31,15 @@ FFmpeg (owner, 2026-10-22); no build links Miles or Bink.
 Estimates are ranges for one strong engineer, with low confidence. They don't
 convert to swarm time.
 
-**Where things stand (2026-10-21).** G1 is done. G2's loader is complete
-and loads every family by default (`db_unverified64`, validated after the fact); K4 is 19/25 and the 30-minute ASan/UBSan
-soak passes on lin64 and arm64 (NOW rows 37, 45). G5 ran ahead of G2 on that
-default: all five 64-bit clients are in-game on Steam 1.8 data, and POSIX
-clients play cinematics and audio through FFmpeg and OpenAL Soft. G4a's wire
-identity is built and waits on the owner's captures. G0's x86 server runs
-natively and under Wine; the client run waits on antec-win's console (row 46).
-G3's server pre-check runs 8 bots clean (row 47); G4b and G6 haven't started.
+**Where things stand (2026-10-25).** G0, G1 and G2 are done. The x86
+client and server play on Steam 1.8 data natively and under Wine (#178), and
+the 64-bit headless server loads every family with its guard on (K4 25/25)
+and passes the 30-minute ASan/UBSan proof on Linux amd64 and Win64 (#180).
+G3's first target passes: an x86 fork client plays a round, map changes and
+a reconnect on the Win64 server with 8 bots. G5's interim clients are done:
+the Win64 D3D9 client and the Linux and macOS dxvk-native clients play on a
+fork server and on a Steam 1.8 server, ASan-clean; Vulkan (#713) is left.
+G4a's wire identity waits on the owner's captures; G4b and G6 haven't started.
 
 ```mermaid
 graph LR

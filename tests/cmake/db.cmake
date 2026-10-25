@@ -723,7 +723,7 @@ add_test(
     COMMAND fuzz_fastfile corpus-gate-failing-setup
             ${CMAKE_CURRENT_BINARY_DIR}/fuzz_corpus_gate_setup_failure)
 
-# M5 exit (ki-msb): retail fast-file parity harness. Runs on the native64
+# The runtime-graph parity check (ki-msb): retail fast-file parity harness. Runs on the native64
 # host against an unmodified retail fast-file and emits the capture digest
 # consumed by scripts/ci/run-retail-fastfile-parity.sh; --self-test exercises
 # the full pipeline on synthesized fixtures so CI covers the instrument

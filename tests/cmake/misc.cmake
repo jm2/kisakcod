@@ -494,7 +494,7 @@ add_test(
     NAME q-shared-byteorder-contracts
     COMMAND kisakcod-q-shared-byteorder-tests
 )
-# M5 exit (ki-msb): canonical widened-runtime-graph capture. The parity
+# The runtime-graph parity check (ki-msb): canonical widened-runtime-graph capture. The parity
 # digest is a domain-separated SHA-256 over a framed, typed, little-endian
 # stream; pointer-bearing values never enter it, so a 32-bit reference walk
 # and a widened 64-bit walk of one logical graph produce one digest.

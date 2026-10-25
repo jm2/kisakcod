@@ -16,6 +16,7 @@ every family the client zones reach. The fail-closed guard (design step 6)
 is off by default: `db_unverified64` (#513) defaults to 1 at 64-bit and admits
 every family with a disk32 loader (`HasDisk32Loader`). K4 validates after the
 fact; `+set db_unverified64 0` restores the guard for unverified families.
+K4 is 25/25, so with the guard on a server loads them all (G2, #180).
 SndDriverGlobals is listed in `code_post_gfx_mp` but has no loader, so the
 envelope skips it (#473).
 
