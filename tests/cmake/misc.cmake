@@ -1136,6 +1136,28 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_tests_properties(cl-cinematic-connect-contracts PROPERTIES TIMEOUT 20)
 endif()
 
+# Portal winding helpers (gfx_d3d/r_dpvs.cpp): vertex i is winding[i], not
+# (*winding)[3 * i]. The renderer headers need d3d9.h: Linux clang builds
+# where pkg-config finds dxvk-d3d9, as the browser filter test above.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND KISAK_CIN_TEST_DXVK_D3D9_FOUND)
+    add_executable(kisakcod-r-dpvs-winding-tests r_dpvs_winding_tests.cpp ${SRC_DIR}/gfx_d3d/r_dpvs.cpp
+        ${SRC_DIR}/universal/com_math.cpp com_math_test_stubs.cpp)
+    target_include_directories(kisakcod-r-dpvs-winding-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-r-dpvs-winding-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-r-dpvs-winding-tests PRIVATE KISAK_MP UNIX KISAK_DXVK_NATIVE)
+    target_compile_options(kisakcod-r-dpvs-winding-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_libraries(kisakcod-r-dpvs-winding-tests PRIVATE PkgConfig::KISAK_CIN_TEST_DXVK_D3D9)
+    target_link_options(kisakcod-r-dpvs-winding-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-r-dpvs-winding-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-r-dpvs-winding-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-r-dpvs-winding-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME r-dpvs-winding-contracts COMMAND kisakcod-r-dpvs-winding-tests)
+    set_tests_properties(r-dpvs-winding-contracts PROPERTIES TIMEOUT 20)
+endif()
+
 # R_EmitPointLightPartitionSurfs (gfx_d3d/r_light.cpp) at 64-bit: each
 # partition keeps its whole GfxLight, def included. Linux and clang only, as
 # above; gated on dxvk-native's <d3d9.h>, as the cinematic test is.
