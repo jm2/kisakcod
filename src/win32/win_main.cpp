@@ -196,7 +196,8 @@ static int Sys_GetSemaphoreFileName()
 		}
 	}
 
-	return sprintf_s(sys_processSemaphoreFile, "__%s", moduleName);
+	// Truncate a long executable name; sprintf_s would abort at startup.
+	return _snprintf_s(sys_processSemaphoreFile, sizeof(sys_processSemaphoreFile), _TRUNCATE, "__%s", moduleName);
 }
 
 void __cdecl Sys_QuitAndStartProcess(const char *exeName, const char *parameters)
@@ -867,12 +868,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	track_init();
 	Win_InitLocalization();
 
-	const bool allowDupe = I_strnicmp(lpCmdLine, "allowdupe", 9) && lpCmdLine[9] <= ' ';
+	// I_strnicmp stops at the terminator, so lpCmdLine[9] is read only after
+	// all nine characters matched.
+	const bool allowDupe = !I_strnicmp(lpCmdLine, "allowdupe", 9) && lpCmdLine[9] <= ' ';
 
 	// initialize semaphore
 	Sys_GetSemaphoreFileName();
 
-	if (!allowDupe || Sys_CheckCrashOrRerun())
+	if (allowDupe || Sys_CheckCrashOrRerun())
 	{
 		// should never get a previous instance in Win32
 		if (!hPrevInstance)
