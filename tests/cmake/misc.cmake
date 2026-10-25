@@ -1361,6 +1361,28 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_tests_properties(cg-weapon-files-contracts PROPERTIES TIMEOUT 20)
 endif()
 
+# Mark helpers (gfx_d3d/r_marks.cpp): axis, matrix and plane rows are p[i],
+# not (*p)[N * i]. The renderer headers need d3d9.h: Linux clang builds where
+# pkg-config finds dxvk-d3d9, as the browser filter test.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND KISAK_CIN_TEST_DXVK_D3D9_FOUND)
+    add_executable(kisakcod-r-marks-rows-tests r_marks_rows_tests.cpp ${SRC_DIR}/gfx_d3d/r_marks.cpp
+        ${SRC_DIR}/universal/com_math.cpp com_math_test_stubs.cpp)
+    target_include_directories(kisakcod-r-marks-rows-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-r-marks-rows-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-r-marks-rows-tests PRIVATE KISAK_MP UNIX KISAK_DXVK_NATIVE)
+    target_compile_options(kisakcod-r-marks-rows-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_libraries(kisakcod-r-marks-rows-tests PRIVATE PkgConfig::KISAK_CIN_TEST_DXVK_D3D9)
+    target_link_options(kisakcod-r-marks-rows-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-r-marks-rows-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-r-marks-rows-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-r-marks-rows-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME r-marks-rows-contracts COMMAND kisakcod-r-marks-rows-tests)
+    set_tests_properties(r-marks-rows-contracts PROPERTIES TIMEOUT 20)
+endif()
+
 # UI_GetScoreAtRank (cgame_mp/cg_scoreboard_mp.cpp) at 64-bit: the score entry
 # a HUD menu expression reads by rank. Linux and clang only, as above; the
 # client's defines.
