@@ -1350,6 +1350,28 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_tests_properties(cg-scoreboard-rank-contracts PROPERTIES TIMEOUT 20)
 endif()
 
+# Skinned-model mark visitor (gfx_d3d/r_marks.cpp): its MarkModelCoreContext
+# fields are read by name, not at x86 offsets. The renderer headers need
+# d3d9.h: Linux clang builds where pkg-config finds dxvk-d3d9.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND KISAK_CIN_TEST_DXVK_D3D9_FOUND)
+    add_executable(kisakcod-r-marks-model-ctx-tests r_marks_model_ctx_tests.cpp ${SRC_DIR}/gfx_d3d/r_marks.cpp
+        ${SRC_DIR}/universal/com_math.cpp com_math_test_stubs.cpp)
+    target_include_directories(kisakcod-r-marks-model-ctx-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-r-marks-model-ctx-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-r-marks-model-ctx-tests PRIVATE KISAK_MP UNIX KISAK_DXVK_NATIVE)
+    target_compile_options(kisakcod-r-marks-model-ctx-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_libraries(kisakcod-r-marks-model-ctx-tests PRIVATE PkgConfig::KISAK_CIN_TEST_DXVK_D3D9)
+    target_link_options(kisakcod-r-marks-model-ctx-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-r-marks-model-ctx-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-r-marks-model-ctx-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-r-marks-model-ctx-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME r-marks-model-ctx-contracts COMMAND kisakcod-r-marks-model-ctx-tests)
+    set_tests_properties(r-marks-model-ctx-contracts PROPERTIES TIMEOUT 20)
+endif()
+
 # CG_BgCreateDObj (cgame_mp/cg_main_mp.cpp): the bgame DObj callback has
 # bgs_t's type and forwards to CG_CreateDObj (#676). Linux and clang only, as
 # above; the client's defines.
