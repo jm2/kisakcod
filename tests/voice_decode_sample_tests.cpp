@@ -10,23 +10,18 @@
 #include <speex/speex.h>
 
 #include <cmath>
-#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <vector>
 
 extern int32_t g_decode_frame_size;
 
 // Engine hooks decode.cpp references.
 void Com_Printf(int, const char *, ...) {}
-void MyAssertHandler(const char *filename, int line, int, const char *fmt, ...)
+void MyAssertHandler(const char *filename, int line, int, const char *, ...)
 {
-    std::fprintf(stderr, "voice-decode-sample: assert at %s:%d: ", filename, line);
-    va_list args;
-    va_start(args, fmt);
-    std::vfprintf(stderr, fmt, args);
-    va_end(args);
-    std::fputc('\n', stderr);
+    std::fprintf(stderr, "voice-decode-sample: assert at %s:%d\n", filename, line);
     std::exit(EXIT_FAILURE);
 }
 
@@ -74,11 +69,9 @@ int main()
         || !Check(g_decode_frame_size == frameSize, "decoder frame size"))
         return EXIT_FAILURE;
 
-    static int16_t out[4096];
-    for (int16_t &sample : out)
-        sample = Canary;
+    std::vector<int16_t> out(4096, Canary);
     // Voice_IncomingVoiceData passes the encoder frame size (g_frame_size).
-    const int32_t bytes = Decode_Sample(bits, encoded, out, frameSize);
+    const int32_t bytes = Decode_Sample(bits, encoded, out.data(), frameSize);
     bool ok = Check(bytes == 2 * frameSize, "Decode_Sample returns one frame of bytes");
 
     int touchedPastFrame = 0;
