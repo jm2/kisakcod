@@ -107,6 +107,10 @@ jobs:
         with:
           dotnet-version: 8.x
 
+      - uses: ./.github/actions/setup-vcpkg
+        with:
+          triplet: x86-windows
+
       - name: Restore DirectX SDK
         shell: pwsh
         run: |
