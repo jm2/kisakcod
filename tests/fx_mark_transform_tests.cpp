@@ -46,7 +46,7 @@ int main()
     const float identity[4][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}, {0, 0, 0}};
     FX_ExpandMarkVerts_Transform_GfxWorldVertex_(&g_marks, &g_mark, 0, identity);
 
-    const bool colourOk = std::equal(colour, colour + 4, g_verts[0].color.array);
+    const bool colourOk = std::equal(colour, colour + 4, g_verts[0].color.array, g_verts[0].color.array + 4);
     const bool lmapOk = g_verts[0].lmapCoord[0] == 0.25f && g_verts[0].lmapCoord[1] == 0.75f;
     if (!colourOk || !lmapOk)
     {
