@@ -21,7 +21,9 @@
 #include <bgame/bg_public.h>
 //#include <game_mp/g_public_mp.h>
 
-static const char *hintStrings[] = { "", "HINT_NOICON", "HINT_ACTIVATE", "HINT_HEALTH" }; // idb
+// Retail has five entries: the cursor-hint loops and the client's hintMaterials
+// both cover HINT_FRIENDLY at index 4.
+static const char *hintStrings[] = { "", "HINT_NOICON", "HINT_ACTIVATE", "HINT_HEALTH", "HINT_FRIENDLY" }; // idb
 
 enum VehicleTypes : __int32 // (SP/MP same)
 {
