@@ -110,7 +110,7 @@ int main()
     // buffer, and a name too short for a ".d3dbsp" suffix is copied whole.
     std::string longName = "maps/mp/" + std::string(200, 'm') + ".d3dbsp";
     const char *base = FS_GetMapBaseName(longName.data());
-    CHECK(std::strlen(base) == 63 && base[0] == 'm' && base[62] == 'm');
+    CHECK(strnlen(base, 64) == 63 && base[0] == 'm' && base[62] == 'm');
     char shortName[] = "xbsp";
     CHECK(std::strcmp(FS_GetMapBaseName(shortName), "xbsp") == 0);
     char stockName[] = "maps/mp/mp_crash.d3dbsp";
