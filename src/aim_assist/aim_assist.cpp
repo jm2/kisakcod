@@ -501,27 +501,27 @@ char __cdecl AimAssist_ConvertToClipBounds(
     iassert(mtx);
     iassert(clipBounds);
 
-    ClearBounds((float *)clipBounds, &(*clipBounds)[3]);
+    ClearBounds(clipBounds[0], clipBounds[1]);
     for (ptIndex = 0; ptIndex < 8; ++ptIndex)
     {
-        worldCorner[0] = (*bounds)[3 * (ptIndex & 1)];
-        worldCorner[1] = (*bounds)[3 * ((ptIndex >> 1) & 1) + 1];
-        worldCorner[2] = (*bounds)[3 * ((ptIndex >> 2) & 1) + 2];
+        worldCorner[0] = bounds[ptIndex & 1][0];
+        worldCorner[1] = bounds[(ptIndex >> 1) & 1][1];
+        worldCorner[2] = bounds[(ptIndex >> 2) & 1][2];
         MatrixTransformVector43(worldCorner, mtx, worldCornerRotated);
         if (AimAssist_XfmWorldPointToClipSpace(aaGlob, worldCornerRotated, clipCorner))
-            AddPointToBounds(clipCorner, (float *)clipBounds, &(*clipBounds)[3]);
+            AddPointToBounds(clipCorner, clipBounds[0], clipBounds[1]);
     }
-    if ((*clipBounds)[3] <= (double)(*clipBounds)[0]
-        || (*clipBounds)[4] <= (double)(*clipBounds)[1]
-        || (*clipBounds)[5] <= (double)(*clipBounds)[2])
+    if (clipBounds[1][0] <= (double)clipBounds[0][0]
+        || clipBounds[1][1] <= (double)clipBounds[0][1]
+        || clipBounds[1][2] <= (double)clipBounds[0][2])
     {
         return 0;
     }
-    if ((*clipBounds)[0] > 1.0 || (*clipBounds)[1] > 1.0 || (*clipBounds)[2] > 1.0)
+    if (clipBounds[0][0] > 1.0 || clipBounds[0][1] > 1.0 || clipBounds[0][2] > 1.0)
         return 0;
-    if ((*clipBounds)[3] < -1.0 || (*clipBounds)[4] < -1.0 || (*clipBounds)[5] < 0.0)
+    if (clipBounds[1][0] < -1.0 || clipBounds[1][1] < -1.0 || clipBounds[1][2] < 0.0)
         return 0;
-    v33 = (*clipBounds)[0];
+    v33 = clipBounds[0][0];
     v22 = v33 - 1.0;
     if (v22 < 0.0)
         v34 = v33;
@@ -532,8 +532,8 @@ char __cdecl AimAssist_ConvertToClipBounds(
         v20 = v34;
     else
         v20 = -1.0;
-    (*clipBounds)[0] = v20;
-    v31 = (*clipBounds)[1];
+    clipBounds[0][0] = v20;
+    v31 = clipBounds[0][1];
     v19 = v31 - 1.0;
     if (v19 < 0.0)
         v32 = v31;
@@ -544,8 +544,8 @@ char __cdecl AimAssist_ConvertToClipBounds(
         v17 = v32;
     else
         v17 = -1.0;
-    (*clipBounds)[1] = v17;
-    v29 = (*clipBounds)[2];
+    clipBounds[0][1] = v17;
+    v29 = clipBounds[0][2];
     v16 = v29 - 1.0;
     if (v16 < 0.0)
         v30 = v29;
@@ -556,8 +556,8 @@ char __cdecl AimAssist_ConvertToClipBounds(
         v14 = v30;
     else
         v14 = 0.0;
-    (*clipBounds)[2] = v14;
-    v27 = (*clipBounds)[3];
+    clipBounds[0][2] = v14;
+    v27 = clipBounds[1][0];
     v13 = v27 - 1.0;
     if (v13 < 0.0)
         v28 = v27;
@@ -568,8 +568,8 @@ char __cdecl AimAssist_ConvertToClipBounds(
         v11 = v28;
     else
         v11 = -1.0;
-    (*clipBounds)[3] = v11;
-    v25 = (*clipBounds)[4];
+    clipBounds[1][0] = v11;
+    v25 = clipBounds[1][1];
     v10 = v25 - 1.0;
     if (v10 < 0.0)
         v26 = v25;
@@ -580,8 +580,8 @@ char __cdecl AimAssist_ConvertToClipBounds(
         v8 = v26;
     else
         v8 = -1.0;
-    (*clipBounds)[4] = v8;
-    v23 = (*clipBounds)[5];
+    clipBounds[1][1] = v8;
+    v23 = clipBounds[1][2];
     v7 = v23 - 1.0;
     if (v7 < 0.0)
         v24 = v23;
@@ -592,7 +592,7 @@ char __cdecl AimAssist_ConvertToClipBounds(
         v5 = v24;
     else
         v5 = 0.0;
-    (*clipBounds)[5] = v5;
+    clipBounds[1][2] = v5;
     return 1;
 }
 
