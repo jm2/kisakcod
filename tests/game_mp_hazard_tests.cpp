@@ -49,7 +49,7 @@ struct Seen
     gentity_s *touchSelf = nullptr;
     gentity_s *touchOther = nullptr;
     char command[64] = {};
-    gentity_s *addedEntity = nullptr;
+    int addedEntNum = -1;
     bool madeArray = false;
 };
 Seen seen;
@@ -106,8 +106,8 @@ WEAK void Scr_ObjectError(const char *error) { seen.objectError = error; }
 WEAK void Scr_AddString(const char *) {}
 WEAK void Scr_AddFloat(float) {}
 WEAK void Scr_AddObject(uint32_t) {}
-WEAK void Scr_AddEntity(gentity_s *ent) { seen.addedEntity = ent; }
-WEAK void Scr_AddEntityNum(uint32_t, uint32_t) {}
+WEAK void Scr_AddEntity(gentity_s *) {}
+WEAK void Scr_AddEntityNum(uint32_t entnum, uint32_t) { seen.addedEntNum = static_cast<int>(entnum); }
 WEAK void Scr_Notify(gentity_s *, uint16_t, uint32_t) {}
 WEAK void Scr_NotifyNum(uint32_t, uint32_t, uint32_t, uint32_t) {}
 WEAK void Scr_Error(const char *) {}
@@ -355,17 +355,17 @@ static void GetEntWithAClientFieldFindsNothing()
     g_offset = 0xC000 | 3;
     seen = Seen();
     Scr_GetEnt();
-    CHECK(seen.addedEntity == nullptr);
+    CHECK(seen.addedEntNum == -1);
     Scr_GetEntArray();
-    CHECK(seen.addedEntity == nullptr && !seen.madeArray);
+    CHECK(seen.addedEntNum == -1 && !seen.madeArray);
 
     g_offset = 5; // targetname, an entity field: still found
     seen = Seen();
     Scr_GetEnt();
-    CHECK(seen.addedEntity == &g_entities[9]);
+    CHECK(seen.addedEntNum == 9);
     seen = Seen();
     Scr_GetEntArray();
-    CHECK(seen.madeArray && seen.addedEntity == &g_entities[9]);
+    CHECK(seen.madeArray && seen.addedEntNum == 9);
 
     g_offset = -1;
     g_constString = 0;
