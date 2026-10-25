@@ -115,6 +115,10 @@ On macOS 26.0 arm64, bundle of 35 MB with nine frameworks:
 - every image reports `LC_BUILD_VERSION minos 26.0`.
 - the ICD JSON in `Contents/Resources/vulkan/icd.d/` points at
   `../../../Frameworks/libvulkan_kosmickrisp.dylib`.
+- a headless launch of the bundle resolves its own `libdxvk_d3d9` (it
+  reports the pinned `v3.1.1-72-gdac6ce62`) and then aborts before a Vulkan
+  instance exists, so the ICD lookup is proven statically only. Closing that
+  gap is part of the K6 done-test, not of this check.
 
 ## Open work
 
