@@ -143,7 +143,7 @@ with [AGENTS.md](AGENTS.md).
 - https://github.com/shiversoftdev/BO3Enhanced - Viewed as reference code for some of the Steam API Auth
 - [RAD Game Tools](https://www.radgametools.com/) for the Bink and Miles Sound System APIs the game was written against.
 - [OpenAL Soft](https://openal-soft.org/) and [FFmpeg](https://ffmpeg.org/), which now play its sound and Bink cinematics.
-- [ODE Physics](https://www.ode.org/) COD4 uses a modified version of this physics engine.
+- [ODE Physics](https://www.ode.org/) COD4 uses a modified version of this physics engine. Its license texts are in `src/physics/ode/` (`LICENSE.TXT`, LGPL-2.1+, and `LICENSE-BSD.TXT`), which every ODE source file offers as alternatives.
 
 
 ## Discord
