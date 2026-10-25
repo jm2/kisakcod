@@ -12,19 +12,21 @@ namespace
 {
 unsigned char g_dead[8];
 unsigned char g_next[8];
+// The abandoned load's *pos lives here, where a stale Deactivate could reach it.
+unsigned char *g_deadPos = nullptr;
 }
 
 int main()
 {
     // A load that Com_Error abandons: activated and anchored, never deactivated.
-    unsigned char *deadPos = g_dead;
+    g_deadPos = g_dead;
     buf_cursor::Activate(g_dead, sizeof(g_dead));
-    buf_cursor::AnchorPos(&deadPos);
+    buf_cursor::AnchorPos(&g_deadPos);
 
     buf_cursor::ResetAll();
     // The dead load's stack slot is reused; the anchor must not touch it again.
     unsigned char *const sentinel = g_dead + 3;
-    deadPos = sentinel;
+    g_deadPos = sentinel;
 
     unsigned char *pos = g_next;
     buf_cursor::Activate(g_next, sizeof(g_next));
@@ -32,7 +34,7 @@ int main()
     buf_cursor::Advance(4);
     buf_cursor::Deactivate();
 
-    const bool ok = deadPos == sentinel && buf_cursor::Current() == nullptr && pos == g_next + 4;
+    const bool ok = g_deadPos == sentinel && buf_cursor::Current() == nullptr && pos == g_next + 4;
     if (!ok)
     {
         std::fputs("FAIL an abandoned load's cursor survives into the next load\n", stderr);
