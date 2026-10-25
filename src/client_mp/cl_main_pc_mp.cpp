@@ -424,7 +424,6 @@ void __cdecl CL_GlobalServers_f()
 {
     const char *v0; // eax
     const char *v1; // eax
-    char *buffptr; // [esp+10h] [ebp-42Ch]
     netadr_t to; // [esp+14h] [ebp-428h] BYREF
     int i; // [esp+28h] [ebp-414h]
     char command[1028]; // [esp+2Ch] [ebp-410h] BYREF
@@ -447,15 +446,18 @@ void __cdecl CL_GlobalServers_f()
         to.port = BigShort(com_masterPort->current.integer);
         v0 = Cmd_Argv(2);
         snprintf(command, ARRAYSIZE(command), "getservers %s", v0);
-        buffptr = &command[&command[strlen(command) + 1] - &command[1]]; // kiwi: see below what the hell...
+        // Keywords stop short of the room the " demo" suffix needs.
+        const bool restricted = Dvar_GetBool("fs_restrict");
+        const int keywordLimit = ARRAYSIZE(command) - (restricted ? static_cast<int>(sizeof(" demo") - 1) : 0);
         count = Cmd_Argc();
         for (i = 3; i < count; ++i)
         {
             v1 = Cmd_Argv(i);
-            buffptr += sprintf(buffptr, " %s", v1); // kiwi: uhhhh, what the hell.
+            I_strncat(command, keywordLimit, " ");
+            I_strncat(command, keywordLimit, v1);
         }
-        if (Dvar_GetBool("fs_restrict"))
-            sprintf(buffptr, " demo");
+        if (restricted)
+            I_strncat(command, ARRAYSIZE(command), " demo");
         NET_OutOfBandPrint(NS_SERVER, to, command);
     }
     else
