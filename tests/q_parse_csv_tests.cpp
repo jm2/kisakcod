@@ -67,6 +67,13 @@ int main()
     CHECK(!std::strcmp(token, "abc"));
     CHECK(end == unterminated + 4);
 
+    // An unterminated quote with no content: the cursor stays on the input's
+    // NUL, so a caller can tell it apart from an exhausted text.
+    const char emptyUnterminated[] = {'"', '\0'};
+    end = ParseOne(emptyUnterminated, token, sizeof(token));
+    CHECK(!std::strcmp(token, ""));
+    CHECK(end == emptyUnterminated + 1);
+
     if (g_failures == 0)
         std::printf("q_parse csv: all checks passed\n");
     return g_failures == 0 ? 0 : 1;
