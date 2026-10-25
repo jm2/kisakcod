@@ -960,7 +960,8 @@ void __cdecl CG_ConfigStringModified(int32_t localClientNum)
                     }
                     else
                     {
-                        *((uint32_t *)cgs + num - 665) = (uint32_t)R_RegisterModel(str); // KISAKTODO: unhack typing
+                        // num is in [CS_MODELS, CS_MODELS + 512) here, the gameModels range.
+                        cgs->gameModels[num - CS_MODELS] = R_RegisterModel(str);
                     }
                     break;
                 }
