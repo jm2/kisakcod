@@ -923,7 +923,7 @@ void __cdecl ReadNoteTracks(const char *name, unsigned char **pos, XAnimParts *p
 
     numNoteTracks = Buf_Read<unsigned char>(pos);
 
-    iassert(numNoteTracks < 255);
+    if (numNoteTracks >= 255) numNoteTracks = 254; // KISAK: u8 notifyCount; 255 tracks + the end marker wrap it to 0 (was only an iassert)
 
     parts->notifyCount = numNoteTracks + 1;
     notify = (XAnimNotifyInfo*)Alloc(sizeof(XAnimNotifyInfo) * parts->notifyCount);
