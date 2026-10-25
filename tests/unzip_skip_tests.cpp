@@ -19,6 +19,15 @@
 #include <string>
 #include <vector>
 
+// Asserts in the vendored zlib's debug paths (unzip.cpp) route through the
+// engine's handler; a failed assertion is a test failure, not a link error.
+void __cdecl MyAssertHandler(const char *filename, int line, int type, const char *fmt, ...)
+{
+    std::fprintf(stderr, "assert at %s:%d (type %d): %s\n", filename ? filename : "?", line, type,
+                 fmt ? fmt : "");
+    std::exit(3);
+}
+
 // The engine's file wrappers unzip.cpp reads through, over stdio. Origins are
 // FileWrapper_Seek's: 0 current, 1 end, 2 set.
 FILE *__cdecl FS_FileOpenReadBinary(const char *filename) { return std::fopen(filename, "rb"); }
