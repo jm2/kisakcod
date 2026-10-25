@@ -496,7 +496,7 @@ void __cdecl Com_StreamedSoundList(snd_alias_system_t system)
 
     if (g_sa.initialized[system])
     {
-        aliases = *(snd_alias_t **)(&g_sa.soundFileInfo[-4].count + 3 * system);
+        aliases = g_sa.aliasInfo[system].head; // KISAK: decompiled as soundFileInfo[-4] + 12-byte stride
         for (i = 0; i < g_sa.aliasInfo[system].count; ++i)
         {
             if ((aliases[i].flags & 0xC0) >> 6 == 2)
@@ -530,7 +530,7 @@ void __cdecl Com_LoadedSoundList(snd_alias_system_t system)
     if (g_sa.initialized[system])
     {
         totalMem = 0;
-        aliases = *(snd_alias_t **)(&g_sa.soundFileInfo[-4].count + 3 * system);
+        aliases = g_sa.aliasInfo[system].head; // KISAK: decompiled as soundFileInfo[-4] + 12-byte stride
         for (i = 0; i < g_sa.aliasInfo[system].count; ++i)
         {
             if ((aliases[i].flags & 0xC0) >> 6 == 1)
@@ -707,7 +707,7 @@ void __cdecl Com_UnloadSoundAliasSounds(snd_alias_system_t system)
             "(system == SASYS_UI || system == SASYS_CGAME)",
             system);
     Com_StopSoundsForAliasUnload();
-    aliases = (snd_alias_t *)*(&g_sa.soundFileInfo[-4].count + 3 * system);
+    aliases = g_sa.aliasInfo[system].head; // KISAK: decompiled as soundFileInfo[-4] + 12-byte stride
     for (i = 0; i < g_sa.aliasInfo[system].count; ++i)
     {
         if ((aliases[i].flags & 0xC0) >> 6 == 1)
@@ -753,9 +753,9 @@ void __cdecl Com_UnloadSoundAliases(snd_alias_system_t system)
                 0,
                 "%s",
                 "system != SASYS_GAME || !g_sa.initialized[SASYS_CGAME]");
-        if (*(&g_sa.soundFileInfo[-4].count + 3 * system))
+        if (g_sa.aliasInfo[system].head) // KISAK: decompiled as soundFileInfo[-4] + 12-byte stride
         {
-            *(&g_sa.soundFileInfo[-4].count + 3 * system) = 0;
+            g_sa.aliasInfo[system].head = nullptr;
             g_sa.aliasInfo[system].count = 0;
             memset((uint8_t *)g_sa.hash, 0, sizeof(*g_sa.hash) * g_sa.hashSize);
             g_sa.hashUsed = 0;

@@ -983,6 +983,30 @@ if (NOT WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set_target_properties(kisakcod-q-shared-field-pointer-tests PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME q-shared-field-pointer-contracts COMMAND kisakcod-q-shared-field-pointer-tests)
+
+    # Sound alias unload (universal/com_sndalias.cpp): each system must clear its
+    # own aliasInfo head. The decompiled soundFileInfo[-4] + 12-byte stride hit
+    # the wrong list at 64-bit; UBSan array-bounds catches the old index.
+    add_executable(kisakcod-com-sndalias-unload-tests
+        com_sndalias_unload_tests.cpp
+        ${SRC_DIR}/universal/com_sndalias.cpp
+    )
+    target_include_directories(kisakcod-com-sndalias-unload-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    if (NOT KISAK_HAVE_MALLOC_H OR NOT KISAK_HAVE_MEMORY_H)
+        target_include_directories(kisakcod-com-sndalias-unload-tests SYSTEM PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/compat)
+    endif()
+    target_compile_features(kisakcod-com-sndalias-unload-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-com-sndalias-unload-tests PRIVATE
+        KISAK_MP KISAK_DEDICATED DEDICATED KISAK_DEDI_HEADLESS UNIX)
+    target_compile_options(kisakcod-com-sndalias-unload-tests PRIVATE
+        -fms-extensions -ffunction-sections -fdata-sections)
+    set_source_files_properties(com_sndalias_unload_tests.cpp PROPERTIES
+        COMPILE_OPTIONS "-Wall;-Wextra;-Werror")
+    target_link_options(kisakcod-com-sndalias-unload-tests PRIVATE ${KISAK_TEST_GC_SECTIONS})
+    set_target_properties(kisakcod-com-sndalias-unload-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME com-sndalias-unload-contracts COMMAND kisakcod-com-sndalias-unload-tests)
 endif()
 
 # Menu local variables (ui/ui_localvars.cpp): FindOrCreate/Find must return
