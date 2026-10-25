@@ -419,8 +419,8 @@ void __cdecl R_SkinStaticModelsCamera(
         R_SkinStaticModelsCameraForSurface(
             model,
             primaryLightIndex,
-            (uint16_t (*)[128])(*staticModelLodList)[4 * surfTypeIndex],
-            &(*staticModelLodCount)[4 * surfTypeIndex],
+            staticModelLodList[surfTypeIndex],
+            staticModelLodCount[surfTypeIndex],
             surfTypeIndex + 2,
             surfData);
 }
@@ -441,7 +441,7 @@ void __cdecl R_SkinStaticModelsCameraForSurface(
             R_SkinStaticModelsCameraForLod(
                 model,
                 primaryLightIndex,
-                (uint8_t *)&(*staticModelLodList)[128 * lod],
+                (uint8_t *)staticModelLodList[lod],
                 staticModelLodCount[lod],
                 surfType,
                 lod,
@@ -824,8 +824,8 @@ void __cdecl R_SkinStaticModelsShadow(
     for (surfTypeIndex = 0; surfTypeIndex < 4; ++surfTypeIndex)
         R_SkinStaticModelsShadowForSurface(
             model,
-            (uint16_t (*)[128])(*staticModelLodList)[4 * surfTypeIndex],
-            &(*staticModelLodCount)[4 * surfTypeIndex],
+            staticModelLodList[surfTypeIndex],
+            staticModelLodCount[surfTypeIndex],
             surfTypeIndex + 2,
             surfData);
 }
@@ -844,7 +844,7 @@ void __cdecl R_SkinStaticModelsShadowForSurface(
         if (staticModelLodCount[lod])
             R_SkinStaticModelsShadowForLod(
                 model,
-                (uint8_t *)&(*staticModelLodList)[128 * lod],
+                (uint8_t *)staticModelLodList[lod],
                 staticModelLodCount[lod],
                 surfType,
                 lod,
