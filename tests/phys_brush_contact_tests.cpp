@@ -293,7 +293,11 @@ int main()
 #elif PHYS_TEST_SUBJECT == 3
 
 extern bool physInited;
-extern const dvar_t *phys_dumpcontacts, *phys_mcv, *phys_mcv_ragdoll, *phys_csl, *phys_qsi;
+extern const dvar_t *phys_dumpcontacts;
+extern const dvar_t *phys_mcv;
+extern const dvar_t *phys_mcv_ragdoll;
+extern const dvar_t *phys_csl;
+extern const dvar_t *phys_qsi;
 void __cdecl ODE_CollideSimpleSpaceWithGeomNoAABBTest(dxSpace *space, dxGeom *geom, void *data);
 
 // Phys_RunFrame's ODE calls. The space collisions only record the context
