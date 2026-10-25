@@ -1,7 +1,7 @@
 # NOW
 
 Last reviewed: 2026-10-24 by kisakcod-mac (mbp16-m1max), acting as mayor at the owner's request
-Current gates: G2 (the formal proof) and G5 (native clients); G4a waits on the owner's captures; G0 and G1 are done
+Current gate: G5 (native clients); G4a waits on the owner's captures; G0, G1 and G2 are done
 WIP limit: 6 (at least 4 on the current gates)
 
 The mayor is the only role that edits this file ([AGENTS.md](../AGENTS.md)).
@@ -25,10 +25,10 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 
 | # | Bead | Gate | Moves | Done-test | Size | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| 54 | G2 formal proof: guard on (`db_unverified64 0`), ASan+UBSan, `mp_shipment` from 1.8 `.ff`, `getinfo`/`getstatus`, 5-map rotation, 30 min without faults | G2 | gate | both legs on #180 (Win64, Linux amd64) | S | Linux amd64 passes (#180); left: Win64 (win) |
 | 55 | G5 Win64: the native D3D9 client plays a round and a map change on the Win64 headless server, then on a Steam 1.8 server (#184) | G5 | gate | console text on both ends, Steam 1.8 data, antec-win console | M | next (win) |
-| 56 | G5 Linux: the amd64 and arm64 dxvk-native clients play a round, a map change and a reconnect on a fork server (#184) | G5 | gate | console text on both ends; 0 ASan reports, UBSan triaged | M | amd64 passes (#759); left: arm64 (linux-arm64) |
-| 58 | G5 client UBSan-clean: fix the triaged client reports (flattened arrays, misaligned access, LCG overflow) | G5 | gate | a client leg logs 0 UBSan reports | M | later |
+| 59 | G5: the Linux and macOS dxvk-native clients play a round and a map change on a Steam 1.8 server (#184) | G5 | gate | console text on both ends; ASan clean | M | next (mac, linux) |
+| 60 | G5 Windows ARM64: the native client plays a round, a map change and a reconnect on a fork server (#184) | G5 | gate | as row 59 | M | next (win-arm64) |
+| 58 | G5 client UBSan-clean: fix the triaged client reports (flattened arrays, misaligned access, LCG overflow) | G5 | gate | a client leg logs 0 UBSan reports | M | started: shared-code sites (linux-arm64) |
 | 36 | G4a evidence: a stock Steam 1.8 client joins the windows-x86 server | G4a | gate | a retail client connects under the `steam18` profile; capture confirms protocol 7, gamename, shortversion (#531 table) | M | Linux amd64 passes all 4 retail pairings (dedi and listen, both ways; reconnect, map change); left: the windows-x86 leg (win-arm64, yoga) |
 
 Other `burndown` issues are off these gates or wait on the owner.
@@ -57,7 +57,8 @@ Other `burndown` issues are off these gates or wait on the owner.
 
 Merge SHAs are in `git log`.
 
-- Row 57 (G5 macOS), then row 56's amd64 leg: round, map change and reconnect, ASan clean (#184). Row 53: #692's inventory, dvars and per-frame parity match 1.8.
+- G2 passed (row 54, #180): guard on, mp_shipment, 5-map rotation, queries, 30 min; Linux amd64 ASan+UBSan, Win64 ASan.
+- Rows 56 and 57 (G5 Linux amd64/arm64, macOS): round, map change and reconnect, ASan clean (#184, #759). Row 53: #692's inventory, dvars and per-frame parity match 1.8.
 - Row 47 (G3 first target): an x86 client played a round, two map changes and a reconnect on the Win64 server with 8 bots.
 - 1.8 parity: official IWDs only, and 1.8's fatal error with none (#735, #742). 64-bit fixes #738, #743, #744, #747, #749. openal-soft pinned to 1.24.3 for a Windows arm64 hang (#746, #745).
 - Row 51: OpenAL Soft audio on every client (#669-#679); 3D start offset in ms (#682); Linux TSan leg (#681). Fixes #714 (pure checksums), #715 (advisory published).
