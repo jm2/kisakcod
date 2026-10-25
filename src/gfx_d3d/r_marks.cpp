@@ -2114,16 +2114,16 @@ bool __cdecl R_MarkModelCoreCallback_0_(
         clipPoints[0][vertIndex].vertWeights[vertIndex] = 1.0;
     }
     return R_MarkFragment_IsTriangleRejected(
-        *(const float**)((uintptr_t)contextAsVoid + 12),
+        static_cast<const MarkModelCoreContext *>(contextAsVoid)->markDir, // KISAK: fields, not ILP32 offsets
         clipPoints[0][0].xyz,
         clipPoints[0][1].xyz,
         clipPoints[0][2].xyz)
         || R_MarkFragment_DoTriangle_0_(
-            *(MarkInfo**)contextAsVoid,
-            *(const float(**)[4])((uintptr_t)contextAsVoid + 16),
-            *(const GfxMarkContext**)((uintptr_t)contextAsVoid + 4),
+            static_cast<const MarkModelCoreContext *>(contextAsVoid)->markInfo,
+            static_cast<const MarkModelCoreContext *>(contextAsVoid)->clipPlanes,
+            static_cast<const MarkModelCoreContext *>(contextAsVoid)->markContext,
             triVerts1,
-            *(const float(**)[3])((uintptr_t)contextAsVoid + 24),
+            static_cast<const MarkModelCoreContext *>(contextAsVoid)->transformNormalMatrix,
             clipPoints) != 0;
 }
 
@@ -2170,7 +2170,7 @@ char  R_MarkFragments_AnimatedXModel_VertList(
     float aabbMins[4]; // [sp+60h] [-2A0h] BYREF
     float originalOrigin[4]; // [sp+70h] [-290h] BYREF
     DObjAnimMat poseBoneWithViewOffset; // [sp+80h] [-280h] BYREF
-    MarkModelCoreContext visitorContext;
+    MarkModelCoreContext visitorContext{}; // KISAK: transform matrices stay null on this path
     float markDir[4]; // [sp+C0h] [-240h] BYREF
     float clipPlanesMatrix[4][3]; // [sp+D0h] [-230h] BYREF
     DObjSkelMat invBaseBoneSkelMat; // [sp+100h] [-200h] BYREF
