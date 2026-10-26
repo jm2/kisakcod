@@ -60,6 +60,35 @@ U32 StatusAfter(HSAMPLE sample, int ms)
     return AIL_sample_status(sample);
 }
 
+// The mixer advances on its own real-time thread (OpenAL Soft's null
+// backend), so a fixed sleep is not a bound: under TSan the mixer is
+// instrumented and the runner is shared, and a deadline meant for an idle
+// host gets missed. Poll to a generous deadline instead of asserting on a
+// sleep, so a slow host does not read as a wrong state transition.
+template <typename StatusFn>
+bool WaitForStatus(StatusFn status, U32 want, int timeoutMs)
+{
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    for (;;)
+    {
+        if (static_cast<U32>(status()) == want)
+            return true;
+        if (std::chrono::steady_clock::now() >= deadline)
+            return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+}
+
+bool WaitForSampleStatus(HSAMPLE sample, U32 want, int timeoutMs)
+{
+    return WaitForStatus([sample] { return AIL_sample_status(sample); }, want, timeoutMs);
+}
+
+bool WaitForStreamStatus(HSTREAM stream, U32 want, int timeoutMs)
+{
+    return WaitForStatus([stream] { return AIL_stream_status(stream); }, want, timeoutMs);
+}
+
 void TestHeadersFailClosed(HSAMPLE sample)
 {
     const U32 bytes = static_cast<U32>(g_pcm.size() * sizeof(int16_t));
@@ -101,7 +130,7 @@ void TestPlaysToDone(HSAMPLE sample)
     AIL_set_sample_loop_count(sample, 1);
     AIL_resume_sample(sample);
     CHECK(AIL_sample_status(sample) == SMP_PLAYING);
-    CHECK(StatusAfter(sample, 400) == SMP_DONE);
+    CHECK(WaitForSampleStatus(sample, SMP_DONE, 5000));
     // Reloading the played sample makes it loaded-but-not-started again.
     CHECK(AIL_set_sample_info(sample, &info));
     CHECK(AIL_sample_status(sample) == SMP_STOPPED);
@@ -314,8 +343,7 @@ void TestStream(HDIGDRIVER driver)
     AIL_set_stream_loop_count(stream, 1);
     AIL_pause_stream(stream, 0);
     CHECK(AIL_stream_status(stream) == SMP_PLAYING);
-    std::this_thread::sleep_for(std::chrono::milliseconds(900));
-    CHECK(AIL_stream_status(stream) == SMP_DONE);
+    CHECK(WaitForStreamStatus(stream, SMP_DONE, 5000));
     // Looping restarts at the end instead of finishing.
     AIL_set_stream_loop_count(stream, 0);
     AIL_set_stream_ms_position(stream, 0);
