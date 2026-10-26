@@ -1061,6 +1061,7 @@ void __cdecl SV_ExecuteClientMessage(client_t *cl, msg_t *msg);
 int __cdecl SV_ClientCommand(client_t *cl, msg_t *msg, int fromOldServer);
 void __cdecl SV_ExecuteClientCommand(client_t *cl, char *s, int clientOK, int fromOldServer);
 gentity_s *__cdecl SV_AddTestClient();
+void __cdecl SV_ResetClientForNewMap(client_t *client);
 void __cdecl SV_CloseDownload(client_t *cl);
 
 extern serverStaticHeader_t svsHeader;

@@ -626,11 +626,7 @@ void __cdecl SV_SpawnServer(char *mapname)
         clienta = svs.clients;
         while (i < sv_maxclients->current.integer)
         {
-            if (clienta->header.state >= 2)
-            {
-                clienta->statPacketsReceived = 0;
-                NET_OutOfBandPrint(NS_SERVER, clienta->header.netchan.remoteAddress, "requeststats\n");
-            }
+            SV_ResetClientForNewMap(clienta);
             ++i;
             ++clienta;
         }
@@ -871,6 +867,35 @@ void __cdecl SV_Init()
         DVAR_NOFLAG,
         "Have the clients archive data to save bandwidth on the server");
     Dvar_RegisterBool("clientSideEffects", 1, DVAR_CHEAT, "Enable loading _fx.gsc files on the client");
+}
+
+//
+// After a map change every connected client must receive the new gamestate.
+// A real client is asked for its stat packets first ("requeststats") and
+// answers over the network. A test client (SV_AddTestClient) is NA_BOT and has
+// no socket to answer with, so asking it leaves it in CS_CONNECTED for good:
+// it never re-enters the world on the new map. Enter it directly instead, the
+// way SV_AddTestClient does when the bot is first created.
+//
+void __cdecl SV_ResetClientForNewMap(client_t *client)
+{
+    usercmd_s nullcmd;
+
+    if (client->bIsTestClient)
+    {
+        if (client->header.state == CS_CONNECTED)
+        {
+            Com_Memset(&nullcmd, 0, sizeof(nullcmd));
+            SV_SendClientGameState(client);
+            SV_ClientEnterWorld(client, &nullcmd);
+        }
+        return;
+    }
+    if (client->header.state >= CS_CONNECTED)
+    {
+        client->statPacketsReceived = 0;
+        NET_OutOfBandPrint(NS_SERVER, client->header.netchan.remoteAddress, "requeststats\n");
+    }
 }
 
 void __cdecl SV_DropAllClients()

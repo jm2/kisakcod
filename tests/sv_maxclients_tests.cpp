@@ -71,6 +71,19 @@ WEAK void *__cdecl Sys_GetValue(int valueIndex)
 WEAK uint32_t *Hunk_AllocateTempMemory(int size, const char *) { return static_cast<uint32_t *>(std::malloc(size)); }
 WEAK void Hunk_FreeTempMemory(char *buf) { std::free(buf); }
 
+// The two ways the spawn loop can push a client into the new map, recorded
+// rather than performed: the bodies live in server_mp/sv_client_mp.cpp.
+WEAK int g_gamestateSends = 0;
+WEAK int g_enterWorlds = 0;
+WEAK int g_statRequests = 0;
+WEAK void __cdecl SV_SendClientGameState(client_t *) { ++g_gamestateSends; }
+WEAK void __cdecl SV_ClientEnterWorld(client_t *, usercmd_s *) { ++g_enterWorlds; }
+WEAK bool __cdecl NET_OutOfBandPrint(netsrc_t, netadr_t, const char *)
+{
+    ++g_statRequests;
+    return true;
+}
+
 int main()
 {
     Dvar_Init();
@@ -93,6 +106,39 @@ int main()
     CHECK(Tail(svs.clients[0]) == 0x5A);
     CHECK(svs.clients[1].header.state == 0); // the free slot is cleared, whole
     CHECK(Tail(svs.clients[1]) == 0);
+
+    // A map change (server_mp/sv_init_mp.cpp, SV_SpawnServer): a real client
+    // is asked for its stat packets over the network before the new gamestate.
+    // A test client is NA_BOT and cannot answer "requeststats", so asking it
+    // left it CS_CONNECTED forever and it never re-entered the world on the
+    // next map. It must be entered directly instead.
+    client_t &bot = svs.clients[0];
+    bot.bIsTestClient = 1;
+    bot.header.state = CS_CONNECTED;
+    g_gamestateSends = g_enterWorlds = g_statRequests = 0;
+    SV_ResetClientForNewMap(&bot);
+    CHECK(g_gamestateSends == 1);
+    CHECK(g_enterWorlds == 1);
+    CHECK(g_statRequests == 0);
+
+    // Already in the world on this map (created after the spawn): untouched.
+    bot.header.state = CS_ACTIVE;
+    g_gamestateSends = g_enterWorlds = g_statRequests = 0;
+    SV_ResetClientForNewMap(&bot);
+    CHECK(g_gamestateSends == 0);
+    CHECK(g_enterWorlds == 0);
+    CHECK(g_statRequests == 0);
+
+    client_t &human = svs.clients[1];
+    human.bIsTestClient = 0;
+    human.header.state = CS_CONNECTED;
+    human.statPacketsReceived = 127;
+    g_gamestateSends = g_enterWorlds = g_statRequests = 0;
+    SV_ResetClientForNewMap(&human);
+    CHECK(g_statRequests == 1);
+    CHECK(human.statPacketsReceived == 0);
+    CHECK(g_gamestateSends == 0);
+    CHECK(g_enterWorlds == 0);
 
     if (g_failures == 0)
         std::printf("sv_maxclients: all checks passed\n");
