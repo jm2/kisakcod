@@ -129,7 +129,8 @@ char *va(const char *format, ...)
         }
     }
     va_end(args);
-    std::snprintf(buffer, sizeof(buffer), "%s", out.c_str());
+    const std::size_t copied = out.copy(buffer, sizeof(buffer) - 1);
+    buffer[copied] = '\0';
     return buffer;
 }
 void Com_PrintError(int, const char *format, ...)
