@@ -1,6 +1,6 @@
 # NOW
 
-Last reviewed: 2026-10-26 by kisakcod-linux (antec), coordinator, after #824/#827; 4 open PRs
+Last reviewed: 2026-10-26 by kisakcod-linux (antec), coordinator, after the queue sweep; 8 open PRs (2 draft)
 Current gates: G3 (the remaining targets) and G5 (Windows ARM64, UBSan); G4a waits on the owner; G0, G1 and G2 are done
 WIP limit: 6 (at least 4 on the current gates)
 
@@ -25,18 +25,18 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 
 | # | Bead | Gate | Moves | Done-test | Size | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| 61 | G3 on the Windows ARM64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | server PASS incl. 8 bots/rotations (win-arm64); client #817 |
+| 61 | G3 on the Windows ARM64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | server PASS: 8 bots, 8/8/8 joins, rotations (win-arm64); client #817 |
 | 63 | G3 on the Linux amd64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | server PASS at 26cf1841 per #827; client spectator #817 |
 | 64 | G3 on the Linux arm64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | server PASS (linux-arm64); client #817 |
-| 65 | G3 on the macOS arm64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | host LAN/unsandboxed launch blocked; client #817 |
+| 65 | G3 on the macOS arm64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | dedi preset ready at 26cf1841; run waits on #828; client #817 |
 | 60 | G5 Windows ARM64: the native client plays a round, a map change and a reconnect on a fork server (#184) | G5 | gate | console text on both ends; ASan clean | M | presets/ASan link at 2e3ba835 (#815); client #817 |
-| 58 | G5 client UBSan-clean: fix the triaged client reports (flattened arrays, misaligned access, LCG overflow) | G5 | gate | a client leg logs 0 UBSan reports | M | #819/#822/#823 merged; #821 owner layout call |
+| 58 | G5 client UBSan-clean: fix the triaged client reports (flattened arrays, misaligned access, LCG overflow) | G5 | gate | a client leg logs 0 UBSan reports | M | #819/#822/#823 merged; #830 (#821+#831) in review |
 | 36 | G4a evidence: a stock Steam 1.8 client joins the windows-x86 server | G4a | gate | a retail client connects under the `steam18` profile; capture confirms protocol 7, gamename, shortversion (#531 table) | M | yoga: discovery, connect and 2 map changes pass; left: browser, spawn and fire, reconnect (#182) |
 | 66 | G6: the macOS `.app` bundles its runtime ([ADR-0011](decisions/0011-macos-client-bundles-its-runtime.md)) | G6 | K6 | a clean account without Homebrew plays a LAN round; `otool -L` shows no `/opt/homebrew` | L | 34 MB `.app` validated at 26cf1841; clean-account LAN remains |
 
 Other `burndown` issues are off these gates or wait on the owner.
 
-**Resume here:** #824 docs, #825 #818, #826 #816, #828 #827; #817/#821 and owner data block the gate rows. [#804](https://github.com/jm2/kisakcod/issues/804) holds host detail.
+**Resume here:** merge queue #826 #825 #828 #832 #834, then #824 docs; #830 waits on a sanitizer leg. Launch rows 61-65 with `+exec cfg +map`, never `map` inside an exec'd cfg (#816/#826). #817 blocks every client half; [#804](https://github.com/jm2/kisakcod/issues/804) holds host detail.
 
 ## Blocked on owner
 
@@ -49,7 +49,6 @@ Other `burndown` issues are off these gates or wait on the owner.
 | Retail-fidelity call on #208 | the sweep |
 | GPU runner; Apple Developer ID | G5; G6 |
 | #817 spawn route: dev/test spawn, UI-less class selection, or menu vehicle | rows 61/63/64/65 clients, 60, 36 |
-| #821 shadow-arena layout semantics | row 58 |
 | LAN/unsandboxed launch on mbp16 | row 65 |
 | Clean-account K6 round on mbp16 | row 66 |
 
@@ -69,4 +68,4 @@ Merge SHAs are in `git log`.
 
 - G0-G2 passed (rows 46, 54, 37; #178-#180); G3's Win64 target passes (row 47).
 - G5 interim clients pass (rows 55-57, 59); 1.8 parity and 21-map rotation pass (rows 52-53).
-- 2026-10-26: #815 ARM64 presets/ASan, #819/#822/#823 row 58, #812/#813 row 66 bundles, #824 docs ownership, #827 test-client map change.
+- 2026-10-26: #815 ARM64 presets/ASan, #819/#822/#823 row 58, #812/#813 row 66 bundles, #824 docs ownership, #827 test-client map change (#828), #829 host setup (#832), #833 TSan flake (#834).
