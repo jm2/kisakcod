@@ -390,7 +390,10 @@ void __cdecl SV_Map_f()
             return;
         }
 #ifndef KISAK_NO_FASTFILES
-        Cbuf_ExecuteBuffer(0, 0, "selectStringTableEntryInDvar mp/didyouknow.csv 0 didyouknow");
+        // A dedicated server has no client UI and no string table to look the
+        // entry up in, so it answered every map load with "Unknown command".
+        if (!Com_IsDedicatedServer())
+            Cbuf_ExecuteBuffer(0, 0, "selectStringTableEntryInDvar mp/didyouknow.csv 0 didyouknow");
 #endif
         if (com_dedicated->latched.integer != com_dedicated->current.integer)
         {

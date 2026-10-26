@@ -638,6 +638,39 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_tests_properties(cm-world-sector-links PROPERTIES TIMEOUT 20)
 endif()
 
+# The did-you-know hint SV_Map_f queues: the production sv_ccmds_mp.cpp with the
+# headless dedicated server's defines (#835). The command is client-only, so a
+# dedicated server must not queue it while a client must still get it. Linux
+# and macOS are gated alike: the file has no platform code, and a red/green
+# reproducible on either host is worth more than dropping the second gate.
+# -ffunction-sections plus the linker's section GC drop the rest of the file,
+# so only SV_Map_f's seam is stubbed.
+if ((KISAK_PLATFORM STREQUAL "linux" OR KISAK_PLATFORM STREQUAL "macos")
+    AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-sv-map-hint-guard-tests sv_map_hint_guard_tests.cpp
+        ${SRC_DIR}/server_mp/sv_ccmds_mp.cpp)
+    target_include_directories(kisakcod-sv-map-hint-guard-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-sv-map-hint-guard-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-sv-map-hint-guard-tests PRIVATE
+        KISAK_MP KISAK_DEDICATED DEDICATED KISAK_DEDI_HEADLESS UNIX)
+    target_compile_options(kisakcod-sv-map-hint-guard-tests PRIVATE
+        -fms-extensions -ffunction-sections -fdata-sections)
+    if (APPLE)
+        target_link_options(kisakcod-sv-map-hint-guard-tests PRIVATE -Wl,-dead_strip)
+    else()
+        target_link_options(kisakcod-sv-map-hint-guard-tests PRIVATE -Wl,--gc-sections)
+    endif()
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address" AND NOT APPLE)
+        # Otherwise ASan's global registration keeps every global alive.
+        target_compile_options(kisakcod-sv-map-hint-guard-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-sv-map-hint-guard-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-sv-map-hint-guard-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME sv-map-hint-guard COMMAND kisakcod-sv-map-hint-guard-tests)
+    set_tests_properties(sv-map-hint-guard PROPERTIES TIMEOUT 20)
+endif()
+
 # The adapters the MP GSC builtin table uses (g_public_mp.h). Linux and
 # clang only, as above: the game headers are engine code.
 if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
