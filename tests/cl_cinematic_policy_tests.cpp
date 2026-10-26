@@ -1,8 +1,9 @@
 // cl_cinematic_policy_tests.cpp: the decision CIN_PlayCinematic asks before a
 // cinematic takes a multiplayer client's connection state
-// (client/cl_cinematic_policy.h). A build without Bink skips a cinematic from
-// the first connecting state on; a build with Bink never does. Every build
-// has Bink, through FFmpeg.
+// (client/cl_cinematic_policy.h). A client that is not connecting plays its
+// intro; from the first connecting state on, a cinematic is skipped so the
+// server's reliable stream keeps a state it can be parsed from (issue #818).
+// Single player never skips.
 
 #include <client/cl_cinematic_policy.h>
 
@@ -23,6 +24,11 @@ enum : int
     kCinematic = 1,
     kLogo = 2,
     kConnecting = 3,
+    kChallenging = 4,
+    kConnected = 5,
+    kSendingStats = 6,
+    kLoading = 7,
+    kPrimed = 8,
     kActive = 9,
 };
 } // namespace
@@ -31,21 +37,30 @@ int main()
 {
     using cl_cinematic::SkipsForConnect;
 
-    // Without Bink: the menu, a cinematic and a logo play it; a connect does not.
+    // The menu intro: nothing is connecting, so the intro plays and may take
+    // CA_CINEMATIC. This is the playback issue #818 must not regress.
     for (int state : {kDisconnected, kCinematic, kLogo})
-        CHECK(!SkipsForConnect(state, kConnecting, false));
-    for (int state = kConnecting; state <= kActive; ++state)
-        CHECK(SkipsForConnect(state, kConnecting, false));
+        CHECK(!SkipsForConnect(state, kConnecting));
 
-    // With Bink (Win32), retail order is kept in every state.
-    for (int state = kDisconnected; state <= kActive; ++state)
-        CHECK(!SkipsForConnect(state, kConnecting, true));
+    // A startup +connect runs before the queued intro, and the intro must not
+    // overwrite the connection state CL_PacketEvent gates on.
+    for (int state = kConnecting; state <= kActive; ++state)
+        CHECK(SkipsForConnect(state, kConnecting));
+
+    // The startup order itself: +connect sets CA_CONNECTING, then the queued
+    // "cinematic IW_logo" must be skipped and leave CA_CONNECTING behind.
+    int state = kDisconnected;
+    CHECK(!SkipsForConnect(state, kConnecting));
+    state = kConnecting; // CL_Connect_f, from the startup command
+    CHECK(SkipsForConnect(state, kConnecting));
+    if (!SkipsForConnect(state, kConnecting))
+        state = kCinematic;
+    CHECK(state == kConnecting);
 
     // Single player passes no reachable connecting state.
-    CHECK(!SkipsForConnect(kActive, INT32_MAX, false));
-
-    // Every client plays Bink, through FFmpeg.
-    CHECK(cl_cinematic::kBuildPlaysBink);
+    CHECK(!SkipsForConnect(kActive, INT32_MAX));
+    for (int singlePlayerState = kDisconnected; singlePlayerState <= kActive; ++singlePlayerState)
+        CHECK(!SkipsForConnect(singlePlayerState, INT32_MAX));
 
     if (g_failures == 0)
         std::printf("cl cinematic policy: all checks passed\n");

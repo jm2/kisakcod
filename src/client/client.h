@@ -706,7 +706,7 @@ void __cdecl CL_ShutdownDebugData();
 
 // cl_cin
 int32_t __cdecl CIN_PlayCinematic(int32_t localClientNum, char *arg);
-// The first connection state a cinematic leaves alone in a build without Bink
+// The first connection state a cinematic leaves alone
 // (client/cl_cinematic_policy.h). Single player has no connect states.
 #ifdef KISAK_MP
 #define KISAK_CIN_FIRST_CONNECTING CA_CONNECTING
