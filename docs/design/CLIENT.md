@@ -165,7 +165,7 @@ on the binary path, not `pgrep -x`.
 - A client that plays cinematics (Win32, and POSIX with FFmpeg) runs the
   intro chain on a fresh profile, as retail does. The intro drops a connect
   in flight, so a scripted `+devmap` sets `+set com_introPlayed 1`. Stub
-  builds skip the intro while connecting (#614).
+  builds skip the intro while a connect is in flight (#614, #818).
 
 **Screenshots.**
 
