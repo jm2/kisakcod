@@ -8,6 +8,8 @@
 #include "mem_track.h"
 #include "threads.h"
 
+#include <algorithm>
+
 #include <database/database.h>
 #include <qcommon/sys_local.h>
 #include <qcommon/sys_quit.h>
@@ -1380,7 +1382,7 @@ char __cdecl Cmd_ExecFromDisk(int32_t  localClientNum, int32_t  controllerIndex,
     int32_t length; // [esp+8h] [ebp-Ch]
 
     length = FS_ReadFile(filename, (void **)&text);
-    if (!text)
+    if (!text || length < 0)
         return 0;
     Com_Printf(16, "execing %s from disk\n", filename);
 
@@ -1388,7 +1390,7 @@ char __cdecl Cmd_ExecFromDisk(int32_t  localClientNum, int32_t  controllerIndex,
     // map, and SV_SpawnServer clears temp memory, invalidating the file
     // buffer before FS_FreeFile sees it.  Execute from stable heap storage.
     textCopy = (char *)Z_Malloc(length + 1, "Cmd_ExecFromDisk", 10);
-    memcpy(textCopy, text, length);
+    std::copy_n(text, static_cast<std::size_t>(length), textCopy);
     textCopy[length] = 0;
     FS_FreeFile(text);
     Cbuf_ExecuteBuffer(localClientNum, controllerIndex, textCopy);

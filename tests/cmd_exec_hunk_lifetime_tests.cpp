@@ -5,11 +5,13 @@
 // Hunk_AllocateTempMemory, Hunk_FreeTempMemory and Hunk_ClearTempMemory run
 // here against a synthetic cfg and synthetic virtual-memory backend.
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <cstring>
 #include <cstdlib>
+#include <cstring>
+#include <string>
 
 #include <strings.h>
 
@@ -99,9 +101,9 @@ int __cdecl FS_ReadFile(const char *const path, void **const buffer)
         return -1;
     }
 
-    const std::size_t length = std::strlen(text);
+    const std::size_t length = std::char_traits<char>::length(text);
     char *const copy = reinterpret_cast<char *>(Hunk_AllocateTempMemory(static_cast<int32_t>(length + 1), "cmd exec test cfg"));
-    std::memcpy(copy, text, length + 1);
+    std::copy_n(text, length + 1, copy);
     *buffer = copy;
     ++g_reads;
     return static_cast<int>(length);
