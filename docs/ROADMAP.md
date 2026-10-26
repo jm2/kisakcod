@@ -43,7 +43,7 @@ left. Vulkan (#713) comes after 0.1.0. Row 58 is down to #821; row 66's
 runtime and pins are merged, leaving clean-account validation.
 G4a is under way: a stock 1.8 client joins the x86 server and stays through
 map changes (#182), and the wire captures wait on the owner. G3 (#181), G4b
-(#183) and G6 (#185) are open; G4b and G6 haven't started.
+(#183) and G6 (#185) are open; G4b and G6 gate execution have not started.
 
 ```mermaid
 graph LR
