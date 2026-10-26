@@ -1688,3 +1688,18 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     add_test(NAME q-parse-csv-quotes COMMAND kisakcod-q-parse-csv-tests)
     set_tests_properties(q-parse-csv-quotes PROPERTIES TIMEOUT 20)
 endif()
+
+# The IWD reader (qcommon/unzip.cpp) over the vendored zlib, on a zip the test
+# writes: FS_Seek's NULL-buffer skips through a deflated entry, forward,
+# relative and after a reopen (#189).
+add_executable(kisakcod-unzip-skip-tests unzip_skip_tests.cpp ${SRC_DIR}/qcommon/unzip.cpp
+    ${DEPS_DIR}/zlib/adler32.c ${DEPS_DIR}/zlib/crc32.c ${DEPS_DIR}/zlib/deflate.c
+    ${DEPS_DIR}/zlib/inffast.c ${DEPS_DIR}/zlib/inflate.c ${DEPS_DIR}/zlib/inftrees.c
+    ${DEPS_DIR}/zlib/trees.c ${DEPS_DIR}/zlib/zutil.c)
+target_include_directories(kisakcod-unzip-skip-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+target_compile_features(kisakcod-unzip-skip-tests PRIVATE cxx_std_20)
+target_compile_definitions(kisakcod-unzip-skip-tests PRIVATE KISAK_MP)
+set_target_properties(kisakcod-unzip-skip-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(NAME unzip-skip-contracts COMMAND kisakcod-unzip-skip-tests
+    WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+kisakcod_ilp32(kisakcod-unzip-skip-tests unzip-skip-contracts)
