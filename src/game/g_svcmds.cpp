@@ -188,6 +188,11 @@ int __cdecl ConsoleCommand()
     const char *cmd; // [esp+0h] [ebp-4h]
 
     cmd = Cmd_Argv(0);
+    if (!I_stricmp(cmd, "spawnclient"))
+    {
+        Svcmd_SpawnClient_f();
+        return 1;
+    }
     if (I_stricmp(cmd, "entitylist"))
     {
         if (I_stricmp(cmd, "addip"))

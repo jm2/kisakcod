@@ -168,6 +168,9 @@ void __cdecl ClientSpawn(gentity_s *ent, const float *spawn_origin, const float 
 void __cdecl ClientDisconnect(int32_t clientNum);
 uint32_t __cdecl G_GetNonPVSPlayerInfo(gentity_s *pSelf, float *vPosition, int32_t iLastUpdateEnt);
 
+// g_dev_spawnclient_mp
+void __cdecl Svcmd_SpawnClient_f();
+
 
 
 // g_client_script_cmd_mp

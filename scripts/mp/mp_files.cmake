@@ -60,6 +60,7 @@ set(GAME_MP
     "${SRC_DIR}/game_mp/g_client_script_cmd_mp.cpp"
     "${SRC_DIR}/game_mp/g_cmds_mp.cpp"
     "${SRC_DIR}/game_mp/g_combat_mp.cpp"
+    "${SRC_DIR}/game_mp/g_dev_spawnclient_mp.cpp"
     "${SRC_DIR}/game_mp/g_main_mp.cpp"
     "${SRC_DIR}/game_mp/g_main_mp.h"
     "${SRC_DIR}/game_mp/g_misc_mp.cpp"

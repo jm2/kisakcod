@@ -734,6 +734,20 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
         ${SRC_DIR}/game_mp/g_utils_mp.cpp
         ${SRC_DIR}/game_mp/g_main_mp.cpp
         ${SRC_DIR}/server/sv_game.cpp)
+
+    # Production spawnclient command (#817); the test stubs the engine boundary.
+    add_executable(kisakcod-game-mp-dev-spawnclient-tests
+        game_mp_dev_spawnclient_tests.cpp
+        ${SRC_DIR}/game_mp/g_dev_spawnclient_mp.cpp)
+    target_include_directories(kisakcod-game-mp-dev-spawnclient-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-game-mp-dev-spawnclient-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-game-mp-dev-spawnclient-tests PRIVATE
+        KISAK_MP KISAK_DEDICATED DEDICATED KISAK_DEDI_HEADLESS)
+    target_compile_options(kisakcod-game-mp-dev-spawnclient-tests PRIVATE -fms-extensions)
+    set_target_properties(kisakcod-game-mp-dev-spawnclient-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME game-mp-dev-spawnclient COMMAND kisakcod-game-mp-dev-spawnclient-tests)
+    set_tests_properties(game-mp-dev-spawnclient PROPERTIES TIMEOUT 20)
 endif()
 
 # The game module's dvars (game_mp/g_main_mp.cpp G_RegisterDvars) carry the
