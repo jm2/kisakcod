@@ -163,8 +163,11 @@ def ci_checks(owner, name, head):
 
 
 def newest_per_check(checks):
-    """One row per attempt: a retrigger leaves the old run's CANCELLED row next
-    to the new run's result, so keep the newest attempt of each name."""
+    """Keep the newest attempt of each check name.
+
+    A retrigger starts a new run without removing the old run's rows, so the
+    rollup carries a stale CANCELLED or SUCCESS next to the new result.
+    """
     newest = {}
     for check in checks:
         label = check.get("name") or check.get("context") or "?"
