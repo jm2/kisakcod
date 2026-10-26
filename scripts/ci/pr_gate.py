@@ -43,6 +43,9 @@ MISMATCH = ("FAILURE", "failure")
 # bogus "CI failed": retrigger with close/reopen rather than hunting a defect.
 NO_RUNNER = re.compile(r"was not acquired by Runner|capacity constraints", re.IGNORECASE)
 APT_STALLED = re.compile(r"apt attempt \d+ failed or stalled", re.IGNORECASE)
+APT_STEP = re.compile(r"install clang|lld|cross headers|apt", re.IGNORECASE)
+PASSED_STEP = ("success", "skipped")
+INFORMATIONAL = ("Census scope", "Native64 census")
 GH_TIMEOUT = 120
 # A job that only aggregates other jobs' results: it fails whenever any job in
 # its `needs` failed, so it carries no evidence of its own.
@@ -122,15 +125,25 @@ def annotation_texts(repo, run_id):
 
 
 def job_steps(repo, run_id):
-    """The steps a GitHub Actions job ran, or [] when there is no such job."""
+    """The steps a GitHub Actions job ran, [] for a job with none, None if unreadable."""
     # A check run's databaseId is the workflow job id, so the job endpoint is
-    # the one that can answer this. A non-Actions check has no job: [] means
-    # the same thing to the caller as an unstarted job.
+    # the one that can answer this. None (unreadable) must not collapse into []
+    # (a job that ran no step): the first proves nothing either way, the second
+    # is a cascade.
     try:
         job = json.loads(gh("api", f"repos/{repo}/actions/jobs/{run_id}"))
     except (subprocess.CalledProcessError, json.JSONDecodeError):
-        return []
+        return None
     return job.get("steps") or []
+
+
+def apt_step_failed(steps):
+    """True when the step that installs the census toolchain itself failed."""
+    for step in steps:
+        name = step.get("name") or ""
+        if APT_STEP.search(name) and (step.get("conclusion") or "") not in PASSED_STEP:
+            return True
+    return False
 
 
 def workflow_conclusion(repo, suite_id):
@@ -157,9 +170,15 @@ def infra_reason(repo, check):
     texts = annotation_texts(repo, run_id)
     if any(NO_RUNNER.search(text) for text in texts):
         return "GitHub could not acquire a runner, so the job never started"
-    if any(APT_STALLED.search(text) for text in texts):
+    steps = job_steps(repo, run_id)
+    if steps is None:
+        return None
+    # The apt step retries and warns after each failed attempt, so the warning
+    # survives a later successful attempt. It only explains the failure when
+    # the install step is the one that failed.
+    if apt_step_failed(steps) and any(APT_STALLED.search(text) for text in texts):
         return "the runner's apt install failed or stalled"
-    if not job_steps(repo, run_id):
+    if not steps:
         return "the job ran no step, so it cascaded from a job that never started"
     return None
 
@@ -239,8 +258,11 @@ def check_ci(checks, paths, found, repo):
     # not carry. Reporting it as INFRA keeps a capacity or apt outage from
     # holding the gate red; GitHub's own merge state still covers a required
     # job that is genuinely missing.
+    # Only the aggregate's own members can explain its failure; the census
+    # jobs are informational and absent from its needs.
     real_failure = any(state in FAILED and not infra
-                       for label, state, infra in rows if label not in AGGREGATE_JOBS)
+                       for label, state, infra in rows
+                       if label not in AGGREGATE_JOBS and not label.startswith(INFORMATIONAL))
     for label, state, infra in rows:
         if label in AGGREGATE_JOBS and state in FAILED and not real_failure:
             infra = "no job it aggregates failed on code, so it only cascaded"
