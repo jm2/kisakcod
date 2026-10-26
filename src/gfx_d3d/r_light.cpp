@@ -377,6 +377,11 @@ void __cdecl R_GetBspSpotLightSurfs(const GfxLight *light, int lightIndex, GfxBs
 
     iassert(lightIndex < MAX_VISIBLE_SHADOWABLE_DLIGHTS);
 
+    // The shadow arena is one entry (MAX_VISIBLE_SHADOWABLE_DLIGHTS); a second
+    // visible spot must not index it in release builds, where the assert above
+    // compiles out. Collect only the lit-surface list for those lights.
+    const bool shadowable = lightIndex < MAX_VISIBLE_SHADOWABLE_DLIGHTS;
+
     surfaceVisData = rgp.world->dpvs.surfaceVisData[0];
     surfaceMaterials = rgp.world->dpvs.surfaceMaterials;
 
@@ -390,11 +395,14 @@ void __cdecl R_GetBspSpotLightSurfs(const GfxLight *light, int lightIndex, GfxBs
 
     drawSurfs[0] = scene.visLight[lightIndex].drawSurfs;
     surfaces[0] = (GfxSurface **)&drawSurfs[0][512];
-    drawSurfs[1] = scene.visLightShadow[lightIndex].drawSurfs;
-    surfaces[1] = (GfxSurface **)&drawSurfs[1][512];
+    if (shadowable)
+    {
+        drawSurfs[1] = scene.visLightShadow[lightIndex].drawSurfs;
+        surfaces[1] = (GfxSurface **)&drawSurfs[1][512];
+    }
     bspLightCallback.surfaceVisData = surfaceVisData;
     R_CalcSpotLightPlanes(light, bspLightCallback.planes);
-    R_BoxSurfaces(mins, maxs, allowSurf_1, &bspLightCallback, surfaces, kVisLightSurfListCapacity, surfCounts, 2u);
+    R_BoxSurfaces(mins, maxs, allowSurf_1, &bspLightCallback, surfaces, kVisLightSurfListCapacity, surfCounts, shadowable ? 2u : 1u);
     if (surfCounts[0])
     {
         scene.visLight[lightIndex].drawSurfCount = surfCounts[0];
@@ -428,7 +436,7 @@ void __cdecl R_GetBspSpotLightSurfs(const GfxLight *light, int lightIndex, GfxBs
     {
         scene.visLight[lightIndex].drawSurfCount = 0;
     }
-    if (surfCounts[1])
+    if (shadowable && surfCounts[1])
     {
         scene.visLightShadow[lightIndex].drawSurfCount = surfCounts[1];
         surfData[1].drawSurfList.current = drawSurfs[1];
@@ -457,7 +465,7 @@ void __cdecl R_GetBspSpotLightSurfs(const GfxLight *light, int lightIndex, GfxBs
         scene.visLightShadow[lightIndex].drawSurfCount = surfData[1].drawSurfList.current
             - scene.visLightShadow[lightIndex].drawSurfs;
     }
-    else
+    else if (shadowable)
     {
         scene.visLightShadow[lightIndex].drawSurfCount = 0;
     }
