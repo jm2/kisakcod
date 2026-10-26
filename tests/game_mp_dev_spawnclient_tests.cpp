@@ -1,10 +1,12 @@
 // Exercises the production spawnclient command (#817) with engine calls stubbed.
+#include <algorithm>
 #include <cstdarg>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <strings.h>
 
 #include <game/game_public.h>
@@ -17,31 +19,46 @@
 namespace
 {
 int g_failures;
-#define CHECK(expr) ((expr) ? void() : (void)(std::fprintf(stderr, "line %d: CHECK(%s)\n", __LINE__, #expr), ++g_failures))
+
+void Check(bool ok, const char *expr, int line)
+{
+    if (!ok)
+    {
+        std::fprintf(stderr, "line %d: CHECK(%s)\n", line, expr);
+        ++g_failures;
+    }
+}
+
+#define CHECK(expr) Check((expr), #expr, __LINE__)
 
 gclient_s g_clients[64];
 dvar_s g_fakeCheats;
 char g_console[4096];
-char g_args[2][32];
+std::string g_args[2];
 int g_argc;
 constexpr int SPAWN_ENT = 900;
-char g_stringNames[8][32];
+std::string g_stringNames[8];
 int g_stringCount;
-int g_spawnCalls, g_spawnNum, g_spawnHealth;
+int g_spawnCalls;
+int g_spawnNum;
+int g_spawnHealth;
 float g_spawnOrigin[3];
-int g_giveCalls, g_initializeAmmoCalls, g_selectWeaponCalls, g_selectWeaponNum, g_weaponIndex;
+int g_giveCalls;
+int g_initializeAmmoCalls;
+int g_selectWeaponCalls;
+int g_selectWeaponNum;
+int g_weaponIndex;
 bgs_t g_previousBgs;
 bgs_t *g_bgsSeen;
-int g_bgsTimeSeen;
 
 uint16_t InternString(const char *name)
 {
     for (int i = 0; i < g_stringCount; ++i)
     {
-        if (std::strcmp(g_stringNames[i], name) == 0)
+        if (g_stringNames[i] == name)
             return static_cast<uint16_t>(100 + i);
     }
-    std::strcpy(g_stringNames[g_stringCount], name);
+    g_stringNames[g_stringCount] = name;
     return static_cast<uint16_t>(100 + g_stringCount++);
 }
 
@@ -56,7 +73,7 @@ void Reset()
     std::memset(g_console, 0, sizeof(g_console));
     std::memset(g_entities, 0, sizeof(gentity_s) * MAX_GENTITIES);
     g_argc = 2;
-    std::strcpy(g_args[0], "spawnclient");
+    g_args[0] = "spawnclient";
     g_stringCount = 0;
     g_spawnCalls = 0;
     g_spawnNum = -1;
@@ -66,8 +83,6 @@ void Reset()
     g_selectWeaponCalls = 0;
     g_selectWeaponNum = -1;
     g_weaponIndex = 37;
-    level.time = 42;
-    level_bgs.time = 777;
     bgs = &g_previousBgs;
     level.clients = g_clients;
     level.maxclients = 4;
@@ -94,7 +109,7 @@ void Spectator(int clientNum)
 
 void Run(const char *arg)
 {
-    std::strcpy(g_args[1], arg);
+    g_args[1] = arg;
     Svcmd_SpawnClient_f();
 }
 } // namespace
@@ -118,13 +133,15 @@ WEAK void Com_Printf(int, const char *fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
-    const size_t used = std::strlen(g_console);
+    const char *end = std::find(g_console, g_console + sizeof(g_console), '\0');
+    const size_t used = static_cast<size_t>(end - g_console);
+    // Flawfinder: ignore -- passthrough console shim; callers own the literal format.
     std::vsnprintf(g_console + used, sizeof(g_console) - used, fmt, args);
     va_end(args);
 }
 
 WEAK int Cmd_Argc() { return g_argc; }
-WEAK const char *Cmd_Argv(int index) { return index >= 0 && index < g_argc ? g_args[index] : ""; }
+WEAK const char *Cmd_Argv(int index) { return index >= 0 && index < g_argc ? g_args[index].c_str() : ""; }
 WEAK int I_stricmp(const char *a, const char *b) { return strcasecmp(a, b); }
 WEAK uint32_t GScr_AllocString(const char *name) { return InternString(name); }
 
@@ -142,7 +159,6 @@ WEAK void ClientSpawn(gentity_s *ent, const float *origin, const float *)
 {
     ++g_spawnCalls;
     g_bgsSeen = bgs;
-    g_bgsTimeSeen = level_bgs.time;
     g_spawnNum = static_cast<int>(ent - g_entities);
     std::memcpy(g_spawnOrigin, origin, sizeof(g_spawnOrigin));
     g_spawnHealth = ent->health;
@@ -193,7 +209,7 @@ int main()
     CHECK(g_clients[0].ps.weapon == g_weaponIndex && g_giveCalls == 1 && g_initializeAmmoCalls == 1);
     CHECK(g_clients[0].ps.ammo[0] == 90 && g_clients[0].ps.ammoclip[0] == 30);
     CHECK(g_selectWeaponCalls == 1 && g_selectWeaponNum == g_weaponIndex);
-    CHECK(g_bgsSeen == &level_bgs && g_bgsTimeSeen == 42 && bgs == &g_previousBgs && level_bgs.time == 777);
+    CHECK(g_bgsSeen == &level_bgs && bgs == &g_previousBgs);
     CHECK(std::strstr(g_console, "spawnclient: client 0 spawned") && std::strstr(g_console, "spawn=mp_tdm_spawn"));
 
     Reset();

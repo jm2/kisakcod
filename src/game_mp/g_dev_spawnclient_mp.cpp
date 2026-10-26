@@ -25,8 +25,10 @@ const char *DevSpawnTeamName(team_t team)
 }
 
 // Pick the team with fewer connected players, axis on a tie.
-team_t DevSpawnPickTeam()
+team_t DevSpawnPickTeam(team_t current)
 {
+    if (current == TEAM_AXIS || current == TEAM_ALLIES)
+        return current;
     int counts[2] = {};
     for (int i = 0; i < level.maxclients; ++i)
     {
@@ -79,8 +81,7 @@ bool DevSpawnClient(int clientNum)
         DevSpawnReport(clientNum, "refused: no known spawn point", client->sess.cs.team, client->sess.maxHealth, 0, nullptr);
         return false;
     }
-    if (client->sess.cs.team != TEAM_AXIS && client->sess.cs.team != TEAM_ALLIES)
-        client->sess.cs.team = DevSpawnPickTeam();
+    client->sess.cs.team = DevSpawnPickTeam(client->sess.cs.team);
     if (client->sess.maxHealth <= 0) client->sess.maxHealth = DEV_SPAWN_MAX_HEALTH;
 
     // ClientSpawn preserves sess but clears the rest of gclient_s, including
@@ -92,21 +93,13 @@ bool DevSpawnClient(int clientNum)
     CalculateRanks();
     float origin[3] = {spot->r.currentOrigin[0], spot->r.currentOrigin[1], spot->r.currentOrigin[2] + 9.0f};
 
-    // Console commands run between server frames, when G_RunFrame has already
-    // cleared bgs. ClientSpawn -> ClientEndFrame -> BG_UpdatePlayerDObj needs it.
+    // Console commands run between server frames, after G_RunFrame clears bgs.
+    // ClientSpawn -> ClientEndFrame -> BG_UpdatePlayerDObj needs it; level_bgs
+    // already carries the latest frame's clock values.
     bgs_t *savedBgs = bgs;
-    const int savedFrametime = level_bgs.frametime;
-    const int savedLatestSnapshotTime = level_bgs.latestSnapshotTime;
-    const int savedTime = level_bgs.time;
     bgs = &level_bgs;
-    level_bgs.time = level.time;
-    level_bgs.latestSnapshotTime = level.time;
-    level_bgs.frametime = 0;
     ClientSpawn(ent, origin, spot->r.currentAngles);
     bgs = savedBgs;
-    level_bgs.time = savedTime;
-    level_bgs.latestSnapshotTime = savedLatestSnapshotTime;
-    level_bgs.frametime = savedFrametime;
 
     const int weapon = static_cast<int>(G_GetWeaponIndexForName(DEV_SPAWN_WEAPON));
     const bool armed = weapon && G_GivePlayerWeapon(&client->ps, weapon, 0);
