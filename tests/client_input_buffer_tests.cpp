@@ -52,6 +52,10 @@ WEAK bool __cdecl NET_OutOfBandPrint(netsrc_t, netadr_t, const char *data)
     g_sent = data;
     return true;
 }
+WEAK void __cdecl Key_KeynumToStringBuf(int keynum, char *buf, int buflen)
+{
+    std::snprintf(buf, static_cast<std::size_t>(buflen), "%c", keynum);
+}
 WEAK void __cdecl MyAssertHandler(const char *, int, int, const char *, ...) {}
 
 namespace
@@ -93,6 +97,27 @@ void TestBindingsStayInBuffer()
 
     for (int key = 'a'; key <= 'z'; ++key)
         playerKeys[0].keys[key].binding = nullptr;
+}
+
+// Both key-name slots stay inside their char[128] elements. The pre-fix clear
+// indexed keyNames[0][128], which UBSan rejects even though the address aliases
+// the first byte of the second slot.
+void TestSecondBindingSlotsBounded()
+{
+    playerKeys[0].keys['a'].binding = "getkeytest";
+    playerKeys[0].keys['b'].binding = "getkeytest";
+
+    char names[2][128];
+    std::memset(names, 0x5a, sizeof(names));
+    const int count = CL_GetKeyBinding(0, "getkeytest", names);
+    CHECK(count == 2);
+    CHECK(std::strcmp(names[0], "a") == 0);
+    CHECK(std::strcmp(names[1], "b") == 0);
+    CHECK(names[0][127] == 0x5a);
+    CHECK(names[1][127] == 0x5a);
+
+    playerKeys[0].keys['a'].binding = nullptr;
+    playerKeys[0].keys['b'].binding = nullptr;
 }
 
 // A full console ring copies at most maxSize - 1 bytes.
@@ -151,6 +176,7 @@ int main()
     TestFrenchDigitNames();
     TestHighBitKeyName();
     TestBindingsStayInBuffer();
+    TestSecondBindingSlotsBounded();
     TestConsoleCopyBounded();
     TestGlobalServersBounded();
     if (g_failures)

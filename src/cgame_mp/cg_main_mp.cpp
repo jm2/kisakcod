@@ -1390,7 +1390,7 @@ void __cdecl CG_AddAudioPhysicsClass(PhysPreset *physPreset, char (*classes)[64]
 
     for (int i = 0; i < *nclasses; ++i)
     {
-        if (!I_stricmp(physPreset->sndAliasPrefix, &(*classes)[64 * i]))
+        if (!I_stricmp(physPreset->sndAliasPrefix, classes[i]))
         {
             physPreset->type = i;
             return;
@@ -1399,7 +1399,7 @@ void __cdecl CG_AddAudioPhysicsClass(PhysPreset *physPreset, char (*classes)[64]
 
     physPreset->type = *nclasses;
     CG_RegisterSurfaceTypeSounds(physPreset->sndAliasPrefix, cgMedia.physCollisionSound[physPreset->type]);
-    I_strncpyz(&(*classes)[64 * *nclasses], (char *)physPreset->sndAliasPrefix, 64);
+    I_strncpyz(classes[*nclasses], (char *)physPreset->sndAliasPrefix, 64);
     ++*nclasses;
 }
 
