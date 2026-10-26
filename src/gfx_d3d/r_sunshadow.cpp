@@ -692,8 +692,8 @@ void __cdecl R_SetupSunShadowBoundingPoly(
 
         for (nearPointIndex = 4; nearPointIndex < pointCount; ++nearPointIndex)
         {
-            if ((*frustumPointsInSunProj)[2 * nearPointIndex] == frustumBoundingPolyInSunProj[pointIndex][0]
-                && (*frustumPointsInSunProj)[2 * nearPointIndex + 1] == frustumBoundingPolyInSunProj[pointIndex][1])
+            if (frustumPointsInSunProj[nearPointIndex][0] == frustumBoundingPolyInSunProj[pointIndex][0]
+                && frustumPointsInSunProj[nearPointIndex][1] == frustumBoundingPolyInSunProj[pointIndex][1])
             {
                 boundingPoly->pointIsNear[pointIndex] = 1;
                 break;

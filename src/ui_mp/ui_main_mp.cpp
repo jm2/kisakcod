@@ -4504,9 +4504,9 @@ void UI_GetGameTypesList()
     sharedUiInfo.joinGameTypes[0].gameType = String_Alloc("All");
     sharedUiInfo.joinGameTypes[sharedUiInfo.numJoinGameTypes++].gameTypeName = "";
     if (IsFastFileLoad())
-        ((void(__cdecl *)(void (*)()))UI_GetGameTypesList_FastFile)(UI_GetGameTypesList_FastFile);
+        UI_GetGameTypesList_FastFile();
     else
-        ((void(__cdecl *)(void (*)()))UI_GetGameTypesList_LoadObj)(UI_GetGameTypesList_LoadObj);
+        UI_GetGameTypesList_LoadObj();
     if (!sharedUiInfo.numGameTypes)
         Com_Error(ERR_FATAL, "No game type scripts found in maps/mp/gametypes folder");
 }

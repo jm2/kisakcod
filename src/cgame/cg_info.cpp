@@ -35,7 +35,7 @@ void __cdecl CG_DrawInformation(int32_t localClientNum)
 {
 #ifdef KISAK_MP
     int32_t v1; // [esp+20h] [ebp-30h]
-    uint8_t (*v2)(void); // [esp+24h] [ebp-2Ch]
+    bool showingProgress; // [esp+24h] [ebp-2Ch]
     bool serverLoading; // [esp+2Bh] [ebp-25h]
     Font_s *font; // [esp+30h] [ebp-20h]
     float width; // [esp+34h] [ebp-1Ch]
@@ -64,10 +64,10 @@ void __cdecl CG_DrawInformation(int32_t localClientNum)
     CL_GetConfigString(localClientNum, 0);
     UI_DrawMapLevelshot(localClientNum);
     if (IsFastFileLoad())
-        v2 = (uint8_t (*)(void))CG_IsShowingProgress_FastFile;
+        showingProgress = CG_IsShowingProgress_FastFile();
     else
-        v2 = (uint8_t (*)(void))CG_IsShowingProgress_LoadObj;
-    if (!v2() && serverLoading && g_waitingForServer)
+        showingProgress = CG_IsShowingProgress_LoadObj() != 0;
+    if (!showingProgress && serverLoading && g_waitingForServer)
     {
         font = UI_GetFontHandle(&scrPlaceFull, 0, fontScale);
         v1 = ((int)Sys_Milliseconds() / 500) & 3;

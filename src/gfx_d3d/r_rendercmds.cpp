@@ -1250,8 +1250,8 @@ void __cdecl R_AddCmdDrawQuadPic(const float (*verts)[2], const float *color, Ma
         cmd->material = defaultMaterial;
         for (cornerIndex = 0; cornerIndex < 4; ++cornerIndex)
         {
-            cmd->verts[cornerIndex][0] = (*verts)[2 * cornerIndex];
-            cmd->verts[cornerIndex][1] = (*verts)[2 * cornerIndex + 1];
+            cmd->verts[cornerIndex][0] = verts[cornerIndex][0];
+            cmd->verts[cornerIndex][1] = verts[cornerIndex][1];
         }
         R_ConvertColorToBytes(color, (uint8_t *)&cmd->color);
     }
