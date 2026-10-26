@@ -188,11 +188,15 @@ int __cdecl ConsoleCommand()
     const char *cmd; // [esp+0h] [ebp-4h]
 
     cmd = Cmd_Argv(0);
+#ifdef KISAK_MP
+    // MP-only: this file is shared with SP, which does not link the
+    // g_dev_spawnclient_mp.cpp TU. spawnclient is absent from SP by design.
     if (!I_stricmp(cmd, "spawnclient"))
     {
         Svcmd_SpawnClient_f();
         return 1;
     }
+#endif
     if (I_stricmp(cmd, "entitylist"))
     {
         if (I_stricmp(cmd, "addip"))
