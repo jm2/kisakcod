@@ -902,9 +902,8 @@ char __cdecl CL_ConsolePrint_AddLine(
                 con.textTempLine[con.lineOffset++] = 94;
                 v9 = &con.textTempLine[con.lineOffset];
                 v10 = text;
-                memcpy(v9, text, sizeof(uint32_t));
-                memcpy(v9 + 4, v10 + 4, sizeof(uint16_t));
-                v9[6] = v10[6];
+                for (int i = 0; i < 7; ++i)
+                    v9[i] = v10[i];
                 con.lineOffset += 7;
                 text += 7;
                 bcassert(con.lineOffset, sizeof(con.textTempLine) + 1); // 0x201
@@ -1453,7 +1452,10 @@ uint32_t __cdecl CL_AddDeathMessageIcon(
     iassert(deathMsgLend + sizeof(iconShader) <= deathMsgMaxLen);
 
     const uint32_t iconShaderBits = (uint32_t)iconShader;
-    memcpy(&deathMsg[deathMsgLend], &iconShaderBits, sizeof(iconShaderBits));
+    deathMsg[deathMsgLend + 0] = (char)(uint8_t)(iconShaderBits);
+    deathMsg[deathMsgLend + 1] = (char)(uint8_t)(iconShaderBits >> 8);
+    deathMsg[deathMsgLend + 2] = (char)(uint8_t)(iconShaderBits >> 16);
+    deathMsg[deathMsgLend + 3] = (char)(uint8_t)(iconShaderBits >> 24);
     deathMsgLene = deathMsgLend + 4;
 
     iassert(deathMsgLene - deathMsgLen == CONTXTCMD_LEN_HUDICON + 1);
@@ -1489,7 +1491,10 @@ uint32_t __cdecl CL_AddDeathMessageIcon(
     deathMsg[deathMsgLen++] = encodedWidth;
     deathMsg[deathMsgLen++] = encodedHeight;
     const uint32_t iconShaderBits = (uint32_t)iconShader;
-    memcpy(&deathMsg[deathMsgLen], &iconShaderBits, sizeof(iconShaderBits));
+    deathMsg[deathMsgLen + 0] = (char)(uint8_t)(iconShaderBits);
+    deathMsg[deathMsgLen + 1] = (char)(uint8_t)(iconShaderBits >> 8);
+    deathMsg[deathMsgLen + 2] = (char)(uint8_t)(iconShaderBits >> 16);
+    deathMsg[deathMsgLen + 3] = (char)(uint8_t)(iconShaderBits >> 24);
     deathMsgLen += 4;
 
     iassert(deathMsgLen - startLen == CONTXTCMD_LEN_HUDICON + 1);
