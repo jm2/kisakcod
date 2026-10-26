@@ -45,6 +45,49 @@ void _copyDWord(uint32_t *dest, const uint32_t constant, const uint32_t count)
         dest[i] = constant;
 }
 
+// One fill at one offset and length; returns the number of failed expectations.
+int CheckFill(int offset, std::size_t count, int value, unsigned char *storage)
+{
+    int failures = 0;
+
+    std::memset(storage, 0xA5, 64);
+    Com_Memset(storage + offset, value, count);
+
+    const unsigned char expected = static_cast<unsigned char>(value);
+    for (std::size_t i = 0; i < count; ++i)
+    {
+        if (storage[offset + i] != expected)
+        {
+            std::printf(
+                "FAIL offset=%d count=%zu value=0x%x: byte %zu is 0x%02x\n",
+                offset, count, value, i, storage[offset + i]);
+            ++failures;
+            break;
+        }
+    }
+
+    if (storage[offset + count] != 0xA5)
+    {
+        std::printf(
+            "FAIL offset=%d count=%zu value=0x%x: wrote past the end\n",
+            offset, count, value);
+        ++failures;
+    }
+
+    for (int i = 0; i < offset; ++i)
+    {
+        if (storage[i] != 0xA5)
+        {
+            std::printf(
+                "FAIL offset=%d count=%zu value=0x%x: wrote before the start\n",
+                offset, count, value);
+            ++failures;
+            break;
+        }
+    }
+    return failures;
+}
+
 int main()
 {
     static const int values[] = {0, 1, 0x7f, 0xff, 0x1ff};
@@ -52,49 +95,9 @@ int main()
     int failures = 0;
 
     for (int offset = 0; offset <= 7; ++offset)
-    {
         for (std::size_t count = 0; count <= 24; ++count)
-        {
             for (const int value : values)
-            {
-                std::memset(storage, 0xA5, sizeof(storage));
-                Com_Memset(storage + offset, value, count);
-
-                const unsigned char expected = static_cast<unsigned char>(value);
-                for (std::size_t i = 0; i < count; ++i)
-                {
-                    if (storage[offset + i] != expected)
-                    {
-                        std::printf(
-                            "FAIL offset=%d count=%zu value=0x%x: byte %zu is 0x%02x\n",
-                            offset, count, value, i, storage[offset + i]);
-                        ++failures;
-                        break;
-                    }
-                }
-
-                if (storage[offset + count] != 0xA5)
-                {
-                    std::printf(
-                        "FAIL offset=%d count=%zu value=0x%x: wrote past the end\n",
-                        offset, count, value);
-                    ++failures;
-                }
-
-                for (int i = 0; i < offset; ++i)
-                {
-                    if (storage[i] != 0xA5)
-                    {
-                        std::printf(
-                            "FAIL offset=%d count=%zu value=0x%x: wrote before the start\n",
-                            offset, count, value);
-                        ++failures;
-                        break;
-                    }
-                }
-            }
-        }
-    }
+                failures += CheckFill(offset, count, value, storage);
 
     // A zero-length call must not touch a null destination.
     Com_Memset(nullptr, 0, 0);

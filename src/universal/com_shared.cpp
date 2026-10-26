@@ -298,6 +298,10 @@ void __cdecl Com_Memset(void *dest_p, const int val, const size_t count)
     if (count == 0)
         return;
 
+    // nosemgrep: c.lang.security.insecure-use-memset.insecure-use-memset --
+    // general byte fill, not a wipe of sensitive data. The rule matches any
+    // memset on a pointer parameter; this one restores the decompiled routine's
+    // "fill count bytes with the low byte of val" contract.
     memset(dest_p, (unsigned char)val, count);
 }
 
