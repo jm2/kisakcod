@@ -813,6 +813,18 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_tests_properties(vid-restart-buffers PROPERTIES TIMEOUT 20)
 endif()
 
+# Com_Memset fills the low byte at every destination alignment and length; the
+# production TU is compiled here so a return to cast-pointer stores trips UBSan.
+add_executable(kisakcod-com-shared-memset-tests
+    com_shared_tests.cpp
+    ${SRC_DIR}/universal/com_shared.cpp)
+target_include_directories(kisakcod-com-shared-memset-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-com-shared-memset-tests PRIVATE cxx_std_20)
+set_target_properties(kisakcod-com-shared-memset-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(NAME com-shared-memset-bytes COMMAND kisakcod-com-shared-memset-tests)
+set_tests_properties(com-shared-memset-bytes PROPERTIES TIMEOUT 20)
+
 # Console, key-binding and server-browser buffer bounds (#197): the production
 # client TUs at native width, with the rest of the engine weak.
 if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8

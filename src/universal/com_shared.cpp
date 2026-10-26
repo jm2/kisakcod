@@ -1,5 +1,6 @@
 #include "q_shared.h"
 
+#include <algorithm>
 #include <string.h>
 #include <qcommon/qcommon.h>
 
@@ -290,54 +291,14 @@ void __cdecl Com_Memcpy(void *dest_p, const void *src_p, const size_t count)
 
 void __cdecl Com_Memset(void *dest_p, const int val, const size_t count)
 {
-    uint32_t *dest = (uint32_t *)dest_p;
+    // The decompiled original replicated the low byte of val through 4-byte and
+    // 2-byte stores on cast pointers, which is undefined behaviour when the
+    // destination is not naturally aligned (UBSan reports a misaligned store in
+    // _copyDWord, reached from here). An unsigned-char fill states the "low byte
+    // of val, count times" contract directly and makes no alignment assumption.
+    if (count == 0)
+        return;
 
-    uint32_t *v3; // edx
-    int v4; // eax
-    int v5; // eax
-    int v6; // ecx
-    char *v7; // ebx
-
-    if (count >= 8)
-    {
-        _copyDWord(dest, val | (val << 8) | ((val | (val << 8)) << 16), count / 4);
-        if ((count & 3) != 0)
-        {
-            v7 = (char *)dest + (count & 0xFFFFFFFC);
-            if ((count & 3u) < 2)
-            {
-                if ((count & 3) != 0)
-                    *v7 = val;
-            }
-            else
-            {
-                *(_WORD *)v7 = val | ((_WORD)val << 8);
-                if ((count & 3) != 2)
-                    v7[2] = val;
-            }
-        }
-    }
-    else
-    {
-        v3 = dest;
-        v4 = val;
-        BYTE1(v4) = val;
-        v5 = (uint16_t)v4 + (v4 << 16);
-        v6 = count;
-        if (count >= 4)
-        {
-            *dest = v5;
-            v3 = dest + 1;
-            v6 = count - 4;
-        }
-        if (v6 >= 2)
-        {
-            *(_WORD *)v3 = v5;
-            v3 = (uint32_t *)((char *)v3 + 2);
-            v6 -= 2;
-        }
-        if (v6)
-            *(_BYTE *)v3 = v5;
-    }
+    std::fill_n(static_cast<unsigned char *>(dest_p), count,
+        static_cast<unsigned char>(val));
 }
-

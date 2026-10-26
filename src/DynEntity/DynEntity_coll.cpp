@@ -240,8 +240,13 @@ void __cdecl DynEnt_LinkEntity(
         }
         if (sectorIndex == dynEntColl->sector)
         {
-            *(double *)dynEntColl->linkMins = *(double *)absMins;
-            *(double *)dynEntColl->linkMaxs = *(double *)absMaxs;
+            // linkMins/linkMaxs are float[2]; copying them through a double
+            // pointer read 8 bytes at an alignment the float array does not
+            // guarantee (UBSan: "load of misaligned address ... type 'double'").
+            dynEntColl->linkMins[0] = absMins[0];
+            dynEntColl->linkMins[1] = absMins[1];
+            dynEntColl->linkMaxs[0] = absMaxs[0];
+            dynEntColl->linkMaxs[1] = absMaxs[1];
             return;
         }
     LABEL_24:
@@ -253,8 +258,10 @@ void __cdecl DynEnt_LinkEntity(
     }
     DynEnt_AddToCollSector(collType, dynEntId, sectorIndex);
 LABEL_29:
-    *(double *)dynEntColl->linkMins = *(double *)absMins;
-    *(double *)dynEntColl->linkMaxs = *(double *)absMaxs;
+    dynEntColl->linkMins[0] = absMins[0];
+    dynEntColl->linkMins[1] = absMins[1];
+    dynEntColl->linkMaxs[0] = absMaxs[0];
+    dynEntColl->linkMaxs[1] = absMaxs[1];
     DynEnt_SortCollSector(collType, sectorIndex, mins, maxs);
     p_flags = &DynEnt_GetClientEntity(dynEntId, (DynEntityDrawType)(collType & 1))->flags;
     *p_flags |= 4u;
