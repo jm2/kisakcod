@@ -15,6 +15,7 @@
 #include <Windows.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iterator>
 #include <string>
@@ -263,6 +264,11 @@ void I_strncpyz(char *dest, const char *, int destsize)
         *dest = '\0';
 }
 const char *Com_GetFilenameSubString(const char *pathname) { return pathname; }
+// Cmd_ExecFromDisk runs an exec'd file from stable heap storage. This test
+// never execs a file (FS_ReadFile returns -1), but cmd.obj still names the
+// allocator, so it must resolve.
+void *Z_Malloc(int size, const char *, int) { return std::malloc(static_cast<size_t>(size)); }
+void Z_Free(void *ptr, int) { std::free(ptr); }
 void Com_DefaultExtension(char *, unsigned int, const char *) {}
 char Com_Filter(const char *, char *, int) { return 0; }
 void Com_PrintError(int, const char *, ...) {}
