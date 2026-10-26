@@ -111,6 +111,27 @@ def check_x86(state, found):
         found.blockers.append(f"x86 identity job is {state}")
 
 
+def annotation_texts(repo, run_id):
+    """The titles, messages and details of a check run's annotations."""
+    annotations = json.loads(gh("api", f"repos/{repo}/check-runs/{run_id}/annotations?per_page=100"))
+    return [(a.get("title") or "") + " " + (a.get("message") or "") + " " + (a.get("raw_details") or "")
+            for a in annotations]
+
+
+def job_steps(repo, run_id):
+    """The steps a GitHub Actions job ran; the check-run REST object has none.
+
+    A check run's databaseId is the workflow job id, so the job endpoint is the
+    one that can answer this. A non-Actions check run has no job: [] means the
+    same thing to the caller as an unstarted job.
+    """
+    try:
+        job = json.loads(gh("api", f"repos/{repo}/actions/jobs/{run_id}"))
+    except Exception:
+        return []
+    return job.get("steps") or []
+
+
 def infra_reason(repo, check):
     """Why a failed job proves nothing about the code, or None if it does."""
     run_id = check.get("databaseId")
@@ -119,14 +140,12 @@ def infra_reason(repo, check):
     details = json.loads(gh("api", f"repos/{repo}/check-runs/{run_id}"))
     if (details.get("app") or {}).get("slug") != "github-actions":
         return None
-    annotations = json.loads(gh("api", f"repos/{repo}/check-runs/{run_id}/annotations"))
-    texts = [(a.get("title") or "") + " " + (a.get("message") or "") + " " + (a.get("raw_details") or "")
-             for a in annotations]
+    texts = annotation_texts(repo, run_id)
     if any(NO_RUNNER.search(text) for text in texts):
         return "GitHub could not acquire a runner, so the job never started"
     if any(APT_STALLED.search(text) for text in texts):
         return "the runner's apt install failed or stalled"
-    if not details.get("steps"):
+    if not job_steps(repo, run_id):
         return "the job ran no step, so it cascaded from a job that never started"
     return None
 
@@ -147,7 +166,7 @@ def ci_checks(owner, name, head):
     # Every page: `gh pr view --json statusCheckRollup` reads only the first 100.
     query = ("query($owner:String!,$name:String!,$oid:GitObjectID!,$after:String){repository(owner:$owner,"
              "name:$name){object(oid:$oid){... on Commit{statusCheckRollup{contexts(first:100,after:$after)"
-             "{pageInfo{hasNextPage endCursor} nodes{... on CheckRun{name conclusion status databaseId} "
+             "{pageInfo{hasNextPage endCursor} nodes{... on CheckRun{name conclusion status databaseId checkSuite{app{slug}}} "
              "... on StatusContext{context state createdAt}}}}}}}}")
     after = []
     while True:
@@ -162,16 +181,30 @@ def ci_checks(owner, name, head):
         after = ["-f", f"after={rollup['contexts']['pageInfo']['endCursor']}"]
 
 
+def check_key(check):
+    """Group the same check across retriggers, not unrelated checks by name.
+
+    The originating app is part of a check run's identity: two workflows that
+    both publish a check called "build" are two checks, while a retrigger of
+    one of them reuses the same (app, name) pair.
+    """
+    label = check.get("name") or check.get("context") or "?"
+    if not check.get("databaseId"):
+        return ("status", label)
+    origin = ((check.get("checkSuite") or {}).get("app") or {}).get("slug") or "?"
+    return ("check", origin, label)
+
+
 def newest_per_check(checks):
-    """Keep the newest attempt of each check name.
+    """
+    Keep the newest attempt of each check.
 
     A retrigger starts a new run without removing the old run's rows, so the
     rollup carries a stale CANCELLED or SUCCESS next to the new result.
     """
     newest = {}
     for check in checks:
-        label = check.get("name") or check.get("context") or "?"
-        key = ("check" if check.get("databaseId") else "status", label)
+        key = check_key(check)
         rank = check.get("databaseId") or check.get("startedAt") or check.get("createdAt") or ""
         if key not in newest or rank > newest[key][0]:
             newest[key] = (rank, check)
