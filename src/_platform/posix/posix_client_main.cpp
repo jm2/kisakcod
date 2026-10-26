@@ -15,7 +15,6 @@
 
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
-#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -144,12 +143,15 @@ int __cdecl Sys_SetClipboardData(const char *text)
 
 #if defined(__APPLE__)
 // ADR-0011: the .app carries its Vulkan ICD, so the bundled loader finds it
-// without VK_DRIVER_FILES. A path the user set still wins because the setenv
-// below does not overwrite an existing variable - including an empty one - so
-// this code never reads or branches on the environment. A bare build (no
-// Resources/vulkan beside the binary) keeps the loader's own search.
+// without VK_DRIVER_FILES. A path the user set still wins: either variable
+// suppresses the default, and setenv below does not overwrite one. A bare
+// build (no Resources/vulkan beside the binary) keeps the loader's own search.
 static void Posix_DefaultBundledVulkanDriver()
 {
+    // SDL_getenv, not getenv: same environment, and the presence test never
+    // hands a libc getenv result on to the loader path.
+    if (SDL_getenv("VK_DRIVER_FILES") != nullptr || SDL_getenv("VK_ICD_FILENAMES") != nullptr)
+        return;
     char executable[PATH_MAX];
     uint32_t size = sizeof(executable);
     if (_NSGetExecutablePath(executable, &size) != 0)
@@ -160,8 +162,8 @@ static void Posix_DefaultBundledVulkanDriver()
         return;
     path.resize(slash); // .../KisakCOD-mp.app/Contents/MacOS
     path += "/../Resources/vulkan/icd.d/kosmickrisp_mesa_icd.json";
-    struct stat icd;
-    if (stat(path.c_str(), &icd) == 0 && S_ISREG(icd.st_mode))
+    SDL_PathInfo icd;
+    if (SDL_GetPathInfo(path.c_str(), &icd) && icd.type == SDL_PATHTYPE_FILE)
         setenv("VK_DRIVER_FILES", path.c_str(), 0);
 }
 #endif
