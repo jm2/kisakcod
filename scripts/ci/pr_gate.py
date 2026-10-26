@@ -220,16 +220,17 @@ def check_ci(checks, paths, found, repo):
         else:
             rows.append((label, state, infra))
 
-    # An aggregate job proves nothing when every failure it reports on is
-    # itself infrastructure: it would otherwise keep the gate red through a
-    # capacity or apt outage that no retrigger of the code can clear.
+    # An aggregate job only restates its members' results, and every member is
+    # checked above. When no member failed on code, its failure is a cascade:
+    # an infrastructure outage, a declared x86 change, or a job the rollup does
+    # not carry. Reporting it as INFRA keeps a capacity or apt outage from
+    # holding the gate red; GitHub's own merge state still covers a required
+    # job that is genuinely missing.
     real_failure = any(state in FAILED and not infra
                        for label, state, infra in rows if label not in AGGREGATE_JOBS)
-    infra_failure = any(state in FAILED and infra
-                        for label, state, infra in rows if label not in AGGREGATE_JOBS)
     for label, state, infra in rows:
-        if (label in AGGREGATE_JOBS and state in FAILED and not real_failure and infra_failure):
-            infra = "every job it aggregates failed on infrastructure only"
+        if label in AGGREGATE_JOBS and state in FAILED and not real_failure:
+            infra = "no job it aggregates failed on code, so it only cascaded"
         check_job(label, state, found, infra)
     if not x86_seen and builds_x86(paths):
         found.escalations.append("no x86 identity result on this head (job missing or the PR predates "
