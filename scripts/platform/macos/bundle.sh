@@ -35,6 +35,25 @@ done
 command -v install_name_tool >/dev/null || { echo "bundle: install_name_tool not found" >&2; exit 1; }
 command -v codesign >/dev/null || { echo "bundle: codesign not found" >&2; exit 1; }
 
+# Provenance banner. The runtime prefix is built by hand from the pinned
+# tarballs, so the log has to say which toolchain produced the dylibs. These
+# are declared prerequisites (README), not pinned inputs; the bundle sha256 is
+# the artifact of record.
+tool_version() {
+    local out=""
+    if command -v "$1" >/dev/null 2>&1; then
+        out="$("$@" 2>/dev/null | head -1)" || out=""
+    fi
+    printf '%s' "${out:-not found}"
+}
+echo "bundle: build-host toolchain"
+echo "  llvm:    $(tool_version llvm-config --version)"
+echo "  glslang: $(tool_version glslangValidator --version)"
+echo "  bison:   $(tool_version bison --version)"
+echo "  python3: $(tool_version python3 --version)"
+echo "  meson:   $(tool_version meson --version)"
+echo "  ninja:   $(tool_version ninja --version)"
+
 # Assemble into a fresh staging directory: an earlier run's frameworks must
 # never survive into a new bundle (an old copy would hide a pin bump).
 APP_DEST="$APP"

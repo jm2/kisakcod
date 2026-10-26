@@ -41,6 +41,12 @@ option(KISAK_MEASURE_FX_ARCHIVE_STACK "Measure source-scoped FX archive stack fr
 option(KISAK_CLIENT_SDL3 "Use SDL3 for the MP client window and input (fetches SDL 3.4)" OFF)
 option(KISAK_DXVK_MACOS "macOS client: build the pinned jm2/dxvk fork for KosmicKrisp instead of a pkg-config dxvk-d3d9" OFF)
 option(KISAK_MACOS_BUNDLE "macOS client: take the runtime from a pinned local prefix and bundle it into the .app (ADR-0011)" OFF)
+set(KISAK_BUNDLE_RUNTIME_PREFIX "" CACHE PATH
+    "KISAK_MACOS_BUNDLE: runtime prefix built by scripts/platform/macos/runtime")
+set(KISAK_BUNDLE_MESA_PREFIX "" CACHE PATH
+    "KISAK_MACOS_BUNDLE: mesa prefix holding libvulkan_kosmickrisp.dylib")
+set(KISAK_BUNDLE_DXVK_LIB "" CACHE FILEPATH
+    "KISAK_MACOS_BUNDLE: libdxvk_d3d9.0.dylib to bundle")
 set(_KISAK_DEFAULT_X86_MMX_SKINNING OFF)
 if (CMAKE_SIZEOF_VOID_P EQUAL 4 AND NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM|arm|aarch|AARCH)")
     set(_KISAK_DEFAULT_X86_MMX_SKINNING ON)
@@ -204,4 +210,28 @@ if (KISAK_BUILD_SP)
 endif()
 if (BUILD_TESTING)
     add_subdirectory(tests)
+endif()
+
+# ADR-0011: assemble the macOS .app with its runtime as one command.
+# The runtime prefix is built separately (scripts/platform/macos/runtime) and
+# handed in; nothing here downloads or compiles a dependency.
+if (KISAK_MACOS_BUNDLE AND APPLE)
+    foreach (_kisak_var KISAK_BUNDLE_RUNTIME_PREFIX KISAK_BUNDLE_MESA_PREFIX KISAK_BUNDLE_DXVK_LIB)
+        if (NOT ${_kisak_var})
+            message(FATAL_ERROR "${_kisak_var} is required with KISAK_MACOS_BUNDLE=ON")
+        endif()
+    endforeach()
+    set(_kisak_bundle_app "${CMAKE_BINARY_DIR}/dist/KisakCOD-mp.app")
+    add_custom_target(bundle
+        COMMAND ${CMAKE_COMMAND} -E env
+            bash ${CMAKE_SOURCE_DIR}/scripts/platform/macos/bundle.sh
+            --app ${_kisak_bundle_app}
+            --client $<TARGET_FILE:KisakCOD-mp>
+            --runtime-prefix ${KISAK_BUNDLE_RUNTIME_PREFIX}
+            --mesa-prefix ${KISAK_BUNDLE_MESA_PREFIX}
+            --dxvk-lib ${KISAK_BUNDLE_DXVK_LIB}
+        DEPENDS KisakCOD-mp
+        COMMENT "Bundling ${_kisak_bundle_app}"
+        VERBATIM)
+    message("macOS bundle target: ${_kisak_bundle_app}")
 endif()
