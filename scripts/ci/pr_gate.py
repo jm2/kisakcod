@@ -133,6 +133,16 @@ def job_steps(repo, run_id):
     return job.get("steps") or []
 
 
+def workflow_conclusion(repo, suite_id):
+    """The conclusion of the workflow run a check suite belongs to."""
+    try:
+        runs = json.loads(gh("api", f"repos/{repo}/actions/runs?check_suite_id={suite_id}"))
+    except (subprocess.CalledProcessError, json.JSONDecodeError):
+        return None
+    found = runs.get("workflow_runs") or []
+    return found[0].get("conclusion") if len(found) == 1 else None
+
+
 def infra_reason(repo, check):
     """Why a failed job proves nothing about the code, or None if it does."""
     run_id = check.get("databaseId")
@@ -141,6 +151,9 @@ def infra_reason(repo, check):
     details = json.loads(gh("api", f"repos/{repo}/check-runs/{run_id}"))
     if (details.get("app") or {}).get("slug") != "github-actions":
         return None
+    suite_id = (details.get("check_suite") or {}).get("id")
+    if suite_id and workflow_conclusion(repo, suite_id) == "success":
+        return "the workflow run succeeded, so this job is informational (continue-on-error)"
     texts = annotation_texts(repo, run_id)
     if any(NO_RUNNER.search(text) for text in texts):
         return "GitHub could not acquire a runner, so the job never started"
@@ -304,7 +317,10 @@ def verdict(number, found):
         print(f"ESCALATE {line}")
     for line in found.warnings:
         print(f"WARN     {line}")
-    if found.blockers or found.infra:
+    # INFRA alone does not block: GitHub's merge state is authoritative for
+    # required checks, and a required job that never ran keeps it BLOCKED
+    # (reported above). An informational job that fails must not hold a PR.
+    if found.blockers:
         suffix = " (retrigger the INFRA jobs)" if found.infra else ""
         print(f"NOT READY: #{number}{suffix}")
         return 1
