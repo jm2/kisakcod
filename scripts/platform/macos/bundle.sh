@@ -27,7 +27,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 for v in APP CLIENT RUNTIME MESA DXVK; do
-    [ -n "${!v}" ] || { echo "bundle: --$(echo $v | tr 'A-Z_' 'a-z-') is required" >&2; exit 2; }
+    [ -n "${!v}" ] || { echo "bundle: --$(echo "$v" | tr 'A-Z_' 'a-z-') is required" >&2; exit 2; }
 done
 for f in "$CLIENT" "$DXVK" "$RUNTIME/lib/libvulkan.1.dylib" "$MESA/lib/libvulkan_kosmickrisp.dylib"; do
     [ -f "$f" ] || { echo "bundle: missing $f" >&2; exit 1; }
