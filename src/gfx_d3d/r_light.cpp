@@ -440,7 +440,7 @@ void __cdecl R_GetBspSpotLightSurfs(const GfxLight *light, int lightIndex, GfxBs
     {
         scene.visLightShadow[lightIndex].drawSurfCount = surfCounts[1];
         surfData[1].drawSurfList.current = drawSurfs[1];
-        surfData[1].drawSurfList.end = (GfxDrawSurf *)&scene.visLightShadow[lightIndex + 1];
+        surfData[1].drawSurfList.end = reinterpret_cast<GfxDrawSurf *>(&scene.visLightShadow[lightIndex + 1]);
         //std::_Sort<int *, int, bool(__cdecl *)(int, int)>(
         //    (const GfxStaticModelDrawInst **)surfaces[1],
         //    (const GfxStaticModelDrawInst **)&surfaces[1][surfCounts[1]],
@@ -729,7 +729,7 @@ void __cdecl R_GetStaticModelLightSurfs(const GfxLight **visibleLights, int visi
             if (lightIndex < MAX_VISIBLE_SHADOWABLE_DLIGHTS)
             {
                 shadowSurfData.drawSurfList.current = &scene.visLightShadow[lightIndex].drawSurfs[scene.visLightShadow[lightIndex].drawSurfCount];
-                shadowSurfData.drawSurfList.end = (GfxDrawSurf *)&scene.visLightShadow[lightIndex + 1];
+                shadowSurfData.drawSurfList.end = reinterpret_cast<GfxDrawSurf *>(&scene.visLightShadow[lightIndex + 1]);
             }
             R_CalcSpotLightPlanes(light, g_staticModelLightCallback.planes);
             smodelCount = R_BoxStaticModels(mins, maxs, R_AllowStaticModelSpotLight, smodels, 1024);
