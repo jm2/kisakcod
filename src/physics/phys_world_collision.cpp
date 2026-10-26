@@ -377,8 +377,14 @@ dColliderFn *Phys_GetColliderNull(int num)
     return NULL;
 }
 
-static int dCollideWorldGeom(dxGeom *o1, dxGeom *o2, int flags, dContactGeomExt *contact, int skip)
+static int dCollideWorldGeom(dxGeom *o1, dxGeom *o2, int flags, dContactGeom *contactArray, int skip)
 {
+    // The world collider also writes surfFlags, so every caller of class 15
+    // passes an array of dContactGeomExt. dCollide calls the installed entry
+    // through dColliderFn, which takes dContactGeom*, so the parameter has to
+    // carry that type; the cast below recovers the element type the callers
+    // actually allocate.
+    dContactGeomExt *contact = reinterpret_cast<dContactGeomExt *>(contactArray);
     dxBody *Body; // eax
     const float *Rotation; // eax
     float v8; // [esp+Ch] [ebp-AE0h]
@@ -661,7 +667,7 @@ static dColliderFn *dGetColliderWorld(int classnum)
             "%s",
             "classnum == dBoxClass || classnum == GEOM_CLASS_BRUSHMODEL || classnum == GEOM_CLASS_BRUSH || classnum == GEOM_CLA"
             "SS_CYLINDER || classnum == GEOM_CLASS_CAPSULE");
-    return (dColliderFn *)&dCollideWorldGeom;
+    return &dCollideWorldGeom;
 }
 
 void __cdecl Phys_InitWorldCollision()
