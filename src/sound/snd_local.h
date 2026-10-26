@@ -68,11 +68,21 @@ struct MssEqInfo // sizeof=0xF00
 
 typedef struct _SAMPLE *HSAMPLE;               // Handle to sample
 
+// Sample and stream handles share one storage run: slots 0..39 are the
+// 2D/3D sample handles, slots 40..52 are the stream handles. They used to be
+// declared as adjacent arrays (HSAMPLE[40] then _STREAM *[13]) and every
+// stream function indexed the sample array at 40..52, relying on that
+// adjacency; one array states the real storage. 40 + 13 pointers in the same
+// order, so every following field keeps its offset and sizeof(MssLocal) is
+// unchanged.
+#define MSS_MAX_SAMPLE_HANDLES 40
+#define MSS_MAX_STREAM_HANDLES 13
+#define MSS_HANDLE_COUNT (MSS_MAX_SAMPLE_HANDLES + MSS_MAX_STREAM_HANDLES)
+
 struct MssLocal // sizeof=0x26D0
 {                                       // ...
     _DIG_DRIVER *driver;                // ...
-    HSAMPLE handle_sample[40];         // ...
-    _STREAM *handle_stream[13];
+    HSAMPLE handle_sample[MSS_HANDLE_COUNT]; // [0..39] samples, [40..52] streams
     MssEqInfo eq[2];                    // ...
     uint32_t eqFilter;              // ...
     MssFileHandle fileHandle[13];
@@ -82,6 +92,8 @@ struct MssLocal // sizeof=0x26D0
     // padding byte
     // padding byte
 };
+
+static_assert(MSS_HANDLE_COUNT == 53, "40 sample slots plus 13 stream slots");
 
 // snd_driver
 void __cdecl TRACK_snd_driver();

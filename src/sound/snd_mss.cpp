@@ -123,7 +123,21 @@ LABEL_8:
     g_snd.Initialized3d = 1;
     g_snd.max_2D_channels = 8;
     g_snd.max_3D_channels = 32;
-    g_snd.max_stream_channels = 13;
+    g_snd.max_stream_channels = MSS_MAX_STREAM_HANDLES;
+    // Stream handles are stored in slots 40..52 of milesGlob.handle_sample, so a
+    // count that does not fit in the handle run would index past the array, and
+    // eq[] must still start immediately after the run.
+    if ( MSS_MAX_SAMPLE_HANDLES + g_snd.max_stream_channels > MSS_HANDLE_COUNT
+      || (size_t)((char *)&milesGlob.eq[0] - (char *)&milesGlob.handle_sample[0])
+           != MSS_HANDLE_COUNT * sizeof(HSAMPLE) )
+      MyAssertHandler(
+        ".\\win32\\snd_mss.cpp",
+        0,
+        0,
+        "%s\n\t(g_snd.max_stream_channels) = %i",
+        "(MSS_MAX_SAMPLE_HANDLES + g_snd.max_stream_channels <= MSS_HANDLE_COUNT"
+        " && eq[] immediately follows the handle run)",
+        g_snd.max_stream_channels);
     g_snd.playback_rate = hertz + hertz / 2;
     if ( g_snd.playback_rate >= 0xAC44 )
       g_snd.playback_rate = 0x7FFFFFFF;
