@@ -40,6 +40,7 @@ option(KISAK_ALLOW_UNSUPPORTED_64BIT "Allow configuration of the in-progress 64-
 option(KISAK_MEASURE_FX_ARCHIVE_STACK "Measure source-scoped FX archive stack frames with MSVC analysis" OFF)
 option(KISAK_CLIENT_SDL3 "Use SDL3 for the MP client window and input (fetches SDL 3.4)" OFF)
 option(KISAK_DXVK_MACOS "macOS client: build the pinned jm2/dxvk fork for KosmicKrisp instead of a pkg-config dxvk-d3d9" OFF)
+option(KISAK_MACOS_BUNDLE "macOS client: take the runtime from a pinned local prefix and bundle it into the .app (ADR-0011)" OFF)
 set(_KISAK_DEFAULT_X86_MMX_SKINNING OFF)
 if (CMAKE_SIZEOF_VOID_P EQUAL 4 AND NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM|arm|aarch|AARCH)")
     set(_KISAK_DEFAULT_X86_MMX_SKINNING ON)
