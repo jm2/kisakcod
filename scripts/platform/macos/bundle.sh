@@ -36,9 +36,10 @@ command -v install_name_tool >/dev/null || { echo "bundle: install_name_tool not
 command -v codesign >/dev/null || { echo "bundle: codesign not found" >&2; exit 1; }
 
 # Provenance banner. The runtime prefix is built by hand from the pinned
-# tarballs, so the log has to say which toolchain produced the dylibs. These
-# are declared prerequisites (README), not pinned inputs; the bundle sha256 is
-# the artifact of record.
+# tarballs. These probes report the bundling host's tools; they do not identify
+# the toolchain that built a separately supplied runtime prefix. These are
+# declared prerequisites (README), not pinned inputs; the bundle sha256 is the
+# artifact of record.
 tool_version() {
     local out=""
     if command -v "$1" >/dev/null 2>&1; then

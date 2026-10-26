@@ -39,7 +39,9 @@ SHA-256 of the tarballs used for the verified build:
 ```
 bce5f7fbebb934373b86c999a064d52fb5065878dc57f287f95346648ec832e9  mesa-26.2.4.tar.xz
 941eff558fc74f248745fb7df367640cf89a8457f216dae498a74ae14b6ba6f7  Vulkan-Loader-1.4.363.0.tar.gz
+4a078be12bef21cfebc09d878b77a63cff9d68f899254a0b00d0e37ef73e7f7e  Vulkan-Headers-vulkan-sdk-1.4.363.0.tar.gz
 e6c83a215538fbfd265ccf398d3877985055df1273dbed73912bd05307664688  SPIRV-Tools-1.4.363.0.tar.gz
+5b3a0d099f5c7649e29c0938476c462e71d66ad89a0bde42fa1ba3eb476956c9  SPIRV-Headers-vulkan-sdk-1.4.363.0.tar.gz
 9c75cf16330322c217dedd2e0609f1124f1b54b8633e763467b4684d0f4334a3  SDL3-3.4.18.tar.gz
 1dbaac44e7579d5bc8847ca8db4b2e8b9fd3961041f35ee20def4958301e1089  openal-soft-1.25.2.tar.bz2
 8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e  ffmpeg-9.0.2.tar.xz
@@ -52,9 +54,10 @@ tool as long as the result is linked against the bundled copies only.
 ## Build-host toolchain
 
 The pinned tarballs are inputs; the toolchain that compiles them is a declared
-prerequisite, not a pinned input. `bundle.sh` prints this block at the top of
-its log so each bundle carries its own provenance. The versions used for the
-verified build:
+prerequisite, not a pinned input. `bundle.sh` prints the bundling host's tool
+versions at the top of its log; that does not identify the toolchain used to
+build a separately supplied runtime prefix. The versions used for the verified
+build:
 
 ```
 LLVM 23.1.3          mesa_clc and the SPIR-V translator (see requirement 1)
@@ -132,6 +135,9 @@ cmake -S . -B build-macos-bundle26 \
   -DSDL3_DIR=<runtime-prefix>/lib/cmake/SDL3 \
   -DKISAK_ALLOW_UNSUPPORTED_64BIT=ON -DKISAK_ENABLE_STEAM=OFF \
   -DKISAK_CLIENT_SDL3=ON -DKISAK_DXVK_MACOS=ON -DKISAK_MACOS_BUNDLE=ON \
+  -DKISAK_BUNDLE_RUNTIME_PREFIX=<runtime-prefix> \
+  -DKISAK_BUNDLE_MESA_PREFIX=<mesa-prefix> \
+  -DKISAK_BUNDLE_DXVK_LIB=<dxvk>/lib/libdxvk_d3d9.0.dylib \
   -DKISAK_EXPERIMENTAL_POSIX_CLIENT=ON -DKISAK_BUILD_DEDICATED=OFF
 ```
 
