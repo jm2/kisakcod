@@ -11,7 +11,9 @@ every WARN line to be fixed or answered on the PR first.
 Checks:
   - the PR is open, based on master and mergeable (no conflicts);
   - no CI check failed or is still pending (Codacy and CodeRabbit must
-    finish; their findings are judged by the next two checks);
+    finish; their findings are judged by the next two checks). A job GitHub
+    never handed to a runner (capacity, #838) prints INFRA, not "CI failed",
+    and still keeps the PR NOT READY;
   - Codacy has no open Security finding; other categories warn;
   - every review thread is resolved or has a reply, no review requests
     changes, and review-body findings outside the diff warn;
@@ -37,6 +39,10 @@ FAILED = ("FAILURE", "failure", "ERROR", "error", "CANCELLED", "TIMED_OUT", "ACT
 REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 MERGEABLE_STATES = ("CLEAN", "UNSTABLE", "HAS_HOOKS")
 MISMATCH = ("FAILURE", "failure")
+# None of these prove anything about the code, so they print INFRA instead of a
+# bogus "CI failed": retrigger with close/reopen rather than hunting a defect.
+NO_RUNNER = re.compile(r"was not acquired by Runner|capacity constraints", re.IGNORECASE)
+APT_STALLED = re.compile(r"apt attempt \d+ failed or stalled", re.IGNORECASE)
 GH_TIMEOUT = 120
 # CodeRabbit puts findings on lines outside the diff into the review body.
 OUTSIDE_DIFF = "Outside diff range"
@@ -47,7 +53,7 @@ class Findings:
 
     def __init__(self):
         """Start with no findings."""
-        self.blockers, self.escalations, self.warnings = [], [], []
+        self.blockers, self.escalations, self.warnings, self.infra = [], [], [], []
 
 
 def gh(*args):
@@ -105,11 +111,33 @@ def check_x86(state, found):
         found.blockers.append(f"x86 identity job is {state}")
 
 
-def check_job(label, state, found):
+def infra_reason(repo, check):
+    """Why a failed job proves nothing about the code, or None if it does."""
+    run_id = check.get("databaseId")
+    if not run_id:
+        return None
+    details = json.loads(gh("api", f"repos/{repo}/check-runs/{run_id}"))
+    if (details.get("app") or {}).get("slug") != "github-actions":
+        return None
+    annotations = json.loads(gh("api", f"repos/{repo}/check-runs/{run_id}/annotations"))
+    texts = [(a.get("title") or "") + " " + (a.get("message") or "") + " " + (a.get("raw_details") or "")
+             for a in annotations]
+    if any(NO_RUNNER.search(text) for text in texts):
+        return "GitHub could not acquire a runner, so the job never started"
+    if any(APT_STALLED.search(text) for text in texts):
+        return "the runner's apt install failed or stalled"
+    if not details.get("steps"):
+        return "the job ran no step, so it cascaded from a job that never started"
+    return None
+
+
+def check_job(label, state, found, infra):
     # Codacy and CodeRabbit fail on findings, which the later checks judge,
     # but they must still finish: no review exists before CodeRabbit does.
     if state in FAILED:
-        if not label.startswith(JUDGED_ELSEWHERE):
+        if infra:
+            found.infra.append(f"{label}: {infra}; it proved nothing (#838). Retrigger with close/reopen")
+        elif not label.startswith(JUDGED_ELSEWHERE):
             found.blockers.append(f"CI failed: {label}")
     elif state not in PASSED:
         found.blockers.append(f"CI not finished: {label} ({state})")
@@ -119,7 +147,7 @@ def ci_checks(owner, name, head):
     # Every page: `gh pr view --json statusCheckRollup` reads only the first 100.
     query = ("query($owner:String!,$name:String!,$oid:GitObjectID!,$after:String){repository(owner:$owner,"
              "name:$name){object(oid:$oid){... on Commit{statusCheckRollup{contexts(first:100,after:$after)"
-             "{pageInfo{hasNextPage endCursor} nodes{... on CheckRun{name conclusion status} "
+             "{pageInfo{hasNextPage endCursor} nodes{... on CheckRun{name conclusion status databaseId} "
              "... on StatusContext{context state}}}}}}}}")
     after = []
     while True:
@@ -134,16 +162,17 @@ def ci_checks(owner, name, head):
         after = ["-f", f"after={rollup['contexts']['pageInfo']['endCursor']}"]
 
 
-def check_ci(checks, paths, found):
+def check_ci(checks, paths, found, repo):
     x86_seen = False
     for check in checks:
         label = check.get("name") or check.get("context") or "?"
         state = check.get("conclusion") or check.get("state") or check.get("status")
+        infra = infra_reason(repo, check) if state in FAILED else None
         if X86_JOB in label:
             x86_seen = True
             check_x86(state, found)
         else:
-            check_job(label, state, found)
+            check_job(label, state, found, infra)
     if not x86_seen and builds_x86(paths):
         found.escalations.append("no x86 identity result on this head (job missing or the PR predates "
                                  "it): run scripts/ci/compare-x86-pr-objects.sh or rerun CI")
@@ -210,12 +239,15 @@ def check_threads(pr, owner, name, number, found):
 def verdict(number, found):
     for line in found.blockers:
         print(f"BLOCK    {line}")
+    for line in found.infra:
+        print(f"INFRA    {line}")
     for line in found.escalations:
         print(f"ESCALATE {line}")
     for line in found.warnings:
         print(f"WARN     {line}")
-    if found.blockers:
-        print(f"NOT READY: #{number}")
+    if found.blockers or found.infra:
+        suffix = " (retrigger the INFRA jobs)" if found.infra else ""
+        print(f"NOT READY: #{number}{suffix}")
         return 1
     if found.escalations:
         print(f"ESCALATE: #{number}")
@@ -238,7 +270,7 @@ def main():
                        "state,mergeable,mergeStateStatus,baseRefName,headRefOid,reviewDecision,reviews"))
     found = Findings()
     check_pr(pr, found)
-    check_ci(ci_checks(owner, name, pr["headRefOid"]), changed_files(args.repo, args.number), found)
+    check_ci(ci_checks(owner, name, pr["headRefOid"]), changed_files(args.repo, args.number), found, args.repo)
     check_codacy(owner, name, args.number, found)
     check_threads(pr, owner, name, args.number, found)
     # Every check above read one head; a push since then voids the verdict.
