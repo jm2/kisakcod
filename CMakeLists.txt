@@ -159,10 +159,12 @@ if (NOT MSVC)
 endif()
 
 # Set Address Sanitizer
-# NOTE: If you use this you will need to copy to the game's directory
-# clang_rt.asan_dbg_dynamic-i386.dll and clang_rt.asan_dynamic-i386.dll from the MSVC C directory located below (or similar)
-# C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.44.35207\bin\Hostx86\x86
-set(USE_ASAN OFF)
+# USE_ASAN adds MSVC /fsanitize=address to the MP client (scripts/mp/CMakeLists.txt).
+# The matching runtime DLL sits beside link.exe in the toolchain: copy
+# clang_rt.asan_dbg_dynamic-<arch>.dll and clang_rt.asan_dynamic-<arch>.dll
+# (i386 for Win32, aarch64 for ARM64) next to the exe. Off by default, so
+# builds that do not ask for it compile unchanged.
+option(USE_ASAN "Build the MP client with MSVC /fsanitize=address (copy its runtime DLL beside the exe)" OFF)
 
 # Reproducible reference builds (the x86 byte-parity check). /Brepro pins the
 # embedded timestamp, PDB GUID, and __DATE__/__TIME__ inputs so the shared

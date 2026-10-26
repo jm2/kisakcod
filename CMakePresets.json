@@ -51,6 +51,56 @@
       }
     },
     {
+      "name": "windows-arm64-dedi",
+      "description": "The headless dedicated server on Windows ARM64. Same headless composition as windows-amd64-dedi; the ARM64 target is a G3 row (61).",
+      "generator": "Visual Studio 18 2026",
+      "architecture": "ARM64",
+      "binaryDir": "${sourceDir}/build-windows-arm64-dedi",
+      "cacheVariables": {
+        "KISAK_BUILD_MP": "OFF",
+        "KISAK_BUILD_DEDICATED": "ON",
+        "KISAK_BUILD_SP": "OFF",
+        "KISAK_DEDI_HEADLESS": "ON",
+        "KISAK_ENABLE_STEAM": "OFF",
+        "KISAK_ENABLE_X86_MMX_SKINNING": "OFF",
+        "KISAK_ALLOW_UNSUPPORTED_64BIT": "ON",
+        "BUILD_TESTING": "OFF"
+      }
+    },
+    {
+      "name": "windows-arm64-client",
+      "description": "The MP client on Windows ARM64 (G5 row 60), composed as the arm64 leg of CI windows-client-64: client only, no dedicated target. D3DX9 ships no ARM64 library, so -DDXSDK_DIR=<Microsoft.DXSDK.D3DX>/build/native supplies the D3DX headers (add -DCICD=ON for the package layout). Verify with scripts/ci/verify-artifact-arch.ps1 -Expected ARM64.",
+      "generator": "Visual Studio 18 2026",
+      "architecture": "ARM64",
+      "binaryDir": "${sourceDir}/build-windows-arm64-client",
+      "cacheVariables": {
+        "KISAK_BUILD_MP": "ON",
+        "KISAK_BUILD_DEDICATED": "OFF",
+        "KISAK_BUILD_SP": "OFF",
+        "KISAK_ENABLE_STEAM": "OFF",
+        "KISAK_ENABLE_X86_MMX_SKINNING": "OFF",
+        "KISAK_ALLOW_UNSUPPORTED_64BIT": "ON",
+        "BUILD_TESTING": "OFF"
+      }
+    },
+    {
+      "name": "windows-arm64-client-asan",
+      "description": "The address-sanitized MP client on Windows ARM64 (G5 row 60). USE_ASAN=ON adds MSVC /fsanitize=address to KisakCOD-mp and skips Tracy; same DXSDK_DIR input as windows-arm64-client. Copy clang_rt.asan_dynamic-aarch64.dll (a Debug build also needs clang_rt.asan_dbg_dynamic-aarch64.dll) from the MSVC bin/Hostarm64/arm64 directory beside the exe before running.",
+      "generator": "Visual Studio 18 2026",
+      "architecture": "ARM64",
+      "binaryDir": "${sourceDir}/build-windows-arm64-client-asan",
+      "cacheVariables": {
+        "KISAK_BUILD_MP": "ON",
+        "KISAK_BUILD_DEDICATED": "OFF",
+        "KISAK_BUILD_SP": "OFF",
+        "KISAK_ENABLE_STEAM": "OFF",
+        "KISAK_ENABLE_X86_MMX_SKINNING": "OFF",
+        "KISAK_ALLOW_UNSUPPORTED_64BIT": "ON",
+        "BUILD_TESTING": "OFF",
+        "USE_ASAN": "ON"
+      }
+    },
+    {
       "name": "linux-amd64-mp",
       "generator": "Unix Makefiles",
       "binaryDir": "${sourceDir}/build-linux-amd64-mp",
