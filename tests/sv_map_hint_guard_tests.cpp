@@ -96,12 +96,12 @@ char *I_strlwr(char *text)
     return text;
 }
 int I_stricmp(const char *, const char *) { return 1; }
-char *va(const char *format, ...)
+// The stub formats only the conversions these tests pass (%s, %c, %d, %%).
+// Rendering them by hand keeps a caller-supplied format string away from the
+// printf family, which is what CWE-134 flags.
+static std::string format_varargs(const char *format, va_list args)
 {
-    static char buffer[256];
     std::string out;
-    va_list args;
-    va_start(args, format);
     for (const char *ch = format; *ch; ++ch)
     {
         if (*ch != '%')
@@ -128,19 +128,30 @@ char *va(const char *format, ...)
             std::abort();
         }
     }
+    return out;
+}
+namespace {
+// va() hands the caller a buffer it does not own, matching the engine's
+// contract. The stub needs exactly one, so it lives here rather than as a
+// function-local static.
+char g_vaBuffer[256];
+} // namespace
+char *va(const char *format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    const std::string out = format_varargs(format, args);
     va_end(args);
-    const std::size_t copied = out.copy(buffer, sizeof(buffer) - 1);
-    buffer[copied] = '\0';
-    return buffer;
+    const std::size_t copied = out.copy(g_vaBuffer, sizeof(g_vaBuffer) - 1);
+    g_vaBuffer[copied] = '\0';
+    return g_vaBuffer;
 }
 void Com_PrintError(int, const char *format, ...)
 {
-    char text[256];
     va_list args;
     va_start(args, format);
-    std::vsnprintf(text, sizeof(text), format, args);
+    g_run.lastError = format_varargs(format, args);
     va_end(args);
-    g_run.lastError = text;
     ++com_errorPrintsCount;
 }
 void Com_Error(errorParm_t, const char *format, ...)
