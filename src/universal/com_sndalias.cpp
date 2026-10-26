@@ -141,9 +141,9 @@ void __cdecl Com_InitSoundDevGuiGraphs()
 {
 #ifndef KISAK_DEDI_HEADLESS
     if (IsFastFileLoad())
-        ((void(__cdecl *)(void (*)()))Com_InitSoundDevGuiGraphs_FastFile)(Com_InitSoundDevGuiGraphs_FastFile);
+        Com_InitSoundDevGuiGraphs_FastFile();
     else
-        ((void(__cdecl *)(void (*)()))Com_InitSoundDevGuiGraphs_LoadObj)(Com_InitSoundDevGuiGraphs_LoadObj);
+        Com_InitSoundDevGuiGraphs_LoadObj();
 #endif
 }
 
