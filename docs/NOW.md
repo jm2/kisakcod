@@ -1,6 +1,6 @@
 # NOW
 
-Last reviewed: 2026-10-26 by kisakcod-linux (antec), coordinator, after the queue sweep; 8 open PRs (2 draft)
+Last reviewed: 2026-10-26 by kisakcod-linux (antec), coordinator, after the queue sweep; 7 open PRs (2 draft)
 Current gates: G3 (the remaining targets) and G5 (Windows ARM64, UBSan); G4a waits on the owner; G0, G1 and G2 are done
 WIP limit: 6 (at least 4 on the current gates)
 
@@ -25,7 +25,7 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 
 | # | Bead | Gate | Moves | Done-test | Size | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| 61 | G3 on the Windows ARM64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | server PASS: 8 bots, 8/8/8 joins, rotations (win-arm64); client #817 |
+| 61 | G3 on the Windows ARM64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | server PASS at 2e3ba835+#828 patch: 8 bots, 8/8/8 joins, rotations (win-arm64); client #817 |
 | 63 | G3 on the Linux amd64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | server PASS at 26cf1841 per #827; client spectator #817 |
 | 64 | G3 on the Linux arm64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | server PASS (linux-arm64); client #817 |
 | 65 | G3 on the macOS arm64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | dedi preset ready at 26cf1841; run waits on #828; client #817 |
@@ -36,7 +36,7 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 
 Other `burndown` issues are off these gates or wait on the owner.
 
-**Resume here:** merge queue #826 #825 #828 #832 #834, then #824 docs; #830 waits on a sanitizer leg. Launch rows 61-65 with `+exec cfg +map`, never `map` inside an exec'd cfg (#816/#826). #817 blocks every client half; [#804](https://github.com/jm2/kisakcod/issues/804) holds host detail.
+**Resume here:** merge queue #826 #834 #828 #832, then #824 (this docs PR); #825/#818 already merged. #830 waits on a sanitizer leg and #836 on the #817 owner call. Launch rows 61-65 with `+exec cfg +map`, never `map` inside an exec'd cfg (#816/#826). #817 blocks every client half; [#804](https://github.com/jm2/kisakcod/issues/804) holds host detail.
 
 ## Blocked on owner
 
@@ -68,4 +68,4 @@ Merge SHAs are in `git log`.
 
 - G0-G2 passed (rows 46, 54, 37; #178-#180); G3's Win64 target passes (row 47).
 - G5 interim clients pass (rows 55-57, 59); 1.8 parity and 21-map rotation pass (rows 52-53).
-- 2026-10-26: #815 ARM64 presets/ASan, #819/#822/#823 row 58, #812/#813 row 66 bundles, #824 docs ownership, #827 test-client map change (#828), #829 host setup (#832), #833 TSan flake (#834).
+- 2026-10-26 merged: #815 ARM64 presets/ASan, #812/#813 row 66 bundles, #819/#822/#823 row 58, #825/#818 intro-cinematic connstate.
