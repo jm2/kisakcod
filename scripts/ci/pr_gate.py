@@ -148,7 +148,7 @@ def ci_checks(owner, name, head):
     query = ("query($owner:String!,$name:String!,$oid:GitObjectID!,$after:String){repository(owner:$owner,"
              "name:$name){object(oid:$oid){... on Commit{statusCheckRollup{contexts(first:100,after:$after)"
              "{pageInfo{hasNextPage endCursor} nodes{... on CheckRun{name conclusion status databaseId} "
-             "... on StatusContext{context state}}}}}}}}")
+             "... on StatusContext{context state createdAt}}}}}}}}")
     after = []
     while True:
         result = json.loads(gh("api", "graphql", "-f", f"query={query}", "-F", f"owner={owner}",
@@ -162,9 +162,22 @@ def ci_checks(owner, name, head):
         after = ["-f", f"after={rollup['contexts']['pageInfo']['endCursor']}"]
 
 
+def newest_per_check(checks):
+    """One row per attempt: a retrigger leaves the old run's CANCELLED row next
+    to the new run's result, so keep the newest attempt of each name."""
+    newest = {}
+    for check in checks:
+        label = check.get("name") or check.get("context") or "?"
+        key = ("check" if check.get("databaseId") else "status", label)
+        rank = check.get("databaseId") or check.get("startedAt") or check.get("createdAt") or ""
+        if key not in newest or rank > newest[key][0]:
+            newest[key] = (rank, check)
+    return [entry[1] for entry in newest.values()]
+
+
 def check_ci(checks, paths, found, repo):
     x86_seen = False
-    for check in checks:
+    for check in newest_per_check(checks):
         label = check.get("name") or check.get("context") or "?"
         state = check.get("conclusion") or check.get("state") or check.get("status")
         infra = infra_reason(repo, check) if state in FAILED else None
