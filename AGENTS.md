@@ -1,6 +1,6 @@
 # AGENTS.md: operating rules
 
-Every agent (mayor, refinery, polecat, reviewer) and every human contributor
+Every agent (coordinator, refinery, polecat, reviewer) and every human contributor
 reads this first. The only way to close a bead is to move a KPI or pass a gate
 (`docs/NOW.md`, `docs/ROADMAP.md`). Each rule names the failure it prevents.
 
@@ -53,10 +53,10 @@ reads this first. The only way to close a bead is to move a KPI or pass a gate
     - Would its tests fail if the feature broke?
 
     *Prevents: merged work that moves nothing.*
-14. **Mayor role.**
-    - Reads only `AGENTS.md`, `docs/NOW.md` and `docs/ROADMAP.md`.
-    - Re-ranks the queue only by editing `docs/NOW.md`, and is the only role
-      that edits it.
+14. **Coordinator docs role.**
+    - Keeps `docs/NOW.md` current after every merge or gate change, and is
+      the only role that edits it.
+    - Re-ranks the queue against `docs/ROADMAP.md`.
     - Reports the KPI trend weekly, and flags any gate whose KPIs haven't
       moved in 7 days.
 
