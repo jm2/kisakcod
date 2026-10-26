@@ -432,7 +432,7 @@ void __cdecl R_GetBspSpotLightSurfs(const GfxLight *light, int lightIndex, GfxBs
     {
         scene.visLightShadow[lightIndex].drawSurfCount = surfCounts[1];
         surfData[1].drawSurfList.current = drawSurfs[1];
-        surfData[1].drawSurfList.end = (GfxDrawSurf *)((char *)scene.cookie + 8200 * lightIndex);
+        surfData[1].drawSurfList.end = (GfxDrawSurf *)&scene.visLightShadow[lightIndex + 1];
         //std::_Sort<int *, int, bool(__cdecl *)(int, int)>(
         //    (const GfxStaticModelDrawInst **)surfaces[1],
         //    (const GfxStaticModelDrawInst **)&surfaces[1][surfCounts[1]],
@@ -714,8 +714,15 @@ void __cdecl R_GetStaticModelLightSurfs(const GfxLight **visibleLights, int visi
         }
         else
         {
-            shadowSurfData.drawSurfList.current = &scene.visLightShadow[lightIndex].drawSurfs[scene.visLightShadow[lightIndex].drawSurfCount];
-            shadowSurfData.drawSurfList.end = (GfxDrawSurf*)((char*)scene.cookie + 8200 * lightIndex);
+            // The spot-shadow arena is one entry (MAX_VISIBLE_SHADOWABLE_DLIGHTS).
+            // Indexing it by a dynamic visible-light number used to run into the
+            // shadow-cookie store (8200 is sizeof(GfxVisibleLight) - sizeof(GfxDrawSurf),
+            // the x86 end of a one-entry run). Only the first entry may be used.
+            if (lightIndex < MAX_VISIBLE_SHADOWABLE_DLIGHTS)
+            {
+                shadowSurfData.drawSurfList.current = &scene.visLightShadow[lightIndex].drawSurfs[scene.visLightShadow[lightIndex].drawSurfCount];
+                shadowSurfData.drawSurfList.end = (GfxDrawSurf *)&scene.visLightShadow[lightIndex + 1];
+            }
             R_CalcSpotLightPlanes(light, g_staticModelLightCallback.planes);
             smodelCount = R_BoxStaticModels(mins, maxs, R_AllowStaticModelSpotLight, smodels, 1024);
         }
@@ -746,7 +753,8 @@ void __cdecl R_GetStaticModelLightSurfs(const GfxLight **visibleLights, int visi
                     if (!R_AllocDrawSurf(&surfData.delayedCmdBuf, drawSurf, &surfData.drawSurfList, R_StaticModelGroupDwords(1)))
                         break;
                     R_AddDelayedStaticModelDrawSurf(&surfData.delayedCmdBuf, &surfaces[surfaceIndex], (uint8_t*)list, 1u);
-                    if (light->type == GFX_LIGHT_TYPE_SPOT && r_spotLightShadows->current.enabled && r_spotLightSModelShadows->current.enabled)
+                    if (light->type == GFX_LIGHT_TYPE_SPOT && lightIndex < MAX_VISIBLE_SHADOWABLE_DLIGHTS
+                        && r_spotLightShadows->current.enabled && r_spotLightSModelShadows->current.enabled)
                     {
                         if (!R_AllocDrawSurf(&shadowSurfData.delayedCmdBuf, drawSurf, &shadowSurfData.drawSurfList, R_StaticModelGroupDwords(1)))
                             break;
@@ -765,8 +773,11 @@ void __cdecl R_GetStaticModelLightSurfs(const GfxLight **visibleLights, int visi
         scene.visLight[lightIndex].drawSurfCount = surfData.drawSurfList.current
             - scene.visLight[lightIndex].drawSurfs;
         R_EndCmdBuf(&shadowSurfData.delayedCmdBuf);
-        scene.visLightShadow[lightIndex].drawSurfCount = shadowSurfData.drawSurfList.current
-            - scene.visLightShadow[lightIndex].drawSurfs;
+        if (lightIndex < MAX_VISIBLE_SHADOWABLE_DLIGHTS)
+        {
+            scene.visLightShadow[lightIndex].drawSurfCount = shadowSurfData.drawSurfList.current
+                - scene.visLightShadow[lightIndex].drawSurfs;
+        }
     }
 }
 
