@@ -44,6 +44,9 @@ MISMATCH = ("FAILURE", "failure")
 NO_RUNNER = re.compile(r"was not acquired by Runner|capacity constraints", re.IGNORECASE)
 APT_STALLED = re.compile(r"apt attempt \d+ failed or stalled", re.IGNORECASE)
 GH_TIMEOUT = 120
+# A job that only aggregates other jobs' results: it fails whenever any job in
+# its `needs` failed, so it carries no evidence of its own.
+AGGREGATE_JOBS = ("Portable scaffolding complete",)
 # CodeRabbit puts findings on lines outside the diff into the review body.
 OUTSIDE_DIFF = "Outside diff range"
 
@@ -119,15 +122,13 @@ def annotation_texts(repo, run_id):
 
 
 def job_steps(repo, run_id):
-    """The steps a GitHub Actions job ran; the check-run REST object has none.
-
-    A check run's databaseId is the workflow job id, so the job endpoint is the
-    one that can answer this. A non-Actions check run has no job: [] means the
-    same thing to the caller as an unstarted job.
-    """
+    """The steps a GitHub Actions job ran, or [] when there is no such job."""
+    # A check run's databaseId is the workflow job id, so the job endpoint is
+    # the one that can answer this. A non-Actions check has no job: [] means
+    # the same thing to the caller as an unstarted job.
     try:
         job = json.loads(gh("api", f"repos/{repo}/actions/jobs/{run_id}"))
-    except Exception:
+    except (subprocess.CalledProcessError, json.JSONDecodeError):
         return []
     return job.get("steps") or []
 
@@ -182,12 +183,10 @@ def ci_checks(owner, name, head):
 
 
 def check_key(check):
-    """Group the same check across retriggers, not unrelated checks by name.
-
-    The originating app is part of a check run's identity: two workflows that
-    both publish a check called "build" are two checks, while a retrigger of
-    one of them reuses the same (app, name) pair.
-    """
+    """Group one check across retriggers, not unrelated checks by name."""
+    # The originating app is part of a check run's identity: two workflows
+    # that both publish a check called "build" are two checks, while a
+    # retrigger of one of them reuses the same (app, name) pair.
     label = check.get("name") or check.get("context") or "?"
     if not check.get("databaseId"):
         return ("status", label)
@@ -196,12 +195,9 @@ def check_key(check):
 
 
 def newest_per_check(checks):
-    """
-    Keep the newest attempt of each check.
-
-    A retrigger starts a new run without removing the old run's rows, so the
-    rollup carries a stale CANCELLED or SUCCESS next to the new result.
-    """
+    """Keep the newest attempt of each check, not a stale retrigger row."""
+    # A retrigger starts a new run without removing the old run's rows, so the
+    # rollup carries a stale CANCELLED or SUCCESS next to the new result.
     newest = {}
     for check in checks:
         key = check_key(check)
@@ -213,6 +209,7 @@ def newest_per_check(checks):
 
 def check_ci(checks, paths, found, repo):
     x86_seen = False
+    rows = []
     for check in newest_per_check(checks):
         label = check.get("name") or check.get("context") or "?"
         state = check.get("conclusion") or check.get("state") or check.get("status")
@@ -221,7 +218,19 @@ def check_ci(checks, paths, found, repo):
             x86_seen = True
             check_x86(state, found)
         else:
-            check_job(label, state, found, infra)
+            rows.append((label, state, infra))
+
+    # An aggregate job proves nothing when every failure it reports on is
+    # itself infrastructure: it would otherwise keep the gate red through a
+    # capacity or apt outage that no retrigger of the code can clear.
+    real_failure = any(state in FAILED and not infra
+                       for label, state, infra in rows if label not in AGGREGATE_JOBS)
+    infra_failure = any(state in FAILED and infra
+                        for label, state, infra in rows if label not in AGGREGATE_JOBS)
+    for label, state, infra in rows:
+        if (label in AGGREGATE_JOBS and state in FAILED and not real_failure and infra_failure):
+            infra = "every job it aggregates failed on infrastructure only"
+        check_job(label, state, found, infra)
     if not x86_seen and builds_x86(paths):
         found.escalations.append("no x86 identity result on this head (job missing or the PR predates "
                                  "it): run scripts/ci/compare-x86-pr-objects.sh or rerun CI")
