@@ -1,5 +1,6 @@
 #include "q_shared.h"
 
+#include <algorithm>
 #include <string.h>
 #include <qcommon/qcommon.h>
 
@@ -292,16 +293,12 @@ void __cdecl Com_Memset(void *dest_p, const int val, const size_t count)
 {
     // The decompiled original replicated the low byte of val through 4-byte and
     // 2-byte stores on cast pointers, which is undefined behaviour when the
-    // destination is not naturally aligned (UBSan reports "store to misaligned
-    // address" in _copyDWord, reached from Com_Memset). memset writes the same
-    // bytes for every count without assuming alignment.
+    // destination is not naturally aligned (UBSan reports a misaligned store in
+    // _copyDWord, reached from here). An unsigned-char fill states the "low byte
+    // of val, count times" contract directly and makes no alignment assumption.
     if (count == 0)
         return;
 
-    // nosemgrep: c.lang.security.insecure-use-memset.insecure-use-memset --
-    // general byte fill, not a wipe of sensitive data. The rule matches any
-    // memset on a pointer parameter; this one restores the decompiled routine's
-    // "fill count bytes with the low byte of val" contract.
-    memset(dest_p, (unsigned char)val, count);
+    std::fill_n(static_cast<unsigned char *>(dest_p), count,
+        static_cast<unsigned char>(val));
 }
-
