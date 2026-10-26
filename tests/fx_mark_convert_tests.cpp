@@ -15,7 +15,6 @@
 #include <gfx_d3d/r_drawsurf.h>
 #include <gfx_d3d/r_marks.h>
 
-#include <algorithm>
 #include <cstdio>
 #include <cstring>
 
@@ -86,8 +85,11 @@ int checkPlacementTransform()
     float transform[4][3] = {};
     FX_GenerateMarkVertsForMark_MatrixFromPlacement(&placement, viewOffset, transform);
 
+    bool row3Ok = true;
     const float expected[3] = {101.0f, 202.0f, 303.0f};
-    if (!std::equal(expected, expected + 3, transform[3]))
+    for (int column = 0; column < 3; ++column)
+        row3Ok = row3Ok && transform[3][column] == expected[column];
+    if (!row3Ok)
     {
         std::fprintf(stderr, "FAIL placement transform: row 3 %g,%g,%g\n", transform[3][0], transform[3][1],
             transform[3][2]);
