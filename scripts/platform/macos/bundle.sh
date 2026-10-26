@@ -35,9 +35,42 @@ done
 command -v install_name_tool >/dev/null || { echo "bundle: install_name_tool not found" >&2; exit 1; }
 command -v codesign >/dev/null || { echo "bundle: codesign not found" >&2; exit 1; }
 
+# Provenance banner. The runtime prefix is built by hand from the pinned
+# tarballs. These probes report the bundling host's tools; they do not identify
+# the toolchain that built a separately supplied runtime prefix. These are
+# declared prerequisites (README), not pinned inputs; the bundle sha256 is the
+# artifact of record.
+tool_version() {
+    local out=""
+    if command -v "$1" >/dev/null 2>&1; then
+        out="$("$@" 2>/dev/null | head -1)" || out=""
+    fi
+    printf '%s' "${out:-not found}"
+}
+echo "bundle: build-host toolchain"
+# llvm-config lives in a keg-only Homebrew prefix, so PATH usually misses it.
+LLVM_CONFIG="${LLVM_CONFIG:-$(command -v llvm-config || true)}"
+if [ -z "$LLVM_CONFIG" ]; then
+    for candidate in /opt/homebrew/opt/llvm/bin/llvm-config \
+                     /usr/local/opt/llvm/bin/llvm-config; do
+        if [ -x "$candidate" ]; then LLVM_CONFIG="$candidate"; break; fi
+    done
+fi
+if [ -n "$LLVM_CONFIG" ]; then
+    echo "  llvm:    $("$LLVM_CONFIG" --version 2>/dev/null || echo 'not found')"
+else
+    echo "  llvm:    not found (llvm-config)"
+fi
+echo "  glslang: $(tool_version glslangValidator --version)"
+echo "  bison:   $(tool_version bison --version)"
+echo "  python3: $(tool_version python3 --version)"
+echo "  meson:   $(tool_version meson --version)"
+echo "  ninja:   $(tool_version ninja --version)"
+
 # Assemble into a fresh staging directory: an earlier run's frameworks must
 # never survive into a new bundle (an old copy would hide a pin bump).
 APP_DEST="$APP"
+mkdir -p "$(dirname "$APP_DEST")"
 STAGE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/kisakcod-bundle.XXXXXX")"
 APP="$STAGE_ROOT/KisakCOD-mp.app"
 CONTENTS="$APP/Contents"
