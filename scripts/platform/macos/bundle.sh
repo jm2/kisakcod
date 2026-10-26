@@ -47,7 +47,19 @@ tool_version() {
     printf '%s' "${out:-not found}"
 }
 echo "bundle: build-host toolchain"
-echo "  llvm:    $(tool_version llvm-config --version)"
+# llvm-config lives in a keg-only Homebrew prefix, so PATH usually misses it.
+LLVM_CONFIG="${LLVM_CONFIG:-$(command -v llvm-config || true)}"
+if [ -z "$LLVM_CONFIG" ]; then
+    for candidate in /opt/homebrew/opt/llvm/bin/llvm-config \
+                     /usr/local/opt/llvm/bin/llvm-config; do
+        if [ -x "$candidate" ]; then LLVM_CONFIG="$candidate"; break; fi
+    done
+fi
+if [ -n "$LLVM_CONFIG" ]; then
+    echo "  llvm:    $("$LLVM_CONFIG" --version 2>/dev/null || echo 'not found')"
+else
+    echo "  llvm:    not found (llvm-config)"
+fi
 echo "  glslang: $(tool_version glslangValidator --version)"
 echo "  bison:   $(tool_version bison --version)"
 echo "  python3: $(tool_version python3 --version)"
@@ -57,6 +69,7 @@ echo "  ninja:   $(tool_version ninja --version)"
 # Assemble into a fresh staging directory: an earlier run's frameworks must
 # never survive into a new bundle (an old copy would hide a pin bump).
 APP_DEST="$APP"
+mkdir -p "$(dirname "$APP_DEST")"
 STAGE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/kisakcod-bundle.XXXXXX")"
 APP="$STAGE_ROOT/KisakCOD-mp.app"
 CONTENTS="$APP/Contents"
