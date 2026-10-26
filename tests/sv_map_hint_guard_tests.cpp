@@ -98,11 +98,38 @@ char *I_strlwr(char *text)
 int I_stricmp(const char *, const char *) { return 1; }
 char *va(const char *format, ...)
 {
-    static char buffer[128];
+    static char buffer[256];
+    std::string out;
     va_list args;
     va_start(args, format);
-    std::vsnprintf(buffer, sizeof(buffer), format, args);
+    for (const char *ch = format; *ch; ++ch)
+    {
+        if (*ch != '%')
+        {
+            out.push_back(*ch);
+            continue;
+        }
+        ++ch;
+        switch (*ch)
+        {
+        case 's':
+            out += va_arg(args, const char *);
+            break;
+        case 'c':
+            out.push_back(static_cast<char>(va_arg(args, int)));
+            break;
+        case 'd':
+            out += std::to_string(va_arg(args, int));
+            break;
+        case '%':
+            out.push_back('%');
+            break;
+        default:
+            std::abort();
+        }
+    }
     va_end(args);
+    std::snprintf(buffer, sizeof(buffer), "%s", out.c_str());
     return buffer;
 }
 void Com_PrintError(int, const char *format, ...)
