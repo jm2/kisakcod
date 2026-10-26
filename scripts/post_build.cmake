@@ -36,3 +36,31 @@ if (WIN32 AND KISAK_TARGET_ENABLE_STEAM)
     endif()
     add_dependencies(${PROJECT_NAME} kisakcod-copy-steam)
 endif()
+
+# The Win32 client and single-player targets load D3DX9_43.dll at start-up.
+# It ships only in the DirectX SDK package, and until #829 every consumer
+# (CI's nightly release, a preset build) copied it by hand. Stage it from the
+# SDK when it is there; 64-bit targets link no D3DX (D3DX_LIB is empty).
+if (WIN32 AND DEFINED D3DX_LIB AND D3DX_LIB AND DXSDK_DIR)
+    set(_kisak_d3dx_dll "")
+    foreach(_kisak_candidate
+            "${DXSDK_DIR}/release/bin/x86/D3DX9_43.dll"
+            "${DXSDK_DIR}/Redist/D3DX9_43.dll")
+        if (EXISTS "${_kisak_candidate}")
+            set(_kisak_d3dx_dll "${_kisak_candidate}")
+            break()
+        endif()
+    endforeach()
+    if (_kisak_d3dx_dll)
+        if (NOT TARGET kisakcod-copy-d3dx)
+            add_custom_target(kisakcod-copy-d3dx
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${_kisak_runtime_dir}"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_kisak_d3dx_dll}"
+                    "${_kisak_runtime_dir}"
+                COMMENT "Copying D3DX9 runtime"
+            )
+        endif()
+        add_dependencies(${PROJECT_NAME} kisakcod-copy-d3dx)
+    endif()
+endif()

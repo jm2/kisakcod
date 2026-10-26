@@ -74,6 +74,22 @@ under PowerShell 5.1 or 7 and in ConstrainedLanguage mode, and copies the OpenAL
 Soft, FFmpeg, Steam and D3DX runtime DLLs beside the binaries. 64-bit builds link
 no Steam.
 
+The `windows-x86-*` presets are the CI and release path: they configure and build
+only. A fresh host building them directly needs four things that
+`build-win.ps1` supplies for you:
+
+- the DirectX SDK as `-DCICD=ON -DDXSDK_DIR=<Microsoft.DXSDK.D3DX>/build/native`
+  (the NuGet package layout); setting `DXSDK_DIR` in the environment alone is not
+  enough, and without `CICD` the build expects the June 2010 SDK layout instead.
+- an x86 vcpkg tree. The Win32 `mp` and non-headless `dedi` targets link OpenAL
+  Soft and FFmpeg from `vcpkg.json`, so the triplet is `x86-windows`
+  (the presets pin it); `-HeadlessDedi` needs neither.
+- `D3DX9_43.dll` beside the executable. The build stages it out of `DXSDK_DIR`
+  when the package carries it.
+- `localization.txt` in the process working directory. Without it the
+  non-headless build warns and assumes English; an old build asserted here and
+  then looked for every zone under `zone\(null)\`.
+
 ### Linux and macOS (`build.sh`)
 
 ```sh

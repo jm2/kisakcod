@@ -1,4 +1,5 @@
 #include "win_localize.h"
+#include <qcommon/qcommon.h>
 #include <universal/q_shared.h>
 #include <universal/q_parse.h>
 #include <stringed/stringed_hooks.h>
@@ -43,7 +44,13 @@ int __cdecl Win_InitLocalization()
         I_strncpyz(language_buffer, "english", LANGUAGE_BUF_SIZE);
         localization.language = language_buffer;
 #else
-        iassert(0); // LWSS ADD: you probably need to change the working dir!
+        // The working directory need not be the install root (a shortcut, a
+        // test harness or a preset build sets its own), and a null language
+        // turns every zone path into zone\(null)\. Assume English, as the
+        // headless build and the POSIX client do (#829).
+        Com_PrintWarning(1, "localization.txt is not in the working directory; assuming English\n");
+        I_strncpyz(language_buffer, "english", LANGUAGE_BUF_SIZE);
+        localization.language = language_buffer;
 #endif
         return 0;
     }
