@@ -1,6 +1,6 @@
 # NOW
 
-Last reviewed: 2026-10-26 by kisakcod-linux (antec), coordinator, after the queue sweep; 7 open PRs (2 draft)
+Last reviewed: 2026-10-26 by kisakcod-linux (antec), coordinator; 9 open PRs (3 draft)
 Current gates: G3 (the remaining targets) and G5 (Windows ARM64, UBSan); G4a waits on the owner; G0, G1 and G2 are done
 WIP limit: 6 (at least 4 on the current gates)
 
@@ -17,7 +17,7 @@ From the master census. Live values: the `Native64 census` summary of the latest
 | K3 | Upstream engine TUs in the Linux test build | 82/475 | rising | census |
 | K4 | Server asset families loading Steam 1.8 `.ff` at 64-bit under ASan, with `db::graph_hash` parity | 25/25 (`db_graphhash`, 3 legs; list in `IsK4Verified`) | 25/25 (G2) | this file |
 | K5 | Headless TUs reaching `<d3d9.h>` on Linux | 0 on lin64 and a64 | 0 (G1 Linux) | census |
-| K6 | Target x role cells at `links` or above | 5/10, all headless: Win64 at `fork_peer`, Linux amd64 at `boots_map` (the clients play but have no CI leg or release recipe) | 10 at `packaged` (G6) | manifest |
+| K6 | Target x role cells at `links` or above | 5/10, all headless: Win64 at `fork_peer`, Linux amd64 at `boots_map` | 10 at `packaged` (G6) | manifest |
 
 ## Queue
 
@@ -25,10 +25,10 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 
 | # | Bead | Gate | Moves | Done-test | Size | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| 61 | G3 on the Windows ARM64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | server PASS at 2e3ba835+#828 patch: 8 bots, 8/8/8 joins, rotations (win-arm64); client #817 |
+| 61 | G3 on the Windows ARM64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | server PASS at 2e3ba835+#828 patch: 8 bots, 8/8/8 joins in the drained reply, kick refused (win-arm64); citable run waits on merged #828 + sync; client #817 |
 | 63 | G3 on the Linux amd64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | server PASS at 26cf1841 per #827; client spectator #817 |
 | 64 | G3 on the Linux arm64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | server PASS (linux-arm64); client #817 |
-| 65 | G3 on the macOS arm64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | dedi preset ready at 26cf1841; run waits on #828; client #817 |
+| 65 | G3 on the macOS arm64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | dedi preset verified at 26cf1841, no prefix; run waits on #828; client #817 |
 | 60 | G5 Windows ARM64: the native client plays a round, a map change and a reconnect on a fork server (#184) | G5 | gate | console text on both ends; ASan clean | M | presets/ASan link at 2e3ba835 (#815); client #817 |
 | 58 | G5 client UBSan-clean: fix the triaged client reports (flattened arrays, misaligned access, LCG overflow) | G5 | gate | a client leg logs 0 UBSan reports | M | #819/#822/#823 merged; #830 (#821+#831) in review |
 | 36 | G4a evidence: a stock Steam 1.8 client joins the windows-x86 server | G4a | gate | a retail client connects under the `steam18` profile; capture confirms protocol 7, gamename, shortversion (#531 table) | M | yoga: discovery, connect and 2 map changes pass; left: browser, spawn and fire, reconnect (#182) |
@@ -36,7 +36,7 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 
 Other `burndown` issues are off these gates or wait on the owner.
 
-**Resume here:** merge queue #826 #834 #828 #832, then #824 (this docs PR); #825/#818 already merged. #830 waits on a sanitizer leg and #836 on the #817 owner call. Launch rows 61-65 with `+exec cfg +map`, never `map` inside an exec'd cfg (#816/#826). #817 blocks every client half; [#804](https://github.com/jm2/kisakcod/issues/804) holds host detail.
+**Resume here:** merge queue #826 #834 #828 #832, then #824 (this docs PR); #825/#818 merged. #840 (`pr_gate` INFRA for runner/apt stalls) is review-ready; #830 waits on a sanitizer leg, #839 on its rule-16 declaration, #836 on the #817 call. Launch rows 61-65 with `+exec cfg +map`, never `map` inside an exec'd cfg (#816/#826). #817 blocks every client half; [#804](https://github.com/jm2/kisakcod/issues/804) holds host detail.
 
 ## Blocked on owner
 
@@ -49,6 +49,7 @@ Other `burndown` issues are off these gates or wait on the owner.
 | Retail-fidelity call on #208 | the sweep |
 | GPU runner; Apple Developer ID | G5; G6 |
 | #817 spawn route: dev/test spawn, UI-less class selection, or menu vehicle | rows 61/63/64/65 clients, 60, 36 |
+| Sync into the Windows clones (yoga 2e3ba835, antec-win 26cf1841) | rows 61/63 post-#828 legs |
 | LAN/unsandboxed launch on mbp16 | row 65 |
 | Clean-account K6 round on mbp16 | row 66 |
 
@@ -56,10 +57,10 @@ Other `burndown` issues are off these gates or wait on the owner.
 
 - `steam18` auth: option A, the CD-key hash accepted unchecked as the ban key ([NET_STEAM18](design/NET_STEAM18.md) §8), 2026-10-07.
 - The Steam 1.8 reference build is in [NET_STEAM18](design/NET_STEAM18.md) §5.
-- Coordination and merges: the first responsive host of antec, antec-win, mbp16-m1max, macmini-m1, yoga-slim7x (2026-10-15).
-- Miles and Bink are dropped on every target, x86 included: OpenAL Soft and FFmpeg everywhere, Windows through vcpkg, 2026-10-22.
-- Version 0.1.0 is the first display version (#688); 64-bit builds load unverified asset families by default, `+set db_unverified64 0` restores the guard (#689); the developer autoexec runs only with `+set com_devAutoexec 1` (#693), 2026-10-22.
-- 0.1.0 ships the D3D9 and dxvk-native clients; native Vulkan (#713) comes after 0.1.0 ([ADR-0010](decisions/0010-interim-renderers-ship-in-0-1-0.md)), 2026-10-25.
+- Coordination and merges: the first responsive host, antec → antec-win → mbp16 → macmini → yoga (2026-10-15).
+- Miles and Bink are dropped on every target, x86 included: OpenAL Soft and FFmpeg everywhere, Windows via vcpkg.
+- 0.1.0 is the first display version (#688); 64-bit builds load unverified families by default (`+set db_unverified64 0` restores the guard, #689); the dev autoexec needs `+set com_devAutoexec 1` (#693).
+- 0.1.0 ships the D3D9 and dxvk-native clients; native Vulkan (#713) comes after ([ADR-0010](decisions/0010-interim-renderers-ship-in-0-1-0.md)), 2026-10-25.
 - Standing rules (x86 pre-approval, sanitizer bar, vulnerabilities, retail data, shared hosts) are in [CHARTER](CHARTER.md#standing-owner-rules).
 
 ## Done since last review
