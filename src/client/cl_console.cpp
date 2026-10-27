@@ -929,8 +929,7 @@ char __cdecl CL_ConsolePrint_AddLine(
                     iassert(color >= COLOR_FIRST && color <= COLOR_LAST);
                     bcassert(con.lineOffset, sizeof(con.textTempLine) - 1); // 0x1FF
                     con.textTempLine[con.lineOffset] = 94;
-                    //*(_BYTE *)(con.lineOffset + 11724761) = color;
-                    con.consoleText[con.lineOffset + 1] = color;
+                    con.textTempLine[con.lineOffset + 1] = color;
                     con.lineOffset += 2;
                     bcassert(con.lineOffset, sizeof(con.textTempLine) + 1); // 0x201
                 }
