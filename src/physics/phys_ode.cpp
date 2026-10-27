@@ -6510,9 +6510,9 @@ dxJointAMotor *__cdecl Phys_CreateAngularMotor(
             dJointSetAMotorMode(jointa, 1);
             dJointSetAMotorNumAxes(jointa, 3);
             if (obj2)
-                dJointSetAMotorAxis(jointa, 2, 2, (*axes)[6], (*axes)[7], (*axes)[8]);
+                dJointSetAMotorAxis(jointa, 2, 2, axes[2][0], axes[2][1], axes[2][2]);
             else
-                dJointSetAMotorAxis(jointa, 2, 0, (*axes)[6], (*axes)[7], (*axes)[8]);
+                dJointSetAMotorAxis(jointa, 2, 0, axes[2][0], axes[2][1], axes[2][2]);
             if (obj1)
                 dJointSetAMotorAxis(jointa, 0, 1, (*axes)[0], (*axes)[1], (*axes)[2]);
             else

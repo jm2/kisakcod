@@ -2700,7 +2700,7 @@ void __cdecl Phys_AxisToOdeMatrix3(const float (*inAxis)[3], float *outMatrix)
     for (r = 0; r < 3; ++r)
     {
         for (c = 0; c < 3; ++c)
-            outMatrix[4 * r + c] = (*inAxis)[3 * c + r];
+            outMatrix[4 * r + c] = inAxis[c][r];
         outMatrix[4 * r + 3] = 0.0;
     }
 }
@@ -2920,32 +2920,32 @@ int __cdecl Phys_ClipPolyAgainstPlane(
                 frac = (choppingPlane[3] - v8) / denom;
                 Vec3Lerp(&(*poly)[3 * enterPair_4a], &(*poly)[3 * exitPair_4], frac, &(*poly)[3 * enterPaira]);
             }
-            Vec3Sub(&(*poly)[3 * exitPair_4], &(*poly)[3 * exitPair], v2);
+            Vec3Sub(&poly[exitPair_4][0], &poly[exitPair][0], v2);
             denom = Vec3Dot(v2, choppingPlane);
             if (denom != 0.0)
             {
-                v9 = Vec3Dot(&(*poly)[3 * exitPair], choppingPlane);
+                v9 = Vec3Dot(&poly[exitPair][0], choppingPlane);
                 fraca = (choppingPlane[3] - v9) / denom;
-                Vec3Lerp(&(*poly)[3 * exitPair], &(*poly)[3 * exitPair_4], fraca, &(*poly)[3 * exitPair_4]);
+                Vec3Lerp(&poly[exitPair][0], &poly[exitPair_4][0], fraca, &poly[exitPair_4][0]);
             }
         }
         else
         {
-            Vec3Sub(&(*poly)[3 * exitPair_4], &(*poly)[3 * exitPair], v2);
+            Vec3Sub(&poly[exitPair_4][0], &poly[exitPair][0], v2);
             denom = Vec3Dot(v2, choppingPlane);
             if (denom != 0.0)
             {
-                v10 = Vec3Dot(&(*poly)[3 * exitPair], choppingPlane);
+                v10 = Vec3Dot(&poly[exitPair][0], choppingPlane);
                 fracb = (choppingPlane[3] - v10) / denom;
-                Vec3Lerp(&(*poly)[3 * exitPair], &(*poly)[3 * exitPair_4], fracb, &(*poly)[3 * exitPair_4]);
+                Vec3Lerp(&poly[exitPair][0], &poly[exitPair_4][0], fracb, &poly[exitPair_4][0]);
             }
-            Vec3Sub(&(*poly)[3 * enterPair], &(*poly)[3 * enterPair_4], v2);
+            Vec3Sub(&poly[enterPair][0], &poly[enterPair_4][0], v2);
             denom = Vec3Dot(v2, choppingPlane);
             if (denom != 0.0)
             {
-                v11 = Vec3Dot(&(*poly)[3 * enterPair_4], choppingPlane);
+                v11 = Vec3Dot(&poly[enterPair_4][0], choppingPlane);
                 fracc = (choppingPlane[3] - v11) / denom;
-                Vec3Lerp(&(*poly)[3 * enterPair_4], &(*poly)[3 * enterPair], fracc, &(*poly)[3 * enterPair]);
+                Vec3Lerp(&poly[enterPair_4][0], &poly[enterPair][0], fracc, &poly[enterPair][0]);
             }
             return CircularRemoveRange(poly, polyCount, exitPair_4, enterPair);
         }
