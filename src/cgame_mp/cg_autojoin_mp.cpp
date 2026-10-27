@@ -21,7 +21,25 @@ bool AutoJoinPrefixMatches(const char *prefix, const char *menuName)
     }
     return true;
 }
+bool AutoJoinResponseCharIsValid(int ch)
+{
+    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')
+           || ch == '_' || ch == '.' || ch == ',' || ch == '-';
+}
 } // namespace
+
+bool CG_AutoJoinResponseIsValid(const char *response)
+{
+    if (!response || !*response)
+        return false;
+    std::size_t length = 0;
+    for (; response[length]; ++length)
+    {
+        if (length >= 63 || !AutoJoinResponseCharIsValid(static_cast<unsigned char>(response[length])))
+            return false;
+    }
+    return true;
+}
 
 cgAutoJoinKind_t CG_AutoJoinResponse(const cgAutoJoinRules_t &rules, const char *menuName,
                                      const char **response)
@@ -31,14 +49,14 @@ cgAutoJoinKind_t CG_AutoJoinResponse(const cgAutoJoinRules_t &rules, const char 
     if (!menuName || !*menuName)
         return CG_AUTOJOIN_NONE;
     if (AutoJoinPrefixMatches(rules.teamMenuPrefix, menuName)
-        && rules.teamResponse && *rules.teamResponse)
+        && CG_AutoJoinResponseIsValid(rules.teamResponse))
     {
         if (response)
             *response = rules.teamResponse;
         return CG_AUTOJOIN_TEAM;
     }
     if (AutoJoinPrefixMatches(rules.classMenuPrefix, menuName)
-        && rules.classResponse && *rules.classResponse)
+        && CG_AutoJoinResponseIsValid(rules.classResponse))
     {
         if (response)
             *response = rules.classResponse;

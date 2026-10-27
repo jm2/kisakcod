@@ -35,6 +35,11 @@ enum cgAutoJoinKind_t
     CG_AUTOJOIN_CLASS,
 };
 
+// True when `response` is a single menu-answer token: 1..63 characters from
+// [A-Za-z0-9_.,-]. The response is queued as text into the command buffer, so
+// anything else (a separator, a quote, a space) must never reach it.
+bool CG_AutoJoinResponseIsValid(const char *response);
+
 // Returns which join step this script menu belongs to and, through `response`,
 // the answer to send. Prefixes match case-insensitively; an empty prefix or an
 // empty response disables that step.

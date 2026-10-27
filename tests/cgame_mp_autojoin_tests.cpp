@@ -65,6 +65,32 @@ int main()
     CheckResponse(classOnly, "spectatemenu", CG_AUTOJOIN_TEAM, "free",
                   "the configured prefix is what matches");
 
+    // The response is queued into the command buffer as text, so a value from a
+    // server-set dvar must be one token or not be sent at all.
+    if (!CG_AutoJoinResponseIsValid("assault_mp,0") || !CG_AutoJoinResponseIsValid("autoassign"))
+    {
+        std::printf("FAIL: a menu answer token is a valid response\n");
+        ++failures;
+    }
+    if (CG_AutoJoinResponseIsValid("") || CG_AutoJoinResponseIsValid(nullptr))
+    {
+        std::printf("FAIL: an empty response is not valid\n");
+        ++failures;
+    }
+    const char *hostile[] = {"assault_mp,0; quit", "a b", "\"q\"", "a\\b", "a/b", "a\nb",
+                             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"};
+    for (const char *value : hostile)
+    {
+        if (CG_AutoJoinResponseIsValid(value))
+        {
+            std::printf("FAIL: \"%s\" must not be accepted as a response\n", value);
+            ++failures;
+        }
+    }
+    const cgAutoJoinRules_t hostileClass = {"team", "autoassign", "changeclass", "assault_mp,0; quit"};
+    CheckResponse(hostileClass, "changeclass", CG_AUTOJOIN_NONE, nullptr,
+                  "a response carrying a command separator disables the step");
+
     cgAutoJoinAnswerState_t answers;
     CG_AutoJoinResetAnswers(&answers);
     if (!CG_AutoJoinClaimAnswer(&answers, 7, 8))
