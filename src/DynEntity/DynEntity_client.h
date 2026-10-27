@@ -248,6 +248,24 @@ dxBody *__cdecl DynEntPieces_SpawnPhysObj(
     const PhysPreset *physPreset);
 void __cdecl DynEntPieces_CalcForceDir(const float *hitDir, float spreadFraction, float *forceDir);
 
+// Breakable-piece pool lifecycle. The caller owns CRITSECT_PHYSICS.
+// Shutdown releases every sidecar binding and destroys the bodies, so the FX
+// world is empty before Phys_Shutdown and no stale token survives a map.
+void __cdecl DynEntPieces_Shutdown();
+
+// Result of publishing a created piece body. retiredBody is the body evicted
+// from a recycled slot, if any; the caller destroys it after leaving the
+// physics lock (Phys_ObjDestroy takes the lock itself).
+struct DynEntPieceSlotCommit
+{
+    bool committed;
+    dxBody *retiredBody;
+};
+
+DynEntPieceSlotCommit __cdecl DynEntPieces_CommitSlotLocked(
+    dxBody *body,
+    const XModel *model);
+
 
 
 // dynentity_load_obj

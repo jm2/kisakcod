@@ -216,6 +216,47 @@ add_test(
 )
 set_tests_properties(phys-obj-id-sidecar-contracts PROPERTIES TIMEOUT 20)
 
+# Breakable-piece pool lifetime (#260): the production commit/shutdown
+# helpers in DynEntity_pieces.cpp are linked with fake bodies, so the test
+# checks sidecar release and slot recycling without an ODE world.
+# --gc-sections keeps only the helpers under test, so the physics, renderer
+# and dvar boundary needs no stubs.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    # The engine build does not run -Werror over these decompiled TUs; the
+    # diagnostics below predate the pool helpers and are not part of this test.
+    set_source_files_properties(
+        ${SRC_DIR}/DynEntity/DynEntity_pieces.cpp
+        ${SRC_DIR}/DynEntity/DynEntity_client.cpp
+        PROPERTIES COMPILE_OPTIONS
+            "-Wno-unused-parameter;-Wno-unused-but-set-variable;-Wno-bitwise-op-parentheses;-Wno-sign-compare")
+    add_executable(kisakcod-dynent-pieces-pool-tests
+        dynent_pieces_pool_tests.cpp
+        ${SRC_DIR}/DynEntity/DynEntity_pieces.cpp
+        ${SRC_DIR}/DynEntity/DynEntity_client.cpp
+        ${SRC_DIR}/bgame/bg_phys_obj_id_tables.cpp
+    )
+    target_include_directories(
+        kisakcod-dynent-pieces-pool-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(
+        kisakcod-dynent-pieces-pool-tests PRIVATE cxx_std_20)
+    target_compile_definitions(
+        kisakcod-dynent-pieces-pool-tests PRIVATE KISAK_MP)
+    target_compile_options(kisakcod-dynent-pieces-pool-tests PRIVATE
+        -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(
+        kisakcod-dynent-pieces-pool-tests PRIVATE -Wl,--gc-sections)
+    kisakcod_test_warnings(kisakcod-dynent-pieces-pool-tests)
+    set_target_properties(kisakcod-dynent-pieces-pool-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(
+        NAME dynent-pieces-pool-lifetime
+        COMMAND kisakcod-dynent-pieces-pool-tests
+    )
+    set_tests_properties(dynent-pieces-pool-lifetime PROPERTIES TIMEOUT 20)
+endif()
+
 kisakcod_ilp32(kisakcod-pool-allocator-tests
     pool-native-pointer-freelist)
 

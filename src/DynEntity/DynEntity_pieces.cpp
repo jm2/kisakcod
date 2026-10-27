@@ -16,12 +16,13 @@ BreakablePiece g_breakablePieces[100];
 
 namespace
 {
+int32_t g_pieceRecycleCursor;
+
 struct DynEntPiecesPhysSpawnResult
 {
     dxBody *body;
     PhysBodyModelCreateStatus status;
     PhysBodyCreateResourceFailure resourceFailure;
-    bool capacityExceeded;
     bool cleanupFailed;
 };
 
@@ -40,13 +41,7 @@ DynEntPiecesPhysSpawnResult DynEntPieces_TrySpawnPhysObjLockedNoReport(
         nullptr,
         PhysBodyModelCreateStatus::InvalidArgument,
         PhysBodyCreateResourceFailure::None,
-        false,
         false};
-    if (numPieces >= 100)
-    {
-        result.capacityExceeded = true;
-        return result;
-    }
     if (!physPreset)
         return result;
 
@@ -88,7 +83,85 @@ DynEntPiecesPhysSpawnResult DynEntPieces_TrySpawnPhysObjLockedNoReport(
     }
     return result;
 }
+
+// The caller owns CRITSECT_PHYSICS.
+dxBody *DynEntPieces_ReleaseSlotLocked(int32_t index)
+{
+    BreakablePiece &piece = g_breakablePieces[index];
+    dxBody *retiredBody = nullptr;
+    const phys_obj_id::BodyResult released =
+        g_breakablePieceBodySidecar.ReleaseByOwner(
+            static_cast<phys_obj_id::OwnerIndex>(index));
+    if (released)
+        retiredBody = static_cast<dxBody *>(released.body);
+    piece.active = false;
+    piece.physObjId = phys_obj_id::INVALID_BODY_TOKEN;
+    piece.model = nullptr;
+    piece.lightingHandle = 0;
+    return retiredBody;
+}
 } // namespace
+
+DynEntPieceSlotCommit __cdecl DynEntPieces_CommitSlotLocked(
+    dxBody *body,
+    const XModel *model)
+{
+    DynEntPieceSlotCommit commit{false, nullptr};
+
+    int32_t index;
+    if (numPieces < 100)
+    {
+        index = numPieces;
+    }
+    else
+    {
+        // The pool is full: recycle the next slot round-robin so a session
+        // that breaks more than 100 pieces keeps producing them. Releasing
+        // the old binding rolls the generation forward, so any token still
+        // held for that slot resolves as stale rather than as the new body.
+        index = g_pieceRecycleCursor;
+        g_pieceRecycleCursor = (g_pieceRecycleCursor + 1) % 100;
+        commit.retiredBody = DynEntPieces_ReleaseSlotLocked(index);
+    }
+
+    const phys_obj_id::TokenResult bind =
+        g_breakablePieceBodySidecar.Bind(
+            static_cast<phys_obj_id::OwnerIndex>(index), body);
+    if (!bind)
+        return commit;
+
+    BreakablePiece &piece = g_breakablePieces[index];
+    piece.physObjId = bind.token;
+    piece.model = model;
+    piece.lightingHandle = 0;
+    piece.active = true;
+    if (index == numPieces)
+        ++numPieces;
+    commit.committed = true;
+    return commit;
+}
+
+void __cdecl DynEntPieces_Shutdown()
+{
+    dxBody *retiredBodies[100];
+    int32_t retiredCount = 0;
+
+    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+    for (int32_t index = 0; index < 100; ++index)
+    {
+        dxBody *const retiredBody = DynEntPieces_ReleaseSlotLocked(index);
+        if (retiredBody)
+            retiredBodies[retiredCount++] = retiredBody;
+    }
+    numPieces = 0;
+    g_pieceRecycleCursor = 0;
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+
+    // Phys_ObjDestroy takes CRITSECT_PHYSICS itself, so the bodies leave the
+    // sidecar under the lock but are destroyed after it is released.
+    for (int32_t index = 0; index < retiredCount; ++index)
+        Phys_ObjDestroy(PHYS_WORLD_FX, retiredBodies[index]);
+}
 
 void __cdecl DynEntPieces_RegisterDvars()
 {
@@ -310,24 +383,19 @@ bool __cdecl DynEntPieces_SpawnPhysicsModel(
                 spawnResult.body = nullptr;
             }
         }
-        // Sidecar Bind runs inside the physics lock span per the sidecar
-        // contract (same span as creation and the bullet-impact rollback).
-        // The slot is guaranteed vacant: the array is walked strictly
-        // forward and numPieces is the bound on the highest index, so a
-        // failed bind is a programming error — but the freshly created
-        // body must not leak: destroy it under this same lock exactly
-        // like the bullet-impact rollback above, then surface the failure.
-        phys_obj_id::TokenResult pieceBind{};
-        bool bindFailed = false;
+        // Binding and publishing run inside the physics lock span per the
+        // sidecar contract (same span as creation and the bullet-impact
+        // rollback). On a full pool CommitSlotLocked evicts the oldest slot
+        // and returns its body; that body is destroyed after the lock.
+        DynEntPieceSlotCommit pieceCommit{false, nullptr};
         if (spawnResult.status == PhysBodyModelCreateStatus::Success)
         {
-            const phys_obj_id::OwnerIndex owner =
-                static_cast<phys_obj_id::OwnerIndex>(numPieces);
-            // Bind is a non-static member: call it on the global sidecar.
-            pieceBind = g_breakablePieceBodySidecar.Bind(owner, spawnResult.body);
-            if (!pieceBind)
+            pieceCommit =
+                DynEntPieces_CommitSlotLocked(spawnResult.body, model);
+            if (!pieceCommit.committed)
             {
-                bindFailed = true;
+                spawnResult.status =
+                    PhysBodyModelCreateStatus::InvalidArgument;
                 spawnResult.cleanupFailed =
                     Phys_TryDestroyBodyLockedNoReport(
                         PHYS_WORLD_FX,
@@ -338,26 +406,14 @@ bool __cdecl DynEntPieces_SpawnPhysicsModel(
         }
         Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
 
+        if (pieceCommit.retiredBody)
+            Phys_ObjDestroy(PHYS_WORLD_FX, pieceCommit.retiredBody);
         if (spawnResult.cleanupFailed)
             std::abort();
-        if (spawnResult.capacityExceeded)
-        {
-            Com_PrintWarning(
-                1,
-                "Failed to create physics object for '%s': piece capacity exhausted.\n",
-                model->name ? model->name : "<unnamed>");
-            return false;
-        }
         physObjId = spawnResult.body;
         if (spawnResult.status == PhysBodyModelCreateStatus::Success)
         {
-            if (bindFailed)
-                return false;
-            g_breakablePieces[numPieces].physObjId = pieceBind.token;
-            g_breakablePieces[numPieces].model = model;
             result = 1;
-            g_breakablePieces[numPieces].lightingHandle = 0;
-            g_breakablePieces[numPieces++].active = 1;
         }
         else
         {
@@ -407,14 +463,6 @@ dxBody *__cdecl DynEntPieces_SpawnPhysObj(
 
     if (spawnResult.cleanupFailed)
         std::abort();
-    if (spawnResult.capacityExceeded)
-    {
-        Com_PrintWarning(
-            1,
-            "Failed to create physics object for '%s': piece capacity exhausted.\n",
-            safeModelName);
-        return nullptr;
-    }
     if (spawnResult.status != PhysBodyModelCreateStatus::Success)
     {
         Phys_ReportBodyModelCreateFailure(
