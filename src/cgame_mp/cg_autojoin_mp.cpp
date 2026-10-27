@@ -1,7 +1,7 @@
 #include "cg_autojoin_mp.h"
 
 #include <cctype>
-#include <cstring>
+#include <cstddef>
 
 namespace
 {
@@ -14,7 +14,7 @@ bool AutoJoinPrefixMatches(const char *prefix, const char *menuName)
 {
     if (!prefix || !*prefix || !menuName)
         return false;
-    for (size_t i = 0; prefix[i]; ++i)
+    for (std::size_t i = 0; prefix[i]; ++i)
     {
         if (!menuName[i] || AutoJoinToLower(menuName[i]) != AutoJoinToLower(prefix[i]))
             return false;
@@ -52,7 +52,8 @@ void CG_AutoJoinResetAnswers(cgAutoJoinAnswerState_t *state)
     if (!state)
         return;
     state->serverId = 0;
-    memset(state->answeredMenus, 0, sizeof(state->answeredMenus));
+    for (uint8_t &answered : state->answeredMenus)
+        answered = 0;
 }
 
 bool CG_AutoJoinClaimAnswer(cgAutoJoinAnswerState_t *state, int32_t serverId, uint32_t menuIndex)
@@ -61,8 +62,8 @@ bool CG_AutoJoinClaimAnswer(cgAutoJoinAnswerState_t *state, int32_t serverId, ui
         return false;
     if (serverId != state->serverId)
     {
+        CG_AutoJoinResetAnswers(state);
         state->serverId = serverId;
-        memset(state->answeredMenus, 0, sizeof(state->answeredMenus));
     }
     if (state->answeredMenus[menuIndex])
         return false;
