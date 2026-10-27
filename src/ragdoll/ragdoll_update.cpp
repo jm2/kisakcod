@@ -222,18 +222,18 @@ void __cdecl Ragdoll_AnimMatToMat43(const DObjAnimMat *mat, float (*out)[3])
     v7 = result[1] * mat->quat[3];
     v4 = result[2] * mat->quat[2];
     v5 = result[2] * mat->quat[3];
-    (*out)[0] = 1.0 - (v2 + v4);
-    (*out)[1] = v3 + v5;
-    (*out)[2] = v8 - v7;
-    (*out)[3] = v3 - v5;
-    (*out)[4] = 1.0 - (v10 + v4);
-    (*out)[5] = v9 + v11;
-    (*out)[6] = v8 + v7;
-    (*out)[7] = v9 - v11;
-    (*out)[8] = 1.0 - (v10 + v2);
-    (*out)[9] = mat->trans[0];
-    (*out)[10] = mat->trans[1];
-    (*out)[11] = mat->trans[2];
+    out[0][0] = 1.0 - (v2 + v4);
+    out[0][1] = v3 + v5;
+    out[0][2] = v8 - v7;
+    out[1][0] = v3 - v5;
+    out[1][1] = 1.0 - (v10 + v4);
+    out[1][2] = v9 + v11;
+    out[2][0] = v8 + v7;
+    out[2][1] = v9 - v11;
+    out[2][2] = 1.0 - (v10 + v2);
+    out[3][0] = mat->trans[0];
+    out[3][1] = mat->trans[1];
+    out[3][2] = mat->trans[2];
 }
 
 char __cdecl Ragdoll_CreateBodyPhysics(RagdollBody *body)

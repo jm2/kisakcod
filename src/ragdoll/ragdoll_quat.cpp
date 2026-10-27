@@ -82,51 +82,51 @@ void __cdecl Ragdoll_Mat33ToQuat(const float (*axis)[3], float *quat)
     float sb; // [esp+20h] [ebp-4h]
     float sc; // [esp+20h] [ebp-4h]
 
-    trace = (*axis)[0] + (float)(*axis)[4] + (float)(*axis)[8] + 1.0;
+    trace = axis[0][0] + (float)axis[1][1] + (float)axis[2][2] + 1.0;
     if (trace <= 0.000001)
     {
-        if ((*axis)[4] >= (double)(*axis)[0] || (*axis)[8] >= (double)(*axis)[0])
+        if (axis[1][1] >= (double)axis[0][0] || axis[2][2] >= (double)axis[0][0])
         {
-            if ((*axis)[8] >= (double)(*axis)[4])
+            if (axis[2][2] >= (double)axis[1][1])
             {
-                v7 = (float)(*axis)[8] + 1.0 - (*axis)[0] - (float)(*axis)[4];
+                v7 = (float)axis[2][2] + 1.0 - axis[0][0] - (float)axis[1][1];
                 v3 = sqrt(v7);
                 sc = v3 * 2.0;
-                *quat = ((float)(*axis)[2] + (float)(*axis)[6]) / sc;
-                quat[1] = ((float)(*axis)[5] + (float)(*axis)[7]) / sc;
+                *quat = ((float)axis[0][2] + (float)axis[2][0]) / sc;
+                quat[1] = ((float)axis[1][2] + (float)axis[2][1]) / sc;
                 quat[2] = sc * 0.25;
-                v2 = ((float)(*axis)[1] - (float)(*axis)[3]) / sc;
+                v2 = ((float)axis[0][1] - (float)axis[1][0]) / sc;
             }
             else
             {
-                v8 = (float)(*axis)[4] + 1.0 - (*axis)[0] - (float)(*axis)[8];
+                v8 = (float)axis[1][1] + 1.0 - axis[0][0] - (float)axis[2][2];
                 v4 = sqrt(v8);
                 sb = v4 * 2.0;
-                *quat = ((float)(*axis)[1] + (float)(*axis)[3]) / sb;
+                *quat = ((float)axis[0][1] + (float)axis[1][0]) / sb;
                 quat[1] = sb * 0.25;
-                quat[2] = ((float)(*axis)[5] + (float)(*axis)[7]) / sb;
-                v2 = ((float)(*axis)[2] - (float)(*axis)[6]) / sb;
+                quat[2] = ((float)axis[1][2] + (float)axis[2][1]) / sb;
+                v2 = ((float)axis[0][2] - (float)axis[2][0]) / sb;
             }
             quat[3] = v2;
         }
         else
         {
-            v9 = (*axis)[0] + 1.0 - (float)(*axis)[4] - (float)(*axis)[8];
+            v9 = axis[0][0] + 1.0 - (float)axis[1][1] - (float)axis[2][2];
             v5 = sqrt(v9);
             sa = v5 * 2.0;
             *quat = sa * 0.25;
-            quat[1] = ((float)(*axis)[1] + (float)(*axis)[3]) / sa;
-            quat[2] = ((float)(*axis)[2] + (float)(*axis)[6]) / sa;
-            quat[3] = ((float)(*axis)[5] - (float)(*axis)[7]) / sa;
+            quat[1] = ((float)axis[0][1] + (float)axis[1][0]) / sa;
+            quat[2] = ((float)axis[0][2] + (float)axis[2][0]) / sa;
+            quat[3] = ((float)axis[1][2] - (float)axis[2][1]) / sa;
         }
     }
     else
     {
         v6 = sqrt(trace);
         s = 0.5 / v6;
-        *quat = ((float)(*axis)[7] - (float)(*axis)[5]) * s;
-        quat[1] = ((float)(*axis)[2] - (float)(*axis)[6]) * s;
-        quat[2] = ((float)(*axis)[3] - (float)(*axis)[1]) * s;
+        *quat = ((float)axis[2][1] - (float)axis[1][2]) * s;
+        quat[1] = ((float)axis[0][2] - (float)axis[2][0]) * s;
+        quat[2] = ((float)axis[1][0] - (float)axis[0][1]) * s;
         quat[3] = 0.25 / s;
     }
 }
