@@ -2167,10 +2167,10 @@ int __cdecl ProjectedWindingContainsCoplanarPoint(
     vertIndexPrev = vertCount - 1;
     for (vertIndex = 0; vertIndex < vertCount; ++vertIndex)
     {
-        edgeNormal = (*verts)[3 * vertIndex + y] - (*verts)[3 * vertIndexPrev + y];
-        edgeNormal_4 = (*verts)[3 * vertIndexPrev + x] - (*verts)[3 * vertIndex + x];
-        pointDelta = point[x] - (*verts)[3 * vertIndexPrev + x];
-        pointDelta_4 = point[y] - (*verts)[3 * vertIndexPrev + y];
+        edgeNormal = verts[vertIndex][y] - verts[vertIndexPrev][y];
+        edgeNormal_4 = verts[vertIndexPrev][x] - verts[vertIndex][x];
+        pointDelta = point[x] - verts[vertIndexPrev][x];
+        pointDelta_4 = point[y] - verts[vertIndexPrev][y];
         projectionDist = edgeNormal_4 * pointDelta_4 + edgeNormal * pointDelta;
         if (projectionDist < 0.0)
             return 0;
