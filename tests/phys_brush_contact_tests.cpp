@@ -20,6 +20,9 @@
 //      FrameInfo, as it does the world collision (#243 item 1).
 //   4: ODE's ode.cpp: a contact group filled to capacity empties without
 //      an ODE assert (#238 item 1).
+//   5: ODE's error layer: the handlers Phys_Init installs keep a failed
+//      internal assertion from aborting the process and route a hard ODE
+//      error through Com_Error (#238 item 2).
 // The engine boundary is weak: the engine TUs replace the stubs they define.
 
 #include <cmath>
@@ -33,6 +36,8 @@
 namespace
 {
 int g_failures = 0;
+int g_comWarnings = 0;
+int g_comDPrints = 0;
 #define CHECK(expr) \
     ((expr) ? void() : (void)(std::fprintf(stderr, "line %d: CHECK(%s)\n", __LINE__, #expr), ++g_failures))
 }  // namespace
@@ -47,7 +52,8 @@ WEAK void MyAssertHandler(const char *filename, int line, int, const char *, ...
 }
 WEAK void Com_Printf(int, const char *, ...) {}
 WEAK void Com_PrintError(int, const char *, ...) {}
-WEAK void Com_PrintWarning(int, const char *, ...) {}
+WEAK void Com_PrintWarning(int, const char *, ...) { ++g_comWarnings; }
+WEAK void Com_DPrintf(int, const char *, ...) { ++g_comDPrints; }
 
 #if PHYS_TEST_SUBJECT == 1
 
@@ -460,6 +466,62 @@ int main()
     CHECK(g_world.firstjoint == nullptr);
     if (g_failures)
         std::fprintf(stderr, "%d check(s) failed\n", g_failures);
+    return g_failures ? 1 : 0;
+}
+
+#elif PHYS_TEST_SUBJECT == 5
+
+#include <ode/error.h>
+#include <setjmp.h>
+
+namespace
+{
+int g_odeErrors = 0;
+jmp_buf g_errorJump;
+}  // namespace
+
+// The engine's error path does not return; Com_Error longjmps out of it.
+WEAK void Com_Error(errorParm_t, const char *fmt, ...)
+{
+    std::fprintf(stderr, "Com_Error: %s\n", fmt ? fmt : "?");
+    ++g_odeErrors;
+    longjmp(g_errorJump, 1);
+}
+
+int main()
+{
+    // Master never installs a handler, so this symbol does not exist there
+    // and the check does not link; at head it is what Phys_Init calls.
+    Phys_InstallOdeErrorHandlers();
+    CHECK(dGetErrorHandler() != nullptr);
+    CHECK(dGetDebugHandler() != nullptr);
+    CHECK(dGetMessageHandler() != nullptr);
+
+    // A message is chatter: it must reach the debug log and return.
+    dMessage(d_ERR_UASSERT, "message %d", 7);
+    CHECK(g_comDPrints == 1);
+
+    // A failed internal assertion must be reported and must NOT abort the
+    // process (error.cpp aborts when no handler is installed).
+    dDebug(d_ERR_IASSERT, "assertion %d", 3);
+    CHECK(g_comWarnings == 1);
+
+    // A hard ODE error must go through Com_Error, not exit(1).
+    if (setjmp(g_errorJump) == 0)
+    {
+        dError(d_ERR_UASSERT, "fatal %d", 9);
+        std::fprintf(stderr, "dError returned instead of dropping\n");
+        ++g_failures;
+    }
+    else
+    {
+        CHECK(g_odeErrors == 1);
+    }
+
+    if (g_failures)
+        std::fprintf(stderr, "%d check(s) failed\n", g_failures);
+    else
+        std::fprintf(stderr, "ode error policy: all checks passed\n");
     return g_failures ? 1 : 0;
 }
 
