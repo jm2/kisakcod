@@ -6,12 +6,11 @@ pass (`docs/NOW.md`, `docs/ROADMAP.md`). Each rule names the failure it prevents
 
 ## Rules
 
-1. **Dispatch only from the `docs/NOW.md` queue.** Every bead names its gate,
-   the KPI it moves, and a done-test a reviewer can run. Bug-lane rows go
-   first.
+1. **Dispatch only from `docs/NOW.md`, bug lane first.** A bead names its
+   gate and KPI, or its bug issue, and a done-test a reviewer can run.
    *Prevents: work nobody asked for, and "done" nobody can check.*
 2. **Done means merged and measurable.** The bead records the merge SHA plus
-   the KPI change or the gate evidence. A service or helper is done only once
+   the KPI change, the gate evidence, or a bug regression test. A service or helper is done only once
    engine code in a real target calls it.
    *Prevents: helpers with no callers counted as progress.*
 3. **WIP is at most 6 beads, bug lane first.**

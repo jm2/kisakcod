@@ -28,14 +28,14 @@ test that fails without the fix. New crash or memory bugs join by severity.
 | # | Issue | Status |
 | --- | --- | --- |
 | 1 | #238 ODE aborts: full 4096-contact group, live asserts | — |
-| 2 | #243 physics: near-callback context, contacts, stepper | item 2 done |
+| 2 | #243 physics: near-callback context, contacts, stepper | item 2: 3a3514e0 |
 | 3 | #214 game_mp vehicles: wheel overflow, strings, heli NULLs | — |
 | 4 | #260 dynent pieces never destroyed; stale bodies on map change | — |
 | 5 | #258 game: hintStrings, vehicle table overflow, heli events | — |
 | 6 | #219 xanim: blend nodes eval first child twice; buf_cursor | — |
 | 7 | #209 qcommon/server: FS_FileTell NULL, fake-lag, voice-mute | — |
 | 8 | #198 bounds: GSC compiler, sound-alias, menu, map-name | — |
-| 9 | #195 decompiler artifacts write the wrong object | — |
+| 9 | #195 decompiler artifacts write wrong object | — |
 | 10 | #206 #205 #204 #217 #220 #200 #207 #208 #230 | |
 
 ## Queue
