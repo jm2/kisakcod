@@ -304,7 +304,7 @@ XModelPieces *__cdecl XModelPiecesLoadFile(const char *name, void *(__cdecl *All
             piece->model = XAnim_RegisterModelPiece(piecename);
             if (!piece->model)
             {
-                Com_PrintError(1, "ERROR: xmodel piece '%s' missing from pieces model 's%'\n", piecename, filename);
+                Com_PrintError(1, "ERROR: xmodel piece '%s' missing from pieces model '%s'\n", piecename, filename);
                 buf_cursor::Deactivate();
                 FS_FreeFile((char *)buf);
                 return 0;

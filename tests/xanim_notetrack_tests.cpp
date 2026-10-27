@@ -2,21 +2,30 @@
 // on a raw xanim with the most notetracks its u8 count can hold. notifyCount
 // is a u8 that also holds the end marker, so 255 tracks wrapped it to 0: a
 // zero-byte allocation, then 256 notify records written into it.
+//
+// It also drives the production XModelPiecesLoadFile over an in-memory
+// xmodelpieces file whose piece model does not register. The error message
+// must name both the missing piece and the pieces file it came from.
 
 #include <xanim/xanim.h>
 #include <xanim/buf_cursor.hpp>
 
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <vector>
 
 void __cdecl ReadNoteTracks(const char *name, unsigned char **pos, XAnimParts *parts, void *(__cdecl *Alloc)(int));
+XModelPieces *__cdecl XModelPiecesLoadFile(const char *name, void *(__cdecl *Alloc)(int));
 
 namespace
 {
 size_t g_allocBytes = 0;
 std::vector<void *> g_blocks;
+std::vector<unsigned char> g_piecesFile;
+std::string g_lastError;
 
 void *__cdecl TestAlloc(int size)
 {
@@ -30,6 +39,47 @@ void *__cdecl TestAlloc(int size)
 uint32_t SL_GetString_(const char *, uint32_t, int)
 {
     return 1;
+}
+
+int __cdecl FS_ReadFile(const char *qpath, void **buffer)
+{
+    if (std::strcmp(qpath, "xmodelpieces/broken") != 0)
+    {
+        *buffer = nullptr;
+        return -1;
+    }
+    *buffer = std::malloc(g_piecesFile.size());
+    std::memcpy(*buffer, g_piecesFile.data(), g_piecesFile.size());
+    return static_cast<int>(g_piecesFile.size());
+}
+
+void __cdecl FS_FreeFile(char *buffer)
+{
+    std::free(buffer);
+}
+
+int Com_sprintf(char *dest, uint32_t size, const char *fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    const int written = std::vsnprintf(dest, size, fmt, args);
+    va_end(args);
+    return written;
+}
+
+void Com_PrintError(int, const char *fmt, ...)
+{
+    char buffer[512];
+    va_list args;
+    va_start(args, fmt);
+    std::vsnprintf(buffer, sizeof(buffer), fmt, args);
+    va_end(args);
+    g_lastError = buffer;
+}
+
+XModel *__cdecl R_RegisterModel(const char *)
+{
+    return nullptr;
 }
 
 int main()
@@ -52,12 +102,29 @@ int main()
     ReadNoteTracks("test", &pos, &parts, TestAlloc);
     buf_cursor::Deactivate();
 
-    const bool ok = parts.notifyCount == 255 && g_allocBytes == 255 * sizeof(XAnimNotifyInfo);
+    const bool notetracksOk = parts.notifyCount == 255 && g_allocBytes == 255 * sizeof(XAnimNotifyInfo);
+
+    // version 1, one piece, "missing_piece", then three offsets.
+    g_piecesFile = {1, 0, 1, 0};
+    const char piecename[] = "missing_piece";
+    g_piecesFile.insert(g_piecesFile.end(), piecename, piecename + sizeof(piecename));
+    for (int i = 0; i < 12; ++i)
+        g_piecesFile.push_back(0);
+    g_lastError.clear();
+    const XModelPieces *missing = XModelPiecesLoadFile("broken", TestAlloc);
+    const bool piecesOk = missing == nullptr
+        && g_lastError == "ERROR: xmodel piece 'missing_piece' missing from pieces model 'xmodelpieces/broken'\n";
+
     for (void *block : g_blocks)
         std::free(block);
-    if (!ok)
+    if (!notetracksOk)
     {
         std::fprintf(stderr, "FAIL 255 notetracks: notifyCount %u, %zu bytes\n", parts.notifyCount, g_allocBytes);
+        return 1;
+    }
+    if (!piecesOk)
+    {
+        std::fprintf(stderr, "FAIL pieces message: '%s'\n", g_lastError.c_str());
         return 1;
     }
     std::puts("xanim notetracks: ok");
