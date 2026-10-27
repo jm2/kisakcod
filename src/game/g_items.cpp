@@ -840,7 +840,6 @@ int32_t __cdecl GetNonClipAmmoToTransferToWeaponEntity(gentity_s *player, uint32
 gentity_s *__cdecl Drop_Weapon(gentity_s *ent, int32_t weapIdx, uint8_t weaponModel, uint32_t tag)
 {
     WeaponDef *WeaponDef; // eax
-    gclient_s *v7; // esi
     int32_t v8; // eax
     float *currentOrigin; // [esp+Ch] [ebp-80h]
     float *trBase; // [esp+10h] [ebp-7Ch]
@@ -876,7 +875,7 @@ gentity_s *__cdecl Drop_Weapon(gentity_s *ent, int32_t weapIdx, uint8_t weaponMo
         if (!Com_BitCheckAssert(client->ps.weapons, weapIdx, 16) || !PlayerHasAnyAmmoToTransferToWeapon(ent, weapIdx))
             goto LABEL_15;
     }
-    if (!BG_GetWeaponDef(weapIdx)->bClipOnly || (v7 = ent->client, v7->ps.ammoclip[BG_ClipForWeapon(weapIdx)]))
+    if (!BG_GetWeaponDef(weapIdx)->bClipOnly || (ent->client && ent->client->ps.ammoclip[BG_ClipForWeapon(weapIdx)]))
     {
         dropEnt = Drop_Item(ent, weapItem, 0.0, 0);
         if (ent->client)

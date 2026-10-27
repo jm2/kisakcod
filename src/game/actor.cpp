@@ -267,13 +267,16 @@ void __cdecl G_FreeAnimClientTree(XAnimTree_s *tree)
         {
             ++v2;
             ++actorXAnimClientTrees;
-            if (v2 >= 0x40)
+            if (v2 >= ARRAY_COUNT(g_scr_data.actorXAnimClientTrees))
+            {
                 MyAssertHandler(
                     "c:\\trees\\cod3\\cod3src\\src\\game\\actor.cpp",
                     699,
                     0,
                     "%s",
                     "actorFreeClientTree < ARRAY_COUNT( g_scr_data.actorXAnimClientTrees )");
+                return;
+            }
         } while (*actorXAnimClientTrees != tree);
     }
     g_scr_data.actorXAnimClientTreesInuse[v2] = 0;

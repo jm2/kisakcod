@@ -122,7 +122,7 @@ uint32_t __cdecl G_NewString(const char *string)
     v4 = str;
     for (i = 0; i < v3; ++i)
     {
-        if (string[i] == '\\' && i < v3 - 1)
+        if (i + 2 < v3 && string[i] == '\\')
         {
             if (string[++i] == 'n')
                 *v4 = '\n';
