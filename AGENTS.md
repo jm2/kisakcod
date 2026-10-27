@@ -1,19 +1,19 @@
 # AGENTS.md: operating rules
 
 Every agent (coordinator, refinery, polecat, reviewer) and every human contributor
-reads this first. The only way to close a bead is to move a KPI or pass a gate
-(`docs/NOW.md`, `docs/ROADMAP.md`). Each rule names the failure it prevents.
+reads this first. A bead closes on a bug-lane fix, a KPI move or a gate
+pass (`docs/NOW.md`, `docs/ROADMAP.md`). Each rule names the failure it prevents.
 
 ## Rules
 
-1. **Dispatch only from the `docs/NOW.md` queue.** Every bead names its gate,
-   the KPI it moves, and a done-test a reviewer can run.
+1. **Dispatch only from `docs/NOW.md`, bug lane first.** A bead names its
+   gate and KPI, or its bug issue, and a done-test a reviewer can run.
    *Prevents: work nobody asked for, and "done" nobody can check.*
 2. **Done means merged and measurable.** The bead records the merge SHA plus
-   the KPI change or the gate evidence. A service or helper is done only once
+   the KPI change, gate evidence or a bug regression test. A service or helper is done only once
    engine code in a real target calls it.
    *Prevents: helpers with no callers counted as progress.*
-3. **WIP is at most 6 beads, and at least 4 are on the current gate.**
+3. **WIP is at most 6 beads, bug lane first.**
    *Prevents: 30 half-finished beads across 14 issues.*
 4. **PRs are at most about 400 net hand-written lines.** Generated code is
    exempt if its generator is in the same PR.
@@ -47,7 +47,7 @@ reads this first. The only way to close a bead is to move a KPI or pass a gate
     Security rules stay blocking.
     *Prevents: lint-only commits on test scaffolding.*
 13. **Reviewer role.** Reject the PR if any answer is "no":
-    - Does it move the named KPI or gate?
+    - Does it fix its bug or move its KPI or gate?
     - Is it inside its bead's scope?
     - Does it avoid adding process artifacts?
     - Would its tests fail if the feature broke?
