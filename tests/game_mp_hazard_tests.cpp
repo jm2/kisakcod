@@ -7,7 +7,8 @@
 // function tables pull another subject's engine code into the link:
 //   1: g_spawn_mp, g_client_script_cmd_mp, g_combat_mp, g_player_corpse_mp,
 //      g_vehicles_mp, g_scr_vehicle;  2: g_active_mp;  3: g_utils_mp,
-//      g_main_mp, server/sv_game.
+//      g_main_mp, server/sv_game. 3 also checks that level shutdown pops the
+//      parse session held by an open scriptdata read buffer.
 // The engine boundary is weak: the engine TUs replace the stubs they define.
 
 #include <cstdarg>
@@ -548,6 +549,67 @@ static void BgCallbacksHaveTheirCallersTypes()
     CHECK(g_dobjNumModels == 2);
     CHECK(g_dobjHandle == 17u);
 }
+
+// The rest of G_ShutdownGame's engine boundary, reached now that the test
+// calls it. None of these run in the shutdown under test: level.num_entities
+// is 0 and freeScripts is 0, so the entity, tree and script paths stay empty.
+WEAK void Com_SafeServerDObjFree(uint32_t) {}
+WEAK void Com_FreeWeaponInfoMemory(int) {}
+WEAK int Com_sprintf(char *dest, uint32_t size, const char *, ...)
+{
+    if (size)
+        dest[0] = 0;
+    return 0;
+}
+WEAK XAnimTree_s *DObjGetTree(const DObj_s *) { return nullptr; }
+WEAK int32_t EntHandle::entnum() { return -1; }
+WEAK void EntHandle::Shutdown() {}
+WEAK void EntHandleDissociate(gentity_s *) {}
+WEAK uint32_t FS_Write(const char *, uint32_t, int) { return 0; }
+WEAK void FS_FCloseFile(int) {}
+WEAK void G_FreeTurret(gentity_s *) {}
+WEAK void G_VehFreeEntity(gentity_s *) {}
+WEAK void G_VehUnlinkPlayer(gentity_s *, gentity_s *) {}
+WEAK void GScr_FreeScripts() {}
+WEAK void Hunk_ClearToMarkLow(int) {}
+WEAK void HudElem_DestroyAll() {}
+WEAK void MT_Free(void *, int) {}
+WEAK void Mantle_ShutdownAnims() {}
+WEAK void Missile_FreeAttractorRefs(gentity_s *) {}
+WEAK void PlayerCorpse_Free(gentity_s *) {}
+WEAK void Scr_FreeEntity(gentity_s *) {}
+WEAK void Scr_FreeScripts(unsigned char) {}
+WEAK void Scr_ShutdownSystem(uint8_t, int) {}
+WEAK void SetClientViewAngle(gentity_s *, const float *) {}
+WEAK void SV_FreeClientScriptPers() {}
+WEAK void SV_UnlinkEntity(gentity_s *) {}
+WEAK void XAnimClearTree(XAnimTree_s *) {}
+WEAK void XAnimFreeTree(XAnimTree_s *, void (*)(void *, int)) {}
+WEAK void Z_VirtualFree(void *) {}
+WEAK bool Sys_IsMainThread() { return true; }
+WEAK bool Sys_IsRenderThread() { return false; }
+WEAK bool Sys_IsDatabaseThread() { return false; }
+WEAK void track_shutdown(int) {}
+
+// g_main_mp.cpp G_ShutdownGame: a read-mode scriptdata file holds the CSV
+// parse session until it is closed. Level shutdown must pop that session, or
+// later session-less parsers (the ban check) inherit CSV mode.
+static void ShutdownPopsOpenScriptReadSession()
+{
+    char scriptBuffer[2] = {};
+    Com_InitParse();
+    level.openScriptIOFileBuffers[0] = scriptBuffer;
+    Com_BeginParseSession("open_script_read");
+    Com_SetCSV(1);
+    CHECK(Com_GetParseThreadInfo()->parseInfoNum == 1);
+
+    G_ShutdownGame(0);
+
+    CHECK(level.openScriptIOFileBuffers[0] == nullptr);
+    CHECK(Com_GetParseThreadInfo()->parseInfoNum == 0);
+    const char *line = "GUID name";
+    CHECK(!std::strcmp(Com_Parse(&line)->token, "GUID"));
+}
 #endif
 
 int main()
@@ -569,6 +631,7 @@ int main()
     GameDataStridesMatchTheStructs();
     XAnimAllocatorHasItsCallersType();
     BgCallbacksHaveTheirCallersTypes();
+    ShutdownPopsOpenScriptReadSession();
 #endif
     std::printf("game_mp_hazard_tests: %d check(s) failed\n", g_failures);
     return g_failures ? 1 : 0;

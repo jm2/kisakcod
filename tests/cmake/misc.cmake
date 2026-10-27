@@ -783,6 +783,7 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     kisakcod_game_mp_hazard_test(game-mp-game-data-strides 3
         ${SRC_DIR}/game_mp/g_utils_mp.cpp
         ${SRC_DIR}/game_mp/g_main_mp.cpp
+        ${SRC_DIR}/universal/q_parse.cpp
         ${SRC_DIR}/server/sv_game.cpp)
 endif()
 
