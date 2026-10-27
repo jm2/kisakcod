@@ -1,6 +1,6 @@
 # NOW
 
-Last reviewed: 2026-10-27 by antec, coordinator; mbp16 on rows 58/65; 3 open PRs (#865 #866 #836)
+Last reviewed: 2026-10-27 by antec, coordinator; mbp16 on rows 58/65; 3 open PRs (#868 #867 #836)
 Current gates: G3 and G5; G4a waits on the owner; G0-G2 done
 WIP limit: 6 (at least 4 on the current gates)
 
@@ -30,13 +30,13 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 | 64 | G3 on the Linux arm64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | server PASS (linux-arm64) |
 | 65 | G3 on the macOS arm64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | server PASS at b063637b (8/8/8, 0 kicks); client half blocked-owner: needs an attached display |
 | 60 | G5 Windows ARM64: the native client plays a round, a map change and a reconnect on a fork server (#184) | G5 | gate | console text on both ends; ASan clean | M | presets/ASan link at 2e3ba835 (#815) |
-| 58 | G5 client UBSan-clean: fix the triaged client reports (flattened arrays, misaligned access, LCG overflow) | G5 | gate | a client leg logs 0 UBSan reports | M | shared-code sites fixed (#839 #845 #849 #853 #854 #856 #859 #861 #863 #864); 177f0c50: 0 ASan, 43 UBSan; #865/#866 in CI; close leg pending PR 7 |
+| 58 | G5 client UBSan-clean: fix the triaged client reports (flattened arrays, misaligned access, LCG overflow) | G5 | gate | a client leg logs 0 UBSan reports | M | shared-code sites fixed (#839 #845 #849 #852 #853 #854 #856 #859 #861 #863 #864 #865 #866); 177f0c50: 0 ASan, 43 UBSan; #868 in CI; close leg pending PR 7 |
 | 36 | G4a evidence: a stock Steam 1.8 client joins the windows-x86 server | G4a | gate | a retail client connects under the `steam18` profile; capture confirms protocol 7, gamename, shortversion (#531 table) | M | yoga: discovery, connect and 2 map changes pass; left: browser, spawn and fire, reconnect (#182) |
 | 66 | G6: the macOS `.app` bundles its runtime ([ADR-0011](decisions/0011-macos-client-bundles-its-runtime.md)) | G6 | K6 | a clean account without Homebrew plays a LAN round; `otool -L` shows no `/opt/homebrew` | L | 34 MB `.app` validated at 26cf1841; clean-account LAN remains |
 
 Other `burndown` issues are off these gates or wait on the owner.
 
-**Resume here:** #846 (b063637b, `cg_autoJoin 1`) is the production spectator route, so the rows 61/63/64/65 client halves no longer wait on #817; they need a display host. Open: #865 (trimesh), #866 (com_math), then PR 7. Windows clones need an owner sync to f99e3cb0; rows 61-65 are evidence-only. [#804](https://github.com/jm2/kisakcod/issues/804) holds host detail.
+**Resume here:** #846 (b063637b, `cg_autoJoin 1`) is the production spectator route, so the rows 61/63/64/65 client halves no longer wait on #817; they need a display host. Open: #868 (PR 7). Windows clones need an owner sync to f99e3cb0; rows 61-65 are evidence-only. [#804](https://github.com/jm2/kisakcod/issues/804) holds host detail.
 
 ## Blocked on owner
 
@@ -70,4 +70,4 @@ Merge SHAs are in `git log`.
 - G0-G2 passed (rows 46, 54, 37; #178-#180); G3's Win64 target passes (row 47).
 - 2026-10-26: #815 ARM64 presets/ASan, #812/#813 row 66 bundles, #819/#822/#823 row 58, #825/#818 intro skip, #840 pr_gate INFRA.
 - G5 interim clients pass (rows 55-57, 59); 1.8 parity and 21-map rotation pass (rows 52-53).
-- 2026-10-27: #839 #845 #849 #852 #853 #854 #856 #859 #861 #863 #864 merged (row 58 sites); #842 map hint; #846 auto-join.
+- 2026-10-27: #839 #845 #849 #852 #853 #854 #856 #859 #861 #863 #864 merged (row 58 sites); #865 e8a1f34f, #866 8799bd3e; #842 map hint; #846 auto-join.
