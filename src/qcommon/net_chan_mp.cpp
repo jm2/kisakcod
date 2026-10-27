@@ -408,10 +408,10 @@ uint32_t __cdecl FakeLag_GetFreeSlot()
             return packet;
     }
     oldest = 0;
-    oldestTime = Sys_Milliseconds();
-    for (packeta = 0; packeta < 512; ++packeta)
+    oldestTime = laggedPackets[0].startTime;
+    for (packeta = 1; packeta < 512; ++packeta)
     {
-        if (laggedPackets[packeta].outbound && laggedPackets[packeta].startTime < oldestTime)
+        if (laggedPackets[packeta].length && laggedPackets[packeta].startTime < oldestTime)
         {
             oldest = packeta;
             oldestTime = laggedPackets[packeta].startTime;

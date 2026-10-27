@@ -59,35 +59,18 @@ void __cdecl G_BroadcastVoice(gentity_s *talker, VoicePacket_t *voicePacket)
 
 bool __cdecl SV_ClientHasClientMuted(uint32_t listener, uint32_t talker)
 {
-    if (listener >= 0x40)
-        MyAssertHandler(
-            ".\\server_mp\\sv_voice_mp.cpp",
-            110,
-            0,
-            "%s\n\t(listener) = %i",
-            "(listener >= 0 && listener < 64)",
-            listener);
-    if (talker >= 0x40)
-        MyAssertHandler(
-            ".\\server_mp\\sv_voice_mp.cpp",
-            111,
-            0,
-            "%s\n\t(talker) = %i",
-            "(talker >= 0 && talker < 64)",
-            talker);
+    if (listener >= ARRAY_COUNT(svs.clients)
+        || talker >= ARRAY_COUNT(svs.clients[listener].muteList))
+    {
+        return true;
+    }
     return svs.clients[listener].muteList[talker];
 }
 
 bool __cdecl SV_ClientWantsVoiceData(uint32_t clientNum)
 {
-    if (clientNum >= 0x40)
-        MyAssertHandler(
-            ".\\server_mp\\sv_voice_mp.cpp",
-            101,
-            0,
-            "%s\n\t(clientNum) = %i",
-            "(clientNum >= 0 && clientNum < 64)",
-            clientNum);
+    if (clientNum >= ARRAY_COUNT(svs.clients))
+        return false;
     return svs.clients[clientNum].sendVoice;
 }
 
