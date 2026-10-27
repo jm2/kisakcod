@@ -1,5 +1,4 @@
 #pragma once
-#include <cstring>
 
 // Encoded HUD-icon command shared by the console/death-message writer
 // (src/client/cl_console.cpp) and the render-thread reader
@@ -11,7 +10,7 @@
 //   [2] encoded height
 //   [3] material handle, sizeof(void *) bytes
 //
-// The handle is copied with memcpy because the record is unaligned inside the
+// The handle is copied byte by byte because the record is unaligned inside the
 // console text buffer, and its width follows the pointer width of the build:
 // a 7-byte record on 32-bit (the original layout, byte-identical) and an
 // 11-byte record on 64-bit.  Reading the handle as a Material* at a fixed
@@ -34,13 +33,17 @@ constexpr int kEncodedBytes = kIntroducerBytes + kRecordBytes;
 // kHandleOffset), so a caller cannot double-apply the offset.
 inline void WriteHandle(char *handleField, const void *handle)
 {
-    std::memcpy(handleField, &handle, sizeof(handle));
+    const unsigned char *source = reinterpret_cast<const unsigned char *>(&handle);
+    for (int i = 0; i < kHandleBytes; ++i)
+        handleField[i] = static_cast<char>(source[i]);
 }
 
 inline void *ReadHandle(const char *handleField)
 {
     void *handle = nullptr;
-    std::memcpy(&handle, handleField, sizeof(handle));
+    unsigned char *destination = reinterpret_cast<unsigned char *>(&handle);
+    for (int i = 0; i < kHandleBytes; ++i)
+        destination[i] = static_cast<unsigned char>(handleField[i]);
     return handle;
 }
 }

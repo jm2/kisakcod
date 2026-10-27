@@ -899,7 +899,8 @@ char __cdecl CL_ConsolePrint_AddLine(
                 // Kisak: I screwed this up, and can't figure it out.
                 // iassert(IsValidMaterialHandle(*reinterpret_cast<Material*>(&text[CONTXTCMD_ARG_HUDICON_MATERIAL]))); // IsValidMaterialHandle( *reinterpret_cast< const MaterialHandle * >( &text[CONTXTCMD_ARG_HUDICON_MATERIAL] )
                 con.textTempLine[con.lineOffset++] = 94;
-                memcpy(&con.textTempLine[con.lineOffset], text, CONTXTCMD_LEN_HUDICON);
+                for (int k = 0; k < CONTXTCMD_LEN_HUDICON; ++k)
+                    con.textTempLine[con.lineOffset + k] = text[k];
                 con.lineOffset += CONTXTCMD_LEN_HUDICON;
                 text += CONTXTCMD_LEN_HUDICON;
                 bcassert(con.lineOffset, sizeof(con.textTempLine) + 1); // 0x201
