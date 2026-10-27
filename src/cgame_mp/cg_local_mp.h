@@ -296,7 +296,7 @@ DObj_s *__cdecl CG_PreProcess_GetDObj(int32_t localClientNum, int32_t entIndex, 
 XAnim_s *__cdecl CG_GetAnimations(int32_t localClientNum, uint32_t entIndex, int32_t entType);
 XAnim_s *__cdecl CG_GetMG42Anims(centity_s *cent);
 XAnim_s *__cdecl CG_GetHelicopterAnims(centity_s *cent);
-char *__cdecl CG_AllocAnimTree(int32_t size);
+void *__cdecl CG_AllocAnimTree(int32_t size);
 void __cdecl CG_DObjCalcBone(const cpose_t *pose, DObj_s *obj, int32_t boneIndex);
 void __cdecl CG_ClearUnion(int32_t localClientNum, centity_s *cent);
 void __cdecl CG_SetUnionType(int32_t localClientNum, centity_s *cent);

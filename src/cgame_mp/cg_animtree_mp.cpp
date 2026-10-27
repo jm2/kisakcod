@@ -49,7 +49,7 @@ void __cdecl CG_SafeDObjFree(int32_t localClientNum, int32_t entIndex)
     cent = CG_GetEntity(localClientNum, entIndex);
     if (cent->tree)
     {
-        XAnimFreeTree(cent->tree, (void(__cdecl *)(void *, int))MT_Free);
+        XAnimFreeTree(cent->tree, MT_Free);
         cent->tree = 0;
     }
 }

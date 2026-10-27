@@ -1330,7 +1330,7 @@ DObj_s *__cdecl CG_PreProcess_GetDObj(int32_t localClientNum, int32_t entIndex, 
             MyAssertHandler(".\\cgame_mp\\cg_ents_mp.cpp", 1568, 0, "%s", "!cent->tree");
         anims = CG_GetAnimations(localClientNum, entIndex, entType);
         if (anims)
-            Tree = XAnimCreateTree(anims, (void *(__cdecl *)(int))CG_AllocAnimTree);
+            Tree = XAnimCreateTree(anims, CG_AllocAnimTree);
         else
             Tree = 0;
         animTree = Tree;
@@ -1401,9 +1401,9 @@ XAnim_s *__cdecl CG_GetHelicopterAnims(centity_s *cent)
     return pAnims;
 }
 
-char *__cdecl CG_AllocAnimTree(int32_t size)
+void *__cdecl CG_AllocAnimTree(int32_t size)
 {
-    return (char*)MT_Alloc(size, MT_TYPE_SMALL_ANIM_TREE);
+    return MT_Alloc(size, MT_TYPE_SMALL_ANIM_TREE);
 }
 
 void __cdecl CG_DObjCalcBone(const cpose_t *pose, DObj_s *obj, int32_t boneIndex)
