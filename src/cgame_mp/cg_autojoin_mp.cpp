@@ -46,3 +46,26 @@ cgAutoJoinKind_t CG_AutoJoinResponse(const cgAutoJoinRules_t &rules, const char 
     }
     return CG_AUTOJOIN_NONE;
 }
+
+void CG_AutoJoinResetAnswers(cgAutoJoinAnswerState_t *state)
+{
+    if (!state)
+        return;
+    state->serverId = 0;
+    memset(state->answeredMenus, 0, sizeof(state->answeredMenus));
+}
+
+bool CG_AutoJoinClaimAnswer(cgAutoJoinAnswerState_t *state, int32_t serverId, uint32_t menuIndex)
+{
+    if (!state || menuIndex >= sizeof(state->answeredMenus))
+        return false;
+    if (serverId != state->serverId)
+    {
+        state->serverId = serverId;
+        memset(state->answeredMenus, 0, sizeof(state->answeredMenus));
+    }
+    if (state->answeredMenus[menuIndex])
+        return false;
+    state->answeredMenus[menuIndex] = 1;
+    return true;
+}

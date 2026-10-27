@@ -65,6 +65,40 @@ int main()
     CheckResponse(classOnly, "spectatemenu", CG_AUTOJOIN_TEAM, "free",
                   "the configured prefix is what matches");
 
+    cgAutoJoinAnswerState_t answers;
+    CG_AutoJoinResetAnswers(&answers);
+    if (!CG_AutoJoinClaimAnswer(&answers, 7, 8))
+    {
+        std::printf("FAIL: the first answer to a slot is claimed\n");
+        ++failures;
+    }
+    if (CG_AutoJoinClaimAnswer(&answers, 7, 8))
+    {
+        std::printf("FAIL: the same slot is not answered twice for one server id\n");
+        ++failures;
+    }
+    if (!CG_AutoJoinClaimAnswer(&answers, 7, 15))
+    {
+        std::printf("FAIL: a different slot is still answered\n");
+        ++failures;
+    }
+    if (!CG_AutoJoinClaimAnswer(&answers, 8, 8))
+    {
+        std::printf("FAIL: a new server id clears the answered slots\n");
+        ++failures;
+    }
+    CG_AutoJoinResetAnswers(&answers);
+    if (!CG_AutoJoinClaimAnswer(&answers, 8, 8))
+    {
+        std::printf("FAIL: a new connection answers the same slot again\n");
+        ++failures;
+    }
+    if (CG_AutoJoinClaimAnswer(&answers, 8, 32))
+    {
+        std::printf("FAIL: an out-of-range menu slot is never claimed\n");
+        ++failures;
+    }
+
     if (failures)
     {
         std::printf("cg autojoin: %i checks failed\n", failures);

@@ -1090,6 +1090,8 @@ void __cdecl CG_AddToTeamChat(int32_t localClientNum, const char *str)
 // never sets sessionstate "playing" and never calls ClientSpawn. Answer the
 // configured join menus here with the same "mr" the menu system sends
 // (Script_ScriptMenuResponse). Mode 2 only logs the menu names.
+static cgAutoJoinAnswerState_t cg_autoJoinAnswers;
+
 static bool CG_AutoJoinScriptMenu(int32_t localClientNum, uint32_t menuIndex, const char *menuName)
 {
     if (!cg_autoJoin || !cg_autoJoin->current.integer)
@@ -1100,16 +1102,9 @@ static bool CG_AutoJoinScriptMenu(int32_t localClientNum, uint32_t menuIndex, co
         return false;
     }
 
-    // One answer per menu slot per server id, so a wrong response cannot loop.
-    static int32_t answeredServerId;
-    static uint8_t answeredMenus[32];
+    cgAutoJoinAnswerState_t &answers = cg_autoJoinAnswers;
     const int32_t serverId = Dvar_GetInt("sv_serverid");
-    if (serverId != answeredServerId)
-    {
-        answeredServerId = serverId;
-        memset(answeredMenus, 0, sizeof(answeredMenus));
-    }
-    if (menuIndex >= 32 || answeredMenus[menuIndex])
+    if (menuIndex >= sizeof(answers.answeredMenus))
         return false;
 
     const cgAutoJoinRules_t rules = {
@@ -1141,13 +1136,21 @@ static bool CG_AutoJoinScriptMenu(int32_t localClientNum, uint32_t menuIndex, co
             }
         }
     }
-    if (targetIndex < 0 || targetIndex >= 32 || answeredMenus[targetIndex])
+    if (targetIndex < 0 || static_cast<uint32_t>(targetIndex) >= sizeof(answers.answeredMenus))
+        return false;
+    if (!CG_AutoJoinClaimAnswer(&answers, serverId, static_cast<uint32_t>(targetIndex)))
         return false;
 
-    answeredMenus[targetIndex] = 1;
     Cbuf_AddText(localClientNum, va("cmd mr %i %i %s\n", serverId, targetIndex, response));
     Com_Printf(14, "autojoin: answered '%s' index %i with '%s'\n", menuName, targetIndex, response);
     return true;
+}
+
+// #817: a reconnect to the same server keeps sv_serverid, so the static answer
+// state above would otherwise still be set from the previous connection.
+void CG_AutoJoinResetConnection()
+{
+    CG_AutoJoinResetAnswers(&cg_autoJoinAnswers);
 }
 
 void __cdecl CG_OpenScriptMenu(int32_t localClientNum)

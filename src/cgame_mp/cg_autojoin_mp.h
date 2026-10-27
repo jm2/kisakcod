@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 // #817: a client that connects from the command line has no UI, so nothing
 // ever answers the script menus that drive team and class selection. The game
 // script then never sets sessionstate "playing", never calls ClientSpawn, and
@@ -17,6 +19,15 @@ struct cgAutoJoinRules_t
     const char *classResponse;    // e.g. "assault_mp,0"
 };
 
+// One answer per menu slot per server id, so a wrong response cannot loop.
+// The state is per connection: CG_Init clears it, and a changed server id
+// (map restart) clears it again.
+struct cgAutoJoinAnswerState_t
+{
+    int32_t serverId;
+    uint8_t answeredMenus[32];
+};
+
 enum cgAutoJoinKind_t
 {
     CG_AUTOJOIN_NONE,
@@ -29,3 +40,14 @@ enum cgAutoJoinKind_t
 // empty response disables that step.
 cgAutoJoinKind_t CG_AutoJoinResponse(const cgAutoJoinRules_t &rules, const char *menuName,
                                      const char **response);
+
+// Clears every answered slot, so a new connection answers its join menus.
+void CG_AutoJoinResetAnswers(cgAutoJoinAnswerState_t *state);
+
+// Claims `menuIndex` for `serverId`. Returns false when it was already
+// answered, which is what keeps a response from being sent twice.
+bool CG_AutoJoinClaimAnswer(cgAutoJoinAnswerState_t *state, int32_t serverId, uint32_t menuIndex);
+
+// Called from CG_Init: a new connection must answer its join menus even when
+// it reconnects to the same server id.
+void CG_AutoJoinResetConnection();

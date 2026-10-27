@@ -4,6 +4,7 @@
 
 #include "cg_local_mp.h"
 #include "cg_public_mp.h"
+#include "cg_autojoin_mp.h"
 #include <universal/surfaceflags.h>
 #include <ui_mp/ui_mp.h>
 #include <qcommon/mem_track.h>
@@ -1706,6 +1707,8 @@ void __cdecl CG_Init(int32_t localClientNum, int32_t serverMessageNum, int32_t s
     char mapname[68]; // [esp+28h] [ebp-48h] BYREF
 
     iassert(Sys_IsMainThread());
+
+    CG_AutoJoinResetConnection();
 
     cg_s *cgameGlob = CG_GetLocalClientGlobals(localClientNum);
     cgs_t *cgs = CG_GetLocalClientStaticGlobals(localClientNum);
