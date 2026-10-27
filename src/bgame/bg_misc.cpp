@@ -180,7 +180,7 @@ const char *bg_soundRoomTypes[27] =
     "stoneroom",
     "auditorium",
     "concerthall",
-    "cave"
+    "cave",
     "arena",
     "hangar",
     "carpetedhallway",

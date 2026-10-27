@@ -662,16 +662,19 @@ void __cdecl Mantle_CapView(playerState_s *ps)
     if (mantle_enable->current.enabled)
     {
         delta = AngleDelta(ps->mantleState.yaw, ps->viewangles[1]);
-        if (delta < -mantle_view_yawcap->current.value || mantle_view_yawcap->current.value < (double)delta)
+        float yawcap = mantle_view_yawcap->current.value;
+        if (yawcap <= 0.0f)
+            yawcap = 1.0f;
+        if (delta < -yawcap || yawcap < (double)delta)
         {
-            while (delta < -mantle_view_yawcap->current.value)
-                delta = delta + mantle_view_yawcap->current.value;
-            while (mantle_view_yawcap->current.value < (double)delta)
-                delta = delta - mantle_view_yawcap->current.value;
+            while (delta < -yawcap)
+                delta = delta + yawcap;
+            while (yawcap < (double)delta)
+                delta = delta - yawcap;
             if (delta <= 0.0)
-                value = mantle_view_yawcap->current.value;
+                value = yawcap;
             else
-                value = -mantle_view_yawcap->current.value;
+                value = -yawcap;
             ps->delta_angles[1] = ps->delta_angles[1] + delta;
             ps->viewangles[1] = AngleNormalize360(ps->mantleState.yaw + value);
         }

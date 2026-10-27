@@ -657,7 +657,7 @@ int32_t __cdecl BG_ExecuteCommand(
     if (scriptCommand->bodyPart[1])
     {
         duration = scriptCommand->animDuration[0] + 50;
-        if (scriptCommand->bodyPart[0] == 1 || scriptCommand->bodyPart[0] == 3)
+        if (scriptCommand->bodyPart[1] == 1 || scriptCommand->bodyPart[1] == 3)
             playedLegsAnim = BG_PlayAnim(
                 ps,
                 scriptCommand->animIndex[1],
@@ -711,11 +711,11 @@ int32_t __cdecl BG_AnimScriptAnimation(playerState_s *ps, aistateEnum_t state, s
         {
             scriptItem = BG_FirstValidItem(ps->clientNum, &globalScriptData->scriptAnims[state][movetype]);
             if (!scriptItem)
-                state = state--;
+                state--;
         }
         else
         {
-            state = state--;
+            state--;
         }
     }
     if (scriptItem)
@@ -1044,8 +1044,9 @@ void __cdecl BG_SetConditionValue(uint32_t client, uint32_t condition, uint64_t 
     iassert(client < 0x40u);
 
     conditions = bgs->clientinfo[client].clientConditions[condition];
+    const uint32_t oldConditions[2] = { conditions[0], conditions[1] };
     conditions[0] = (uint32_t)value; conditions[1] = HIDWORD(value); // KISAK: the pair is 4-byte aligned on 64-bit
-    if ((*conditions != (uint32_t)value || conditions[1] != HIDWORD(value)) && G_IsServerGameSystem(client))
+    if ((oldConditions[0] != (uint32_t)value || oldConditions[1] != HIDWORD(value)) && G_IsServerGameSystem(client))
     {
         iassert(client < 0x40u);
 

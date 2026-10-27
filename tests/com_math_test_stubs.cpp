@@ -24,7 +24,8 @@ void track_static_alloc_internal(void *, int, const char *, int)
 
 char *QDECL va(const char *, ...)
 {
-    return nullptr;
+    static char text[1] = {};
+    return text;
 }
 
 void AngleVectors(const float *, float *, float *, float *)

@@ -344,7 +344,8 @@ uint32_t __cdecl PM_GroundSurfaceType(pml_t *pml)
 
     iSurfType = (pml->groundTrace.surfaceFlags & 0x1F00000) >> 20;
 
-    iassert(iSurfType < SURF_TYPECOUNT);
+    if (iSurfType >= SURF_TYPECOUNT)
+        iSurfType = SURF_TYPECOUNT - 1;
 
     return iSurfType;
 }
@@ -3664,13 +3665,12 @@ double __cdecl PM_ViewHeightTableLerp(int32_t iFrac, viewLerpWaypoint_s *pTable,
             }
             pCurr = &pTable[++i];
         } while (pCurr->iFrac != -1);
-        if (!va("No encapsulating table entries found for fraction %i", iFrac))
-            MyAssertHandler(
-                ".\\bgame\\bg_pmove.cpp",
-                2187,
-                0,
-                "%s",
-                "va( \"No encapsulating table entries found for fraction %i\", iFrac )");
+        MyAssertHandler(
+            ".\\bgame\\bg_pmove.cpp",
+            2187,
+            0,
+            "%s",
+            va("No encapsulating table entries found for fraction %i", iFrac));
         *pfPosOfs = (float)pTable->iOffset;
         return pTable->fViewHeight;
     }

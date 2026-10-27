@@ -13,6 +13,7 @@
 #include <xanim/xanim.h>
 
 #include <cmath>
+#include <csignal>
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
@@ -20,6 +21,7 @@
 #include <deque>
 #include <limits>
 #include <memory>
+#include <unistd.h>
 #include <vector>
 
 // bg_mantle.cpp's globals; no header declares them.
@@ -273,8 +275,19 @@ void TestCapView()
     ps->viewangles[1] = 100.0f;
     Mantle_CapView(ps.get());
     Check(Near(ps->viewangles[1], 60.0, 1e-3), "a turn past the cap is held at 60 degrees");
+    const_cast<dvar_t *>(mantle_view_yawcap)->current.value = 0.0f;
+    ps->delta_angles[1] = 0.0f;
+    ps->viewangles[1] = 30.0f;
+    Mantle_CapView(ps.get());
+    Check(Near(ps->viewangles[1], 1.0, 1e-3), "a zero yawcap is clamped positive");
 }
 } // namespace
+
+void OnAlarm(int)
+{
+    std::fputs("FAIL mantle test timed out (likely a zero-yawcap loop)\n", stderr);
+    std::_Exit(1);
+}
 
 // The engine boundary bg_mantle.cpp and the pmove trace reach.
 void MyAssertHandler(const char *file, int line, int, const char *fmt, ...)
@@ -384,6 +397,8 @@ int32_t __cdecl BG_AnimScriptEvent(playerState_s *, scriptAnimEventTypes_t, int3
 
 int main()
 {
+    std::signal(SIGALRM, OnAlarm);
+    alarm(15);
     Mantle_RegisterDvars();
     s_mantleAnims = reinterpret_cast<XAnim_s *>(g_animStorage);
     TestDefaultsAndTransitions();
