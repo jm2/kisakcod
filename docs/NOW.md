@@ -28,14 +28,14 @@ rule-4 PRs, each with a test that fails without the fix; new crash bugs join by 
 | --- | --- | --- |
 | 1 | #238 ODE aborts: full 4096-contact group, live asserts | merged d4e17dc7 (#880) |
 | 2 | #243 physics: near-callback context, contacts, stepper | items 2-3: 3a3514e0, 0d48c880 |
-| 3 | #214 game_mp vehicles: wheel overflow, strings, heli NULLs | items 1-4: 9ab79d3e; item 5 blocked-owner |
+| 3 | #214 game_mp vehicles: wheel overflow, strings, heli NULLs | 1-4: 9ab79d3e; 5 blocked-owner |
 | 4 | #260 dynent pieces never destroyed; stale bodies on map change | merged 6b97554f (#876) |
 | 5 | #258 game: hintStrings, vehicle table overflow, heli events | merged dc92ed86 (#874) |
 | 6 | #219 xanim: blend nodes eval first child twice; buf_cursor | merged ef205cbb (#878) |
-| 7 | #209 qcommon/server: FS_FileTell NULL, fake-lag, voice-mute | merged 13c71759 (#875) |
+| 7 | #209 qcommon/server: FS_FileTell NULL, fake-lag, voice-mute | items 2-3: 13c71759; item 1 deferred |
 | 8 | #198 bounds: GSC compiler, sound-alias, menu, map-name | fixed by #808; closed |
 | 9 | #195 decompiler artifacts write wrong object | sized; fixing items 2-3, 5-8, 10 |
-| 10 | #206 #205 #204 #217 #220 #200 #207 #208 #230 | sized; #207 fixed; #204/#205 dispatched |
+| 10 | #206 #205 #204 #217 #220 #200 #207 #208 #230 | sized; #207 fixed; #204/#205 out |
 
 ## Queue
 
