@@ -3066,7 +3066,7 @@ bool __cdecl MT_RemoveMemoryNode(int oldNode, uint32_t size)
     return removed;
 }
 
-void MT_Free(byte* p, int numBytes)
+void MT_Free(void* p, int numBytes)
 {
     uint32_t nodeNum = 0;
     MT_LegacyFreeAttempt attempt{};

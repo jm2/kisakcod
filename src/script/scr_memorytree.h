@@ -385,7 +385,7 @@ void MT_FreeIndex(uint32_t nodeNum, int numBytes);
 // Performs one report-free exhaustive allocator preflight without mutation.
 [[nodiscard]] bool MT_TryValidateState() noexcept;
 
-void MT_Free(unsigned char* p, int numBytes);
+void MT_Free(void* p, int numBytes);
 bool MT_Realloc(int oldNumBytes, int newNumbytes);
 
 void MT_Init(void);
