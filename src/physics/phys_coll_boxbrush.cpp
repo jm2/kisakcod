@@ -2548,8 +2548,8 @@ void __cdecl Phys_GetPlaneForTriangle(const float (*triangle)[3], float *result)
 {
     float triangleEdge[2][3]; // [esp+Ch] [ebp-18h] BYREF
 
-    Vec3Sub((const float *)triangle, &(*triangle)[3], triangleEdge[0]);
-    Vec3Sub(&(*triangle)[6], (const float *)triangle, triangleEdge[1]);
+    Vec3Sub((const float *)triangle, &triangle[1][0], triangleEdge[0]);
+    Vec3Sub(&triangle[2][0], (const float *)triangle, triangleEdge[1]);
     Vec3Cross(triangleEdge[0], triangleEdge[1], result);
     Vec3Normalize(result);
     result[3] = Vec3Dot((const float *)triangle, result);
@@ -2592,10 +2592,10 @@ double __cdecl Phys_TestTriangleAgainstBrushPlane(const float *brushPlane, const
     float triangleNormal[3]; // [esp+0h] [ebp-24h] BYREF
     float triangleEdge[2][3]; // [esp+Ch] [ebp-18h] BYREF
 
-    Vec3Sub(&(*triangle)[3], (const float *)triangle, triangleEdge[0]);
+    Vec3Sub(&triangle[1][0], (const float *)triangle, triangleEdge[0]);
     if (Vec3LengthSq(triangleEdge[0]) <= 0.009999999776482582)
         return Phys_TestVertsAgainstPlane(triangle, 3u, brushPlane);
-    Vec3Sub(&(*triangle)[6], (const float *)triangle, triangleEdge[1]);
+    Vec3Sub(&triangle[2][0], (const float *)triangle, triangleEdge[1]);
     if (Vec3LengthSq(triangleEdge[1]) <= 0.009999999776482582)
         return Phys_TestVertsAgainstPlane(triangle, 3u, brushPlane);
     Vec3Cross(triangleEdge[1], triangleEdge[0], triangleNormal);

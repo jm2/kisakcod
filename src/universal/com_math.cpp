@@ -2586,9 +2586,9 @@ void __cdecl AxisToSignedAngles(const float (*axis)[3], float *angles)
     float fSin; // [esp+34h] [ebp-4h]
 
     vectosignedangles((const float *)axis, angles);
-    right[0] = (*axis)[3];
-    right[1] = (*axis)[4];
-    right[2] = (*axis)[5];
+    right[0] = axis[1][0];
+    right[1] = axis[1][1];
+    right[2] = axis[1][2];
     //rad = COERCE_FLOAT(*((_DWORD *)angles + 1) ^ _mask__NegFloat_) * 0.017453292;
     rad = (float)((float)-angles[1] * (float)0.017453292);
     fCos = cos(rad);

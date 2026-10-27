@@ -1201,6 +1201,36 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_tests_properties(cg-register-weapon-contracts PROPERTIES TIMEOUT 20)
 endif()
 
+# CG_DrawRotatedQuadPic (cgame/cg_drawtools.cpp) at 64-bit: the four rows of
+# the quad. The decompile indexed the 2-float rows through (*verts)[2 * i],
+# which UBSan rejects as an out-of-bounds row index even though the address is
+# inside the array. --gc-sections drops the rest of the cgame TU.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-cg-drawtools-rotated-quad-tests
+        cg_drawtools_rotated_quad_tests.cpp
+        ${SRC_DIR}/cgame/cg_drawtools.cpp
+    )
+    target_include_directories(kisakcod-cg-drawtools-rotated-quad-tests
+        SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-cg-drawtools-rotated-quad-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-cg-drawtools-rotated-quad-tests PRIVATE KISAK_MP UNIX)
+    target_compile_options(kisakcod-cg-drawtools-rotated-quad-tests PRIVATE
+        -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-cg-drawtools-rotated-quad-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-cg-drawtools-rotated-quad-tests PRIVATE
+            -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-cg-drawtools-rotated-quad-tests PRIVATE
+            -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-cg-drawtools-rotated-quad-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME cg-drawtools-rotated-quad-contracts
+        COMMAND kisakcod-cg-drawtools-rotated-quad-tests)
+    set_tests_properties(cg-drawtools-rotated-quad-contracts PROPERTIES TIMEOUT 20)
+endif()
+
 # The developer GUI's menu table (devgui/devgui.cpp) at 64-bit: its free
 # chain and handle stride. Linux and clang only, as above; the client's defines.
 if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8

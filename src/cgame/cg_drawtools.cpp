@@ -137,13 +137,13 @@ void __cdecl CG_DrawRotatedQuadPic(
     for (i = 0; i < 4; ++i)
     {
         v14 = x * scrPlace->scaleRealToVirtual[0];
-        v13 = (float)(*verts)[2 * i] * scrPlace->scaleRealToVirtual[0];
-        v12 = (float)(*verts)[2 * i + 1] * scrPlace->scaleRealToVirtual[1];
+        v13 = (float)verts[i][0] * scrPlace->scaleRealToVirtual[0];
+        v12 = (float)verts[i][1] * scrPlace->scaleRealToVirtual[1];
         v8 = c * v13 + v14 - s * v12;
         xy[i][0] = scrPlace->scaleVirtualToReal[0] * v8;
         v11 = y * scrPlace->scaleRealToVirtual[1];
-        v10 = (float)(*verts)[2 * i] * scrPlace->scaleRealToVirtual[0];
-        v9 = (float)(*verts)[2 * i + 1] * scrPlace->scaleRealToVirtual[1];
+        v10 = (float)verts[i][0] * scrPlace->scaleRealToVirtual[0];
+        v9 = (float)verts[i][1] * scrPlace->scaleRealToVirtual[1];
         v7 = c * v9 + s * v10 + v11;
         xy[i][1] = scrPlace->scaleVirtualToReal[1] * v7;
     }

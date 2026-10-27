@@ -25,6 +25,7 @@
 //      error through Com_Error (#238 item 2).
 // The engine boundary is weak: the engine TUs replace the stubs they define.
 
+#include <cfloat>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -237,6 +238,22 @@ void CheckContacts(const char *what, PhysicsGeomType type, bool terrain, int fla
     if (g_failures != before)
         std::fprintf(stderr, "%s: %d contacts\n", what, results.contactCount);
 }
+
+// Phys_GetPlaneForTriangle and Phys_TestTriangleAgainstBrushPlane read the
+// vertex triple's rows 1 and 2. The decompile reached them as (*triangle)[3]
+// and (*triangle)[6], past the first row's three floats.
+void CheckTrianglePlaneRows()
+{
+    const float triangle[3][3] = {{0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}};
+    float plane[4] = {9.0f, 9.0f, 9.0f, 9.0f};
+    Phys_GetPlaneForTriangle(triangle, plane);
+    CHECK(Near(plane[0], 0.0f) && Near(plane[1], 0.0f) && Near(plane[2], -1.0f) &&
+          Near(plane[3], 0.0f));
+
+    // A front-facing plane returns before the routine walks the verts.
+    const float brushPlane[4] = {0.0f, 0.0f, -1.0f, 0.0f};
+    CHECK(Phys_TestTriangleAgainstBrushPlane(brushPlane, triangle) == -FLT_MAX);
+}
 }  // namespace
 
 // Phys_TestAgainstEntities' boundary: three entities in the area, and a
@@ -278,6 +295,7 @@ void CheckEntityCapacity()
 
 int main()
 {
+    CheckTrianglePlaneRows();
     CheckEntityCapacity();
     BuildWorld();
     CheckContacts("box on brush", PHYS_GEOM_BOX, false, kFloorFlags);
