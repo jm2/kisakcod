@@ -11,6 +11,7 @@
 // The engine boundary is weak: the engine TUs replace the stubs they define.
 
 #include <cstdarg>
+#include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -28,10 +29,13 @@
 #include <server_mp/server_mp.h>
 
 extern gclient_s g_clients[64];
+extern short s_numVehicleInfos;
 
 namespace
 {
 int g_failures = 0;
+int g_comErrors = 0;
+bool g_allowComErrorReturn = false;
 #define CHECK(expr) \
     ((expr) ? void() : (void)(std::fprintf(stderr, "line %d: CHECK(%s)\n", __LINE__, #expr), ++g_failures))
 
@@ -92,8 +96,37 @@ WEAK void MyAssertHandler(const char *filename, int line, int, const char *, ...
     std::fprintf(stderr, "engine assert at %s:%d\n", filename ? filename : "?", line);
     std::exit(3);
 }
-WEAK void Com_Error(errorParm_t, const char *, ...) { std::fprintf(stderr, "Com_Error\n"); std::exit(2); }
+WEAK void Com_Error(errorParm_t, const char *, ...)
+{
+    ++g_comErrors;
+    if (g_allowComErrorReturn)
+        return;
+    std::fprintf(stderr, "Com_Error\n");
+    std::exit(2);
+}
 WEAK void Com_Printf(int, const char *, ...) {}
+WEAK char *Com_LoadInfoString(char *, const char *, const char *, char *loadBuffer) { return loadBuffer; }
+WEAK bool ParseConfigStringToStruct(
+    uint8_t *, const cspField_t *, int, char *, int,
+    int (__cdecl *)(uint8_t *, const char *, const int),
+    void (__cdecl *)(uint8_t *, const char *))
+{
+    return true;
+}
+WEAK void BG_StringCopy(uint8_t *, const char *) {}
+WEAK int G_SoundAliasIndex(char *) { return 0; }
+WEAK int I_stricmp(const char *lhs, const char *rhs)
+{
+    while (*lhs && *rhs)
+    {
+        const int left = std::tolower(static_cast<unsigned char>(*lhs++));
+        const int right = std::tolower(static_cast<unsigned char>(*rhs++));
+        if (left != right)
+            return left - right;
+    }
+    return std::tolower(static_cast<unsigned char>(*lhs))
+        - std::tolower(static_cast<unsigned char>(*rhs));
+}
 
 WEAK void Scr_AddConstString(uint32_t value)
 {
@@ -396,6 +429,44 @@ static void GetEntWithAClientFieldFindsNothing()
     g_numParam = 1;
 }
 
+// #258 item 1: hintStrings must carry retail's fifth entry. The MP consumers
+// (GScr_SetCursorHint, trigger_use cursorhint) loop to index 4, so a four-entry
+// table is an out-of-bounds read. This is the compiled table every game TU gets
+// from game_public.h; the consumer functions themselves need the script VM.
+static void HintTableIncludesFriendly()
+{
+    constexpr std::size_t count = sizeof(hintStrings) / sizeof(hintStrings[0]);
+    CHECK(count == 5);
+    if (count == 5)
+    {
+        CHECK(!std::strcmp(hintStrings[4], "HINT_FRIENDLY"));
+        CHECK(!std::strcmp(hintStrings[3], "HINT_HEALTH"));
+    }
+}
+
+// #258 item 2: the MP G_LoadVehicle writes the next s_vehicleInfos slot before
+// it bumps s_numVehicleInfos. The 33rd distinct type must be an ERR_DROP, not a
+// write past the 32-entry table (which an ASan build reports as a global
+// overflow and a release build silently corrupts).
+static void VehicleTableRejectsThe33rdType()
+{
+    s_numVehicleInfos = 0;
+    char name[32];
+    for (int i = 0; i < 32; ++i)
+    {
+        std::snprintf(name, sizeof(name), "test_vehicle_%i", i);
+        CHECK(G_LoadVehicle(name) == i);
+    }
+    CHECK(s_numVehicleInfos == 32);
+
+    g_comErrors = 0;
+    g_allowComErrorReturn = true;
+    CHECK(G_LoadVehicle("test_vehicle_32") == 0);
+    g_allowComErrorReturn = false;
+    CHECK(g_comErrors == 1);
+    CHECK(s_numVehicleInfos == 32);
+}
+
 #elif GAME_MP_HAZARD_SUBJECT == 2
 // g_active_mp.cpp G_TouchTriggers: the touched trigger's own handler runs.
 static void TriggersDispatchTheirOwnHandler()
@@ -490,6 +561,8 @@ int main()
     GroundTraceKeepsTheWholeTrace();
     VehicleUnlinkHandlesUnseatedAndFreed();
     GetEntWithAClientFieldFindsNothing();
+    HintTableIncludesFriendly();
+    VehicleTableRejectsThe33rdType();
 #elif GAME_MP_HAZARD_SUBJECT == 2
     TriggersDispatchTheirOwnHandler();
 #elif GAME_MP_HAZARD_SUBJECT == 3
