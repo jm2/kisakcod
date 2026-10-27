@@ -895,6 +895,22 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_target_properties(kisakcod-client-input-buffer-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME client-input-buffers COMMAND kisakcod-client-input-buffer-tests)
     set_tests_properties(client-input-buffers PROPERTIES TIMEOUT 20)
+
+    add_executable(kisakcod-cubemap-shot-tests cubemap_shot_tests.cpp
+        ${SRC_DIR}/client_mp/cl_scrn_mp.cpp)
+    target_compile_definitions(kisakcod-cubemap-shot-tests PRIVATE KISAK_MP UNIX)
+    target_include_directories(kisakcod-cubemap-shot-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    add_dependencies(kisakcod-cubemap-shot-tests update_build_number)
+    target_compile_features(kisakcod-cubemap-shot-tests PRIVATE cxx_std_20)
+    target_compile_options(kisakcod-cubemap-shot-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-cubemap-shot-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-cubemap-shot-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-cubemap-shot-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-cubemap-shot-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME cubemap-shot COMMAND kisakcod-cubemap-shot-tests)
+    set_tests_properties(cubemap-shot PROPERTIES TIMEOUT 20)
 endif()
 
 # 64-bit pointer truncations on headless server paths (WS-3 silent hazards):

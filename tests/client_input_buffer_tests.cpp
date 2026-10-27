@@ -12,8 +12,11 @@
 
 #include <client/client.h>
 #include <client_mp/client_mp.h>
+#include <gfx_d3d/r_font.h>
 #include <qcommon/cmd.h>
 #include <qcommon/qcommon.h>
+#include <qcommon/threads.h>
+#include <stringed/stringed_hooks.h>
 #include <universal/q_shared.h>
 
 #define WEAK __attribute__((weak))
@@ -29,13 +32,18 @@ std::vector<std::string> g_args;
 std::string g_sent;
 dvar_s g_masterName{};
 dvar_s g_masterPort{};
+dvar_s g_developer{};
+const char g_empty[] = "";
 } // namespace
 
 void __cdecl CL_GlobalServers_f();
 
 clientStatic_t cls;
+clientActive_t clients[STATIC_MAX_LOCAL_CLIENTS];
+ScreenPlacement scrPlaceView[1];
 const dvar_t *com_masterServerName;
 const dvar_t *com_masterPort;
+const dvar_t *com_developer;
 
 WEAK int32_t __cdecl SEH_GetCurrentLanguage() { return g_language; }
 WEAK int __cdecl Cmd_Argc() { return static_cast<int>(g_args.size()); }
@@ -57,6 +65,39 @@ WEAK void __cdecl Key_KeynumToStringBuf(int keynum, char *buf, int buflen)
     std::snprintf(buf, static_cast<std::size_t>(buflen), "%c", keynum);
 }
 WEAK void __cdecl MyAssertHandler(const char *, int, int, const char *, ...) {}
+WEAK bool __cdecl Con_IsChannelOpen(uint32_t) { return true; }
+WEAK bool __cdecl Con_IsChannelVisible(print_msg_dest_t dest, uint32_t, int32_t)
+{
+    return dest == CON_DEST_CONSOLE;
+}
+WEAK uint32_t __cdecl SEH_ReadCharFromString(const char **text, int *)
+{
+    const uint32_t c = static_cast<unsigned char>(**text);
+    ++*text;
+    return c;
+}
+WEAK uint32_t __cdecl SEH_DecodeLetter(uint32_t firstChar, uint32_t, int *usedCount, int *)
+{
+    *usedCount = 1;
+    return firstChar;
+}
+WEAK const char *__cdecl R_TextLineWrapPosition(const char *text, int, int, Font_s *, float)
+{
+    constexpr std::size_t kMaxScan = 4096;
+    std::size_t length = 0;
+    while (length < kMaxScan && text[length] != '\0')
+        ++length;
+    if (length == 0)
+        return g_empty;
+    return text + length - 1;
+}
+WEAK Font_s *__cdecl UI_GetFontHandle(const ScreenPlacement *, int, float) { return nullptr; }
+WEAK double __cdecl R_NormalizedTextScale(Font_s *, float) { return 1.0; }
+WEAK void *__cdecl Sys_GetValue(int)
+{
+    static va_info_t info{};
+    return &info;
+}
 
 namespace
 {
@@ -153,6 +194,40 @@ void TestConsoleCopyBounded()
     }
 }
 
+// A wrapped coloured line re-emits its colour into textTempLine, the source
+// Con_CopyCurrentConsoleLineText copies; consoleText is history and must not be
+// touched.
+void TestWrappedColorStaysInCurrentLine()
+{
+    std::memset(&con, 0, sizeof(con));
+    std::memset(&g_developer, 0, sizeof(g_developer));
+    com_developer = &g_developer;
+    clients[0].serverTime = 1000;
+    Con_InitMessageWindow(
+        &con.consoleWindow,
+        con.consoleMessages,
+        con.consoleLines,
+        con.consoleText,
+        16,
+        0,
+        static_cast<int32_t>(sizeof(con.consoleText)),
+        0,
+        1,
+        1);
+    con.visiblePixelWidth = 100;
+    con.prevChannel = 0;
+    con.lineOffset = 0;
+    std::memset(con.consoleText, 'x', sizeof(con.consoleText));
+    std::memset(con.textTempLine, 0x5a, sizeof(con.textTempLine));
+
+    CL_ConsolePrint_AddLine(0, 0, "ABC", 1000, 100, '2', 0);
+
+    CHECK(con.consoleText[0] == 'A');
+    CHECK(con.consoleText[1] == 'B');
+    CHECK(con.textTempLine[0] == '^');
+    CHECK(con.textTempLine[1] == '2');
+}
+
 // Long keyword lists are cut at the command buffer instead of overrunning it.
 void TestGlobalServersBounded()
 {
@@ -178,6 +253,7 @@ int main()
     TestBindingsStayInBuffer();
     TestSecondBindingSlotsBounded();
     TestConsoleCopyBounded();
+    TestWrappedColorStaysInCurrentLine();
     TestGlobalServersBounded();
     if (g_failures)
     {
