@@ -10,7 +10,7 @@ pass (`docs/NOW.md`, `docs/ROADMAP.md`). Each rule names the failure it prevents
    gate and KPI, or its bug issue, and a done-test a reviewer can run.
    *Prevents: work nobody asked for, and "done" nobody can check.*
 2. **Done means merged and measurable.** The bead records the merge SHA plus
-   the KPI change, the gate evidence, or a bug regression test. A service or helper is done only once
+   the KPI change, gate evidence or a bug regression test. A service or helper is done only once
    engine code in a real target calls it.
    *Prevents: helpers with no callers counted as progress.*
 3. **WIP is at most 6 beads, bug lane first.**
