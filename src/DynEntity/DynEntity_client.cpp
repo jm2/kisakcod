@@ -689,6 +689,10 @@ void __cdecl DynEntCl_Shutdown(int32_t localClientNum)
                 }
             }
         }
+        // Piece bodies live in PHYS_WORLD_FX, not the dynent world above.
+        // Release them before Phys_Shutdown asserts that every FX body is
+        // gone, and so no sidecar token survives into the next map.
+        DynEntPieces_Shutdown();
     }
 }
 
