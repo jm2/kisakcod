@@ -1916,7 +1916,7 @@ char __cdecl R_MarkFragment_DoTriangle_1_(
 }
 
 bool __cdecl R_MarkModelCoreCallback_1_(
-    MarkModelCoreContext *contextAsVoid,
+    void *contextAsVoid,
     const GfxPackedVertex **triVerts0,
     const GfxPackedVertex **triVerts1)
 {
@@ -1927,7 +1927,7 @@ bool __cdecl R_MarkModelCoreCallback_1_(
     FxModelMarkPoint clipPoints[2][9]; // [esp+4Ch] [ebp-1B8h] BYREF
     int vertIndex; // [esp+200h] [ebp-4h]
 
-    context = contextAsVoid;
+    context = static_cast<MarkModelCoreContext *>(contextAsVoid);
     for (vertIndex = 0; vertIndex != 3; ++vertIndex)
     {
         v5 = triVerts0[vertIndex];
@@ -2414,7 +2414,7 @@ char __cdecl R_MarkFragments_XModelSurface_Basic(
             vertListIndex,
             localMins,
             localMaxs,
-            (bool(__cdecl *)(void *, const GfxPackedVertex **, const GfxPackedVertex **))R_MarkModelCoreCallback_1_,
+            R_MarkModelCoreCallback_1_,
             &markModelCoreContext))
             return 0;
     }

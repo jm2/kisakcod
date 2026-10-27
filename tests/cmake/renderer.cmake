@@ -234,6 +234,24 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_target_properties(kisakcod-fx-mark-transform-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME fx-mark-transform-contracts COMMAND kisakcod-fx-mark-transform-tests)
     set_tests_properties(fx-mark-transform-contracts PROPERTIES TIMEOUT 20)
+
+    # The two marked-type contracts in the same TU (issue #837): row 3 written
+    # through a float (*)[3], and the lightmap pair copied as one 8-byte access.
+    add_executable(kisakcod-fx-mark-convert-tests fx_mark_convert_tests.cpp ${SRC_DIR}/EffectsCore/fx_marks.cpp
+        ${SRC_DIR}/universal/com_math.cpp com_math_test_stubs.cpp)
+    target_include_directories(kisakcod-fx-mark-convert-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-fx-mark-convert-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-fx-mark-convert-tests PRIVATE KISAK_MP UNIX KISAK_DXVK_NATIVE)
+    target_compile_options(kisakcod-fx-mark-convert-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_libraries(kisakcod-fx-mark-convert-tests PRIVATE PkgConfig::KISAK_CIN_TEST_DXVK_D3D9)
+    target_link_options(kisakcod-fx-mark-convert-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-fx-mark-convert-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-fx-mark-convert-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-fx-mark-convert-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME fx-mark-convert-contracts COMMAND kisakcod-fx-mark-convert-tests)
+    set_tests_properties(fx-mark-convert-contracts PROPERTIES TIMEOUT 20)
 endif()
 
 # Static-model groups in the prim draw-surf stream: written through the

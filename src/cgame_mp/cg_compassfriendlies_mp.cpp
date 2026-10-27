@@ -38,7 +38,8 @@ void __cdecl CG_CompassUpdateVehicleInfo(int32_t localClientNum, int32_t entityI
 
     Vehicle = GetVehicle(localClientNum, entityIndex);
     Vehicle->lastUpdate = cgameGlob->time;
-    *(double *)Vehicle->lastPos = *(double *)cent->pose.origin;
+    Vehicle->lastPos[0] = cent->pose.origin[0];
+    Vehicle->lastPos[1] = cent->pose.origin[1];
     Vehicle->lastYaw = cent->pose.angles[1];
     Vehicle->team = (team_t)(cent->nextState.lerp.u.vehicle.teamAndOwnerIndex & 3);
     Vehicle->ownerIndex = cent->nextState.lerp.u.vehicle.teamAndOwnerIndex >> 2;
@@ -185,7 +186,8 @@ void __cdecl RadarPingEnemyPlayer(CompassActor *actor, int32_t time)
         actor->lastUpdate = 0;
     if (actor->lastUpdate >= time - 1500 && (actor->perks & 1) == 0)
     {
-        *(double *)actor->lastEnemyPos = *(double *)actor->lastPos;
+        actor->lastEnemyPos[0] = actor->lastPos[0];
+        actor->lastEnemyPos[1] = actor->lastPos[1];
         actor->beginRadarFadeTime = time;
     }
 }
@@ -277,7 +279,8 @@ void __cdecl ActorUpdatePos(int32_t localClientNum, CompassActor *actor, const f
         if (CanLocalPlayerHearActorFootsteps(localClientNum, newPos, actorClientIndex))
             RadarPingEnemyPlayer(actor, cgameGlob->time);
     }
-    *(double *)actor->lastPos = *(double *)newPos;
+    actor->lastPos[0] = newPos[0];
+    actor->lastPos[1] = newPos[1];
 }
 
 bool __cdecl DoesMovementCrossRadar(cg_s *cgameGlob, float radarProgress, const float *p1, const float *p2)

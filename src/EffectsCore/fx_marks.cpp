@@ -1869,9 +1869,9 @@ void FX_GenerateMarkVertsForMark_MatrixFromPlacement(
     v5.trans[2] = placement->origin[2];
     ConvertQuatToSkelMat(&v5, &v6);
     DObjSkelMatToMatrix43(&v6, outTransform);
-    (*outTransform)[9] = (*outTransform)[9] + *viewOffset;
-    (*outTransform)[10] = (*outTransform)[10] + viewOffset[1];
-    (*outTransform)[11] = (*outTransform)[11] + viewOffset[2];
+    outTransform[3][0] = outTransform[3][0] + *viewOffset;
+    outTransform[3][1] = outTransform[3][1] + viewOffset[1];
+    outTransform[3][2] = outTransform[3][2] + viewOffset[2];
 }
 
 void __cdecl FX_GenerateMarkVertsForEntDObj(
@@ -2384,7 +2384,8 @@ void __cdecl FX_ExpandMarkVerts_NoTransform_GfxWorldVertex_(
             *((float *)&texCoord + 1) = v4 * texCoordScale + 0.5;
             lmapCoord = (float*)markPoint->lmapCoord;
             *(_QWORD *)castOutVert->texCoord = texCoord;
-            *(double *)castOutVert->lmapCoord = *(double *)lmapCoord;
+            castOutVert->lmapCoord[0] = lmapCoord[0];
+            castOutVert->lmapCoord[1] = lmapCoord[1];
             v7.array[0] = (int)(markPoint->normal[0] * 127.0 + 127.5);
             v7.array[1] = (int)(markPoint->normal[1] * 127.0 + 127.5);
             v7.array[2] = (int)(markPoint->normal[2] * 127.0 + 127.5);
