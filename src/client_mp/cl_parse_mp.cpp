@@ -276,47 +276,50 @@ void CL_AppendTerminated(char *out, std::size_t &length,
         out[length++] = *scan;
 }
 
-// The pieces of a download URL the sanitizer rewrites.
+// The pieces of one URL authority the sanitizer rewrites.
 struct CL_UrlAuthoritySplit
 {
-    const char *rest; // first authority terminator ('/', '?', '#', or end)
-    const char *at;   // last '@' inside the authority, or nullptr
-    std::size_t schemeLength; // "scheme://" prefix length
+    const char *scheme; // first "://" at or after the scan start, or nullptr
+    const char *rest;   // first authority terminator ('/', '?', '#', or end)
+    const char *at;     // last '@' inside the authority, or nullptr
 };
 
-// Splits the display URL into its authority pieces: everything before the
-// last '@' before the first '/', '?' or '#' is the authority's userinfo.
+// Splits the next authority in the display URL: everything before the last
+// '@' before the first '/', '?' or '#' is that authority's userinfo.
 CL_UrlAuthoritySplit CL_SplitUrlAuthority(const char *source)
 {
-    const char *authority = std::strstr(source, "://");
-    const std::size_t schemeLength =
-        authority ? static_cast<std::size_t>(authority - source) + 3 : 0;
-    const char *rest = source + schemeLength;
+    const char *scheme = std::strstr(source, "://");
+    const char *authority = scheme ? scheme + 3 : source;
+    const char *rest = authority;
     while (*rest != '\0' && *rest != '/' && *rest != '?' && *rest != '#')
         ++rest;
 
     const char *at = nullptr;
-    for (const char *scan = rest; scan > source + schemeLength;)
+    if (scheme)
     {
-        --scan;
-        if (*scan == '@')
+        const char *nested = std::strstr(authority, "://");
+        if (nested && nested < rest)
+            rest = nested;
+        for (const char *scan = rest; scan > authority;)
         {
-            at = scan;
-            break;
+            --scan;
+            if (*scan == '@')
+            {
+                at = scan;
+                break;
+            }
         }
     }
-    return {rest, at, schemeLength};
+    return {scheme, rest, at};
 }
 
 } // namespace
 
-// Renders a download URL for every displayed or logged surface with
-// URL-embedded credentials masked: "http://user:pass@host/path" becomes
-// the retail meter form "http://*:*host/path". Only the authority's
-// userinfo (everything before the last '@' before the first '/', '?' or
-// '#') is rewritten; the source URL is never modified, so the transport
-// still receives the real credentials. Without credentials the URL is
-// copied verbatim (bounded).
+// Renders a download URL for every displayed or logged surface with the
+// userinfo of every embedded authority masked in the retail meter form
+// "scheme://*:*authority/path". The source URL is never modified, so the
+// transport still receives the real credentials. URLs without an embedded
+// credential are copied verbatim (bounded).
 //
 // Declared in client_mp.h: the later WWW failure paths in cl_main_mp.cpp
 // route their download-name messages through this same sanitizer so no
@@ -331,20 +334,33 @@ void CL_SanitizeDownloadUrl(const char *source, char *out,
     if (!source)
         return;
 
-    const CL_UrlAuthoritySplit split = CL_SplitUrlAuthority(source);
-    if (!split.at)
+    const char *cursor = source;
+    for (;;)
     {
-        // No credentials: copy the URL verbatim (bounded by the output).
-        CL_AppendTerminated(out, length, capacity, source);
-        out[length] = '\0';
-        return;
-    }
+        const CL_UrlAuthoritySplit split = CL_SplitUrlAuthority(cursor);
+        if (!split.scheme)
+        {
+            // No further authorities: copy the rest verbatim (bounded).
+            CL_AppendTerminated(out, length, capacity, cursor);
+            break;
+        }
 
-    CL_AppendBounded(out, length, capacity, source, split.schemeLength);
-    CL_AppendBounded(out, length, capacity, "*:*", 3);
-    CL_AppendBounded(out, length, capacity, split.at + 1,
-        static_cast<std::size_t>(split.rest - (split.at + 1)));
-    CL_AppendTerminated(out, length, capacity, split.rest);
+        if (!split.at)
+        {
+            // No userinfo in this authority: copy through it unchanged.
+            CL_AppendBounded(out, length, capacity, cursor,
+                static_cast<std::size_t>(split.rest - cursor));
+        }
+        else
+        {
+            CL_AppendBounded(out, length, capacity, cursor,
+                static_cast<std::size_t>(split.scheme - cursor) + 3);
+            CL_AppendBounded(out, length, capacity, "*:*", 3);
+            CL_AppendBounded(out, length, capacity, split.at + 1,
+                static_cast<std::size_t>(split.rest - (split.at + 1)));
+        }
+        cursor = split.rest;
+    }
     out[length] = '\0';
 }
 
