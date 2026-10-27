@@ -35,6 +35,23 @@ add_test(
     COMMAND kisakcod-actor-grenade-safety-tests
 )
 
+add_executable(kisakcod-hudicon-codec-tests
+    hudicon_codec_tests.cpp
+)
+target_include_directories(
+    kisakcod-hudicon-codec-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-hudicon-codec-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-hudicon-codec-tests)
+set_target_properties(
+    kisakcod-hudicon-codec-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME hudicon-record-codec
+    COMMAND kisakcod-hudicon-codec-tests
+)
+
 add_executable(kisakcod-ui-safety-tests
     ui_safety_tests.cpp
 )
