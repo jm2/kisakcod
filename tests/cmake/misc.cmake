@@ -1265,10 +1265,11 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_tests_properties(cg-register-weapon-contracts PROPERTIES TIMEOUT 20)
 endif()
 
-# CG_DrawRotatedQuadPic (cgame/cg_drawtools.cpp) at 64-bit: the four rows of
-# the quad. The decompile indexed the 2-float rows through (*verts)[2 * i],
-# which UBSan rejects as an out-of-bounds row index even though the address is
-# inside the array. --gc-sections drops the rest of the cgame TU.
+# CG_DrawRotatedQuadPic and CG_Draw2DLine (cgame/cg_drawtools.cpp) at 64-bit:
+# the four rows of the quad and the perpendicular used to widen a line. The
+# decompile indexed the 2-float rows through (*verts)[2 * i], which UBSan
+# rejects as an out-of-bounds row index even though the address is inside the
+# array. --gc-sections drops the rest of the cgame TU.
 if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_executable(kisakcod-cg-drawtools-rotated-quad-tests
@@ -1293,6 +1294,61 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     add_test(NAME cg-drawtools-rotated-quad-contracts
         COMMAND kisakcod-cg-drawtools-rotated-quad-tests)
     set_tests_properties(cg-drawtools-rotated-quad-contracts PROPERTIES TIMEOUT 20)
+endif()
+
+# CG_LoadingString (cgame/cg_info.cpp) must check the string before reading it
+# and clear isLoading for a null string. --gc-sections drops the rest of the TU.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-cg-loading-string-tests
+        cg_info_loading_tests.cpp
+        ${SRC_DIR}/cgame/cg_info.cpp
+    )
+    target_include_directories(kisakcod-cg-loading-string-tests
+        SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-cg-loading-string-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-cg-loading-string-tests PRIVATE KISAK_MP UNIX)
+    target_compile_options(kisakcod-cg-loading-string-tests PRIVATE
+        -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-cg-loading-string-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-cg-loading-string-tests PRIVATE
+            -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-cg-loading-string-tests PRIVATE
+            -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-cg-loading-string-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME cg-loading-string-contracts COMMAND kisakcod-cg-loading-string-tests)
+    set_tests_properties(cg-loading-string-contracts PROPERTIES TIMEOUT 20)
+endif()
+
+# The MP local-view predicate in cgame/cg_weapons.cpp. Both linkable callers
+# are driven with otherFlags both clear and set; --gc-sections drops the rest of
+# the large cgame TU.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-cg-weapons-local-view-tests
+        cg_weapons_local_view_tests.cpp
+        ${SRC_DIR}/cgame/cg_weapons.cpp
+    )
+    target_include_directories(kisakcod-cg-weapons-local-view-tests
+        SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-cg-weapons-local-view-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-cg-weapons-local-view-tests PRIVATE KISAK_MP UNIX)
+    target_compile_options(kisakcod-cg-weapons-local-view-tests PRIVATE
+        -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-cg-weapons-local-view-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-cg-weapons-local-view-tests PRIVATE
+            -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-cg-weapons-local-view-tests PRIVATE
+            -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-cg-weapons-local-view-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME cg-weapons-local-view-contracts COMMAND kisakcod-cg-weapons-local-view-tests)
+    set_tests_properties(cg-weapons-local-view-contracts PROPERTIES TIMEOUT 20)
 endif()
 
 # The developer GUI's menu table (devgui/devgui.cpp) at 64-bit: its free

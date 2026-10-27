@@ -581,8 +581,12 @@ void CG_Draw2DLine(
         v50[0] = x1 - x0;
         v50[1] = y1 - y0;
         Vec2NormalizeTo(v50, normalized2D);
-        normalized2D[1] = ((lineWidth * 0.5f) * normalized2D[0]);
-        normalized2D[0] = (lineWidth * 0.5f) * -normalized2D[1];
+        // Keep the line direction: the perpendicular is built from both
+        // original components, not from the already-overwritten X.
+        const float nx = normalized2D[0];
+        const float ny = normalized2D[1];
+        normalized2D[0] = (lineWidth * 0.5f) * -ny;
+        normalized2D[1] = (lineWidth * 0.5f) * nx;
         v50[2] = normalized2D[0] + x0;
         v50[3] = normalized2D[1] + y0;
         v50[4] = normalized2D[0] + x1;
