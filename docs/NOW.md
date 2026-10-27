@@ -4,8 +4,6 @@ Last reviewed: 2026-10-27 by the owner
 Gates: G3, G5; G4a waits on owner; G0-G2 done
 WIP limit: 6 (bug lane first, then gates)
 
-The coordinator keeps this current after each merge.
-
 ## KPIs
 
 From the master census; live values in the latest [master CI run](https://github.com/jm2/kisakcod/actions/workflows/ci.yml?query=branch%3Amaster).
@@ -34,8 +32,8 @@ rule-4 PRs, each with a test that fails without the fix; new crash or memory bug
 | 6 | #219 xanim: blend nodes eval first child twice; buf_cursor | merged ef205cbb (#878) |
 | 7 | #209 qcommon/server: FS_FileTell NULL, fake-lag, voice-mute | items 2-3: 13c71759; item 1 deferred |
 | 8 | #198 bounds: GSC compiler, sound-alias, menu, map-name | fixed by #808; closed |
-| 9 | #195 decompiler artifacts write wrong object | PR A (#883) up; rest sized |
-| 10 | #206 #205 #204 #217 #220 #200 #207 #208 #230 | sized; #207 fixed; #204/#205 out |
+| 9 | #195 decompiler artifacts write wrong object | items 2-3 merged b8b5a73f (#883); rest sized |
+| 10 | #206 #205 #204 #217 #220 #200 #207 #208 #230 | #205 fbe0e8d2 · #204 ae235688 · #206-C1 43de3a4d · #230 e5dd5771 · #220-3 7830f12a · #217-3 d7ba9119 · #208-2/3 667a06ae; #206 C2 next |
 
 ## Queue
 
@@ -43,18 +41,18 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 
 | # | Bead | Gate | Moves | Done-test | Size | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| 61 | G3 on the Windows ARM64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | server PASS 8/8/8 + kick refused (#828, win-arm64); citable rerun needs the Windows sync |
+| 61 | G3 on the Windows ARM64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | server PASS 8/8/8 + kick refused (#828); rerun needs Windows sync |
 | 63 | G3 on the Linux amd64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | PASS at 6a2ac8de; death and reconnect not exercised |
 | 64 | G3 on the Linux arm64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | server PASS (linux-arm64) |
-| 65 | G3 on the macOS arm64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | server PASS b063637b (8/8/8, 0 kicks); client half blocked-owner: no display |
+| 65 | G3 on the macOS arm64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | server PASS b063637b (8/8/8); client blocked: no display |
 | 60 | G5 Windows ARM64: the native client plays a round, a map change and a reconnect on a fork server (#184) | G5 | gate | console text on both ends; ASan clean | M | presets/ASan link at 2e3ba835 (#815) |
-| 58 | G5 client UBSan-clean: fix triaged reports (flattened arrays, misaligned access, LCG overflow) | G5 | gate | a client leg logs 0 UBSan reports | M | fix PRs merged through #868; close leg 0 UBSan/0 ASan at d4e17dc7 |
+| 58 | G5 client UBSan-clean: fix triaged reports (flattened arrays, misaligned access, LCG overflow) | G5 | gate | a client leg logs 0 UBSan reports | M | fixes through #884; close leg 0 UBSan/0 ASan; #884 after-leg 0, no new site |
 | 36 | G4a evidence: a stock Steam 1.8 client joins the windows-x86 server | G4a | gate | a retail client connects under the `steam18` profile; capture confirms protocol 7, gamename, shortversion (#531 table) | M | yoga: discovery, connect, 2 map changes pass; left: browser, spawn, fire, reconnect (#182) |
 | 66 | G6: the macOS `.app` bundles its runtime ([ADR-0011](decisions/0011-macos-client-bundles-its-runtime.md)) | G6 | K6 | a clean account without Homebrew plays a LAN round; `otool -L` shows no `/opt/homebrew` | L | 34 MB `.app` validated at 26cf1841; clean-account LAN remains |
 
 Other `burndown` issues wait below the bug lane.
 
-**Resume here:** bug lane row 9 (#195). Row 58 close leg with macmini. Host detail: #804.
+**Resume here:** bug lane row 10 (#206 C2 next). Host: #804.
 
 ## Blocked on owner
 
