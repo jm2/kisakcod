@@ -291,13 +291,13 @@ void __cdecl Phys_GetWindingForBrushFace2(
     float *v23; // [esp+98h] [ebp-78h]
     cplane_s *v24; // [esp+9Ch] [ebp-74h]
     float *v25; // [esp+A0h] [ebp-70h]
-    float *v26; // [esp+A4h] [ebp-6Ch]
+    const float *v26; // [esp+A4h] [ebp-6Ch]
     float *v27; // [esp+A8h] [ebp-68h]
     cplane_s *v28; // [esp+ACh] [ebp-64h]
     float *v29; // [esp+B0h] [ebp-60h]
-    float *v30; // [esp+B4h] [ebp-5Ch]
+    const float *v30; // [esp+B4h] [ebp-5Ch]
     cplane_s *plane; // [esp+B8h] [ebp-58h]
-    float *v32; // [esp+BCh] [ebp-54h]
+    const float *v32; // [esp+BCh] [ebp-54h]
     float *pt; // [esp+C0h] [ebp-50h]
     int edgeIndex; // [esp+C4h] [ebp-4Ch]
     float planes[3][4]; // [esp+C8h] [ebp-48h] BYREF
@@ -329,7 +329,7 @@ void __cdecl Phys_GetWindingForBrushFace2(
     {
         offset = brush->firstAdjacentSideOffsets[brushSide & 1][brushSide >> 1];
         edgeCount = brush->edgeCount[brushSide & 1][brushSide >> 1];
-        v32 = (float *)&(*axialPlanes)[4 * brushSide];
+        v32 = axialPlanes[brushSide];
         planes[0][0] = v32[0];
         planes[0][1] = v32[1];
         planes[0][2] = v32[2];
@@ -356,7 +356,7 @@ void __cdecl Phys_GetWindingForBrushFace2(
         else
         {
             v29 = planes[1];
-            v30 = (float *)&(*axialPlanes)[4 * side1];
+            v30 = axialPlanes[side1];
             planes[1][0] = v30[0];
             planes[1][1] = v30[1];
             planes[1][2] = v30[2];
@@ -389,7 +389,7 @@ void __cdecl Phys_GetWindingForBrushFace2(
             else
             {
                 v25 = planes[2];
-                v26 = (float *)&(*axialPlanes)[4 * side2];
+                v26 = axialPlanes[side2];
                 planes[2][0] = *v26;
                 planes[2][1] = v26[1];
                 planes[2][2] = v26[2];
