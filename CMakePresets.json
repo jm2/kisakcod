@@ -9,8 +9,10 @@
       "cacheVariables": {
         "KISAK_BUILD_MP": "ON",
         "KISAK_BUILD_DEDICATED": "ON",
-        "KISAK_BUILD_SP": "OFF"
-      }
+        "KISAK_BUILD_SP": "OFF",
+        "VCPKG_TARGET_TRIPLET": "x86-windows"
+      },
+      "description": "The Win32 MP client and dedicated server in one tree, the preset CI's x86 jobs and the release build use. Needs the DirectX SDK (-DCICD=ON -DDXSDK_DIR=...), an x86 vcpkg tree and localization.txt in the working directory; build-win.ps1 supplies all three (see README)."
     },
     {
       "name": "windows-x86-sp",
@@ -20,7 +22,8 @@
       "cacheVariables": {
         "KISAK_BUILD_MP": "OFF",
         "KISAK_BUILD_DEDICATED": "OFF",
-        "KISAK_BUILD_SP": "ON"
+        "KISAK_BUILD_SP": "ON",
+        "VCPKG_TARGET_TRIPLET": "x86-windows"
       }
     },
     {
@@ -31,7 +34,8 @@
       "cacheVariables": {
         "KISAK_BUILD_MP": "OFF",
         "KISAK_BUILD_DEDICATED": "ON",
-        "KISAK_BUILD_SP": "OFF"
+        "KISAK_BUILD_SP": "OFF",
+        "VCPKG_TARGET_TRIPLET": "x86-windows"
       }
     },
     {
