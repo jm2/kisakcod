@@ -1407,7 +1407,7 @@ void Com_ErrorCleanup()
     char finalmsg[4100]; // [esp+1Ch] [ebp-1008h] BYREF
 
     iassert( Sys_IsMainThread() );
-    LargeLocalReset(); DB_ReleaseLocksAfterError(); buf_cursor::ResetAll(); // before anything waits on the asset DB; KISAK: no longjmp'd load cursor
+    LargeLocalReset(); DB_ReleaseLocksAfterError(); buf_cursor::ResetAll(); XAnimResetLoadState(); // before anything waits on the asset DB; KISAK: no longjmp'd load state
     Com_PopRemoteScreenUpdate();
     Com_SyncThreads();
 #ifdef KISAK_MP

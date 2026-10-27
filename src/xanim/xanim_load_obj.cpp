@@ -227,6 +227,18 @@ void* XAnimTempAlloc(uint32_t size)
     return Hunk_UserAlloc(g_animUser, size, alignof(void *));
 }
 
+// Com_ErrorCleanup calls this after a longjmp abandons XAnimLoadFile between
+// Hunk_UserCreate and Hunk_UserDestroy. The stale user would otherwise leak
+// and trip the next load's iassert(!g_animUser) (or be reused in release).
+void __cdecl XAnimResetLoadState()
+{
+    if (g_animUser)
+    {
+        Hunk_UserDestroy(g_animUser);
+        g_animUser = 0;
+    }
+}
+
 XModelPieces *__cdecl XModelPiecesLoadFile(const char *name, void *(__cdecl *Alloc)(int))
 {
     XModelPiece *piece; // [esp+38h] [ebp-A4h]

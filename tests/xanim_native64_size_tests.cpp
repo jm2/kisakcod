@@ -25,6 +25,7 @@
 #include <gfx_d3d/r_font.h>
 #include <gfx_d3d/r_gfx.h>
 #include <gfx_d3d/r_material.h>
+#include <universal/com_memory.h>
 #include <xanim/buf_cursor.hpp>
 #include <xanim/dobj.h>
 #include <xanim/xanim.h>
@@ -67,6 +68,52 @@ void SL_AddRefToString(uint32_t)
 uint32_t SL_GetString_(const char *, uint32_t, int)
 {
     return 1;
+}
+
+// Boundary stubs for the blend check. It sets obj->numBones to zero, so the
+// only thing it observes is how many times XAnimCalcLeaf reaches the leaf.
+void __cdecl Vec4Scale(const float *, float, float *) {}
+void __cdecl Vec4Mad(const float *, float, const float *, float *) {}
+void __cdecl Vec4MadMad(const float *, float, const float *, float, const float *, float *) {}
+void __cdecl Vec3Mad(const float *, float, const float *, float *) {}
+void __cdecl Vec3Lerp(const float *, const float *, float, float *) {}
+void __cdecl Vec3Accum(const float *, const float *, const float *, float *) {}
+void __cdecl QuatMultiply(const float *, const float *, float *) {}
+void QDECL Com_Printf(int, const char *, ...) {}
+void __cdecl Com_PrintWarning(int, const char *, ...) {}
+int Com_sprintf(char *, uint32_t, const char *, ...)
+{
+    return 0;
+}
+int Com_sprintfPos(char *, int, int *, const char *, ...)
+{
+    return 0;
+}
+bool __cdecl DB_IsXAssetDefault(XAssetType, const char *)
+{
+    return false;
+}
+
+// XAnimCalcLeaf resolves the leaf's anim-to-model map through this. The blend
+// check below uses the calls as its leaf-evaluation count.
+static int g_leafEvals = 0;
+static XAnimToXModel g_leafToModel{};
+
+const char *SL_ConvertToString(uint32_t)
+{
+    ++g_leafEvals;
+    return reinterpret_cast<const char *>(&g_leafToModel);
+}
+
+// xanim_load_obj.cpp's abandoned-load state, and the destroy it forwards to.
+extern HunkUser *g_animUser;
+static HunkUser *g_destroyedAnimUser = nullptr;
+static int g_animUserDestroyCount = 0;
+
+void __cdecl Hunk_UserDestroy(HunkUser *user)
+{
+    g_destroyedAnimUser = user;
+    ++g_animUserDestroyCount;
 }
 
 float __cdecl Vec4LengthSq(const float *v)
@@ -177,6 +224,74 @@ void CheckLodOutDist()
     }
     model.numLods = 0;
     Check(XModelGetLodOutDist(&model) == 0.0, "no LODs has no out distance");
+}
+
+// XAnimEntry is a flexible array in XAnim_s; the loader allocates it with the
+// size it needs. The fixture spells out the four entries it uses.
+struct AnimSet
+{
+    const char *debugName;
+    uint32_t size;
+    const char **debugAnimNames;
+    XAnimEntry entries[4];
+};
+
+void CheckBlendFirstChildOnce()
+{
+    XAnimParts leafParts[2]{};
+    for (XAnimParts &parts : leafParts)
+    {
+        parts.numframes = 1;
+        parts.bLoop = false;
+    }
+
+    AnimSet set{};
+    set.debugName = "blend";
+    set.size = 4;
+    set.entries[1].numAnims = 2; // a blend node with two weighted leaf children
+    set.entries[2].parts = &leafParts[0];
+    set.entries[3].parts = &leafParts[1];
+
+    XAnimTree_s tree{};
+    tree.anims = reinterpret_cast<XAnim_s *>(&set);
+    const uint32_t root = XAnimAllocInfoWithParent(&tree, 0, 1, 0, 0);
+    const uint32_t first = XAnimAllocInfoWithParent(&tree, 7, 2, root, 0);
+    const uint32_t second = XAnimAllocInfoWithParent(&tree, 8, 3, root, 0);
+    XAnimInfo *const infos[3] = {GetAnimInfo(root), GetAnimInfo(first), GetAnimInfo(second)};
+    for (XAnimInfo *info : infos)
+    {
+        XAnimInitInfo(info);
+        info->state.weight = 1.0f;
+    }
+
+    DObj_s obj{};
+    obj.tree = &tree;
+    obj.numBones = 0;
+    XAnimCalcAnimInfo calcInfo{};
+    DObjAnimMat mats[1]{};
+    g_leafEvals = 0;
+    XAnimCalc(&obj, infos[0], 1.0f, true, true, &calcInfo, 0, mats);
+    Check(g_leafEvals == 2, "a two-child blend evaluates each leaf exactly once");
+}
+
+// Com_ErrorCleanup runs XAnimResetLoadState after a longjmp out of
+// XAnimLoadFile. The abandoned HunkUser must be freed and cleared so the next
+// load's iassert(!g_animUser) does not fire (or reuse it in release).
+void CheckAnimLoadReset()
+{
+    alignas(HunkUser) unsigned char storage[sizeof(HunkUser)]{};
+    HunkUser *const abandoned = reinterpret_cast<HunkUser *>(storage);
+    g_animUser = abandoned;
+    g_destroyedAnimUser = nullptr;
+    g_animUserDestroyCount = 0;
+
+    XAnimResetLoadState();
+    Check(g_animUser == nullptr, "error reset clears g_animUser");
+    Check(g_animUserDestroyCount == 1 && g_destroyedAnimUser == abandoned,
+        "error reset destroys the abandoned load's hunk user");
+
+    XAnimResetLoadState();
+    Check(g_animUserDestroyCount == 1, "error reset is a no-op when no load is abandoned");
 }
 
 // The clone size of every asset type the table serves, stated independently
@@ -417,6 +532,8 @@ int main()
     CheckXAnimClone();
     CheckXAnimInfoStats();
     CheckLodOutDist();
+    CheckBlendFirstChildOnce();
+    CheckAnimLoadReset();
     CheckCloneSizes();
     CheckSkel();
     CheckRawDeltaSmall();

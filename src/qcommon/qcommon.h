@@ -245,6 +245,7 @@ void __cdecl Com_RunAutoExec(int localClientNum, int controllerIndex);
 void __cdecl Com_ExecStartupConfigs(int localClientNum, const char* configFile);
 void Com_ErrorCleanup();
 namespace buf_cursor { void ResetAll(); } // xanim/buf_cursor.hpp: Com_ErrorCleanup drops a longjmp'd load's cursor
+void XAnimResetLoadState(); // xanim/xanim_load_obj.cpp: Com_ErrorCleanup drops a longjmp'd load's hunk user
 void Com_AddStartupCommands();
 void __cdecl Com_Init_Try_Block_Function(char* commandLine);
 void __cdecl Com_Error_f();
