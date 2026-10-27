@@ -89,8 +89,14 @@ extern "C" void dError (int num, const char *msg, ...)
 {
   va_list ap;
   va_start (ap,msg);
-  if (error_function) error_function (num,msg,ap);
-  else printMessage (num,"ODE Error",msg,ap);
+  if (error_function) {
+    /* An installed handler owns the outcome (it normally does not return:
+     * the engine's drops to the menu). */
+    error_function (num,msg,ap);
+    va_end (ap);
+    return;
+  }
+  printMessage (num,"ODE Error",msg,ap);
   exit (1);
 }
 
@@ -99,8 +105,14 @@ extern "C" void dDebug (int num, const char *msg, ...)
 {
   va_list ap;
   va_start (ap,msg);
-  if (debug_function) debug_function (num,msg,ap);
-  else printMessage (num,"ODE INTERNAL ERROR",msg,ap);
+  if (debug_function) {
+    /* An installed handler owns the outcome, so a logged assertion is no
+     * longer fatal to the process (#238). */
+    debug_function (num,msg,ap);
+    va_end (ap);
+    return;
+  }
+  printMessage (num,"ODE INTERNAL ERROR",msg,ap);
   // *((char *)0) = 0;   ... commit SEGVicide
   abort();
 }
@@ -128,7 +140,11 @@ extern "C" void dError (int num, const char *msg, ...)
 {
   va_list ap;
   va_start (ap,msg);
-  if (error_function) error_function (num,msg,ap);
+  if (error_function) {
+    error_function (num,msg,ap);
+    va_end (ap);
+    return;
+  }
   else {
     char s[1000],title[100];
     snprintf (title,sizeof(title),"ODE Error %d",num);
@@ -144,7 +160,11 @@ extern "C" void dDebug (int num, const char *msg, ...)
 {
   va_list ap;
   va_start (ap,msg);
-  if (debug_function) debug_function (num,msg,ap);
+  if (debug_function) {
+    debug_function (num,msg,ap);
+    va_end (ap);
+    return;
+  }
   else {
     char s[1000],title[100];
     snprintf (title,sizeof(title),"ODE INTERNAL ERROR %d",num);
