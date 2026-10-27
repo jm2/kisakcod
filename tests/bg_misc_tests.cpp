@@ -21,6 +21,8 @@
 #include <string_view>
 #include <vector>
 
+extern const char *bg_soundRoomTypes[27];
+
 namespace
 {
 int g_failures = 0;
@@ -255,6 +257,20 @@ void TestLeanDefaults()
         Check(registered && Near(registered->value, lean.value), lean.name.c_str());
     }
 }
+
+void TestSoundRoomTypes()
+{
+    Check(std::strcmp(bg_soundRoomTypes[8], "cave") == 0, "sound room 8 is cave");
+    Check(std::strcmp(bg_soundRoomTypes[9], "arena") == 0, "sound room 9 is arena");
+}
+
+void TestAistatePostfixDecrement()
+{
+    aistateEnum_t state = static_cast<aistateEnum_t>(3);
+    const aistateEnum_t before = state--;
+    Check(static_cast<int>(before) == 3 && static_cast<int>(state) == 2,
+        "postfix -- returns the pre-decrement value");
+}
 } // namespace
 
 // The engine boundary bg_misc.cpp's tested paths reach. MyAssertHandler comes
@@ -381,6 +397,8 @@ int main()
     TestHudColors();
     TestHeadlessShockVolumeLines();
     TestLeanDefaults();
+    TestSoundRoomTypes();
+    TestAistatePostfixDecrement();
     if (g_failures == 0)
         std::puts("bg_misc contracts passed");
     return g_failures == 0 ? 0 : 1;

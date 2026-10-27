@@ -79,10 +79,11 @@ inline aistateEnum_t &operator--(aistateEnum_t &e) {
     e = static_cast<aistateEnum_t>(static_cast<int>(e) - 1);
     return e;
 }
-inline aistateEnum_t &operator--(aistateEnum_t &e, int i)
+inline aistateEnum_t operator--(aistateEnum_t &e, int)
 {
+    const aistateEnum_t original = e;
     --e;
-    return e;
+    return original;
 }
 
 enum scriptAnimStrafeStates_t : __int32

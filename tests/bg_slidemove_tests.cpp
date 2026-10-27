@@ -10,11 +10,14 @@
 #include <bgame/bg_public.h>
 
 #include <cmath>
+#include <csignal>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
 #include <memory>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <vector>
 
 namespace
@@ -192,6 +195,30 @@ void TestStepTooHigh()
     Check(ps->origin[0] > 34.5f && ps->origin[0] <= 35.0f && ps->origin[2] < 1.0f, "a 30-unit ledge blocks the move");
     Check(move.pm.viewChange == 0.0f, "no view change without a step");
 }
+
+void TestGroundSurfaceType()
+{
+    pml_t pml{};
+    pml.groundTrace.surfaceFlags = 5u << 20;
+    Check(PM_GroundSurfaceType(&pml) == 5, "an in-range surface type passes through");
+    pml.groundTrace.surfaceFlags = 31u << 20;
+    Check(PM_GroundSurfaceType(&pml) < SURF_TYPECOUNT, "an out-of-range surface type is clamped");
+}
+
+void TestViewHeightTableMissAsserts()
+{
+    viewLerpWaypoint_s table[] = {{0, 60.0f, 0}, {10, 50.0f, 0}, {-1, 0.0f, 0}};
+    const pid_t pid = fork();
+    if (pid == 0)
+    {
+        float offset = 0.0f;
+        PM_ViewHeightTableLerp(50, table, &offset);
+        _exit(0);
+    }
+    int status = 0;
+    Check(pid > 0 && waitpid(pid, &status, 0) == pid, "the table-miss probe ran");
+    Check(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT, "a view-height table miss asserts");
+}
 } // namespace
 
 // The collision world the pmove trace handler reaches.
@@ -264,6 +291,8 @@ int main()
     TestCorner();
     TestStepUp();
     TestStepTooHigh();
+    TestGroundSurfaceType();
+    TestViewHeightTableMissAsserts();
     if (g_failures == 0)
         std::puts("bg slidemove contracts passed");
     return g_failures == 0 ? 0 : 1;
