@@ -311,9 +311,9 @@ void __cdecl Phys_GenerateGroupContacts(
         if (group[contactIter] == -1)
             MyAssertHandler(".\\physics\\phys_contacts.cpp", 253, 0, "%s", "group[contactIter] != -1");
         Vec3Add(
-            &(*centroid)[3 * group[contactIter]],
+            &centroid[group[contactIter]][0],
             inContacts->contacts[contactIter].contact.normal,
-            &(*centroid)[3 * group[contactIter]]);
+            &centroid[group[contactIter]][0]);
     }
     for (groupIter = 0; groupIter != 3; ++groupIter)
     {
