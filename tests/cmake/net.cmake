@@ -423,3 +423,27 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     add_test(NAME sv-change-maxclients COMMAND kisakcod-sv-maxclients-tests)
     set_tests_properties(sv-change-maxclients PROPERTIES TIMEOUT 20)
 endif()
+
+# Issue #209: the production FakeLag_GetFreeSlot eviction (qcommon/net_chan_mp.cpp)
+# and the release-mode voice index bounds (server_mp/sv_voice_mp.cpp). Linux and
+# clang/gcc at 64-bit, as the other engine-TU tests; --gc-sections drops the
+# engine code no check reaches, so only the boundary needs stubs.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+    add_executable(kisakcod-issue209-netvoice-tests
+        issue209_netvoice_tests.cpp
+        ${SRC_DIR}/qcommon/net_chan_mp.cpp
+        ${SRC_DIR}/server_mp/sv_voice_mp.cpp)
+    target_include_directories(kisakcod-issue209-netvoice-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-issue209-netvoice-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-issue209-netvoice-tests PRIVATE
+        KISAK_MP KISAK_DEDICATED DEDICATED KISAK_DEDI_HEADLESS UNIX)
+    target_compile_options(kisakcod-issue209-netvoice-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-issue209-netvoice-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-issue209-netvoice-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-issue209-netvoice-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-issue209-netvoice-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME issue209-netvoice-bounds COMMAND kisakcod-issue209-netvoice-tests)
+    set_tests_properties(issue209-netvoice-bounds PROPERTIES TIMEOUT 20)
+endif()
