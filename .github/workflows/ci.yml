@@ -108,6 +108,39 @@ jobs:
       - name: Run portable tests
         run: ctest --test-dir build-tests -C Release --output-on-failure --parallel 4
 
+      # G3's macOS arm64 leg builds here, in the same job as the macOS portable
+      # tests: two macos-26 runners per CI run is what the runner shortage
+      # (#838) could not supply. The job keeps its own required check name
+      # below; it no longer waits for a macOS runner of its own.
+      - name: Configure the headless server
+        if: matrix.platform == 'macOS arm64'
+        run: >
+          cmake -S . -B build-headless -G Ninja
+          -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+          -DKISAK_BUILD_MP=OFF -DKISAK_BUILD_DEDICATED=ON -DKISAK_BUILD_SP=OFF
+          -DKISAK_DEDI_HEADLESS=ON -DKISAK_ENABLE_STEAM=OFF
+          -DKISAK_ALLOW_UNSUPPORTED_64BIT=ON -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build the headless server
+        if: matrix.platform == 'macOS arm64'
+        run: cmake --build build-headless --target KisakCOD-dedi --parallel 4
+
+      - name: Verify the headless server's architecture
+        if: matrix.platform == 'macOS arm64'
+        run: scripts/ci/verify-artifact-arch.sh arm64 bin/KisakCOD-dedi
+
+      - name: Headless assetless smoke run
+        if: matrix.platform == 'macOS arm64'
+        run: python3 scripts/ci/headless_smoke.py bin/KisakCOD-dedi
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: matrix.platform == 'macOS arm64'
+        with:
+          name: KisakCOD-macos-arm64-headless
+          path: bin/KisakCOD-dedi
+          if-no-files-found: error
+          retention-days: 14
+
       # Only root can plant a link owned by another user, so the filesystem
       # contracts run once more as root to reach the planted-link stage
       # (tests/platform_filesystem_tests.cpp); -V shows its RAN line.
@@ -385,45 +418,26 @@ jobs:
           retention-days: 30
 
   macos-headless:
-    # The POSIX headless dedicated server on macOS arm64 (gate G3): the same
-    # configure, architecture check and assetless smoke run as linux-headless.
-    # It gates, so it runs on macos-26, GitHub's newest GA macOS image; the
-    # mac64 census covers the macOS 27 SDK on xcode-27. Ninja bounds the bare
-    # --parallel to the runner's cores.
+    # G3's macOS arm64 headless server. The configure, build, architecture check
+    # and assetless smoke run live in "Portable tests / macOS arm64", so one CI
+    # run asks GitHub for one macos-26 runner instead of two (#838). This job
+    # keeps the required check name and restates that leg's result; it runs on
+    # Linux, so it never waits for macOS capacity itself.
     name: macOS headless server / arm64
-    runs-on: macos-26
-    timeout-minutes: 30
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    needs: portable-tests
+    if: always()
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-
-      - name: Show compiler and SDK
-        run: clang --version && xcrun --show-sdk-version
-
-      - name: Configure
-        run: >
-          cmake -S . -B build-headless -G Ninja
-          -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
-          -DKISAK_BUILD_MP=OFF -DKISAK_BUILD_DEDICATED=ON -DKISAK_BUILD_SP=OFF
-          -DKISAK_DEDI_HEADLESS=ON -DKISAK_ENABLE_STEAM=OFF
-          -DKISAK_ALLOW_UNSUPPORTED_64BIT=ON -DCMAKE_BUILD_TYPE=Release
-
-      - name: Build KisakCOD-dedi
-        run: cmake --build build-headless --target KisakCOD-dedi --parallel
-
-      - name: Verify binary architecture
-        run: scripts/ci/verify-artifact-arch.sh arm64 bin/KisakCOD-dedi
-
-      - name: Assetless smoke run
-        run: python3 scripts/ci/headless_smoke.py bin/KisakCOD-dedi
-
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: KisakCOD-macos-arm64-headless
-          path: bin/KisakCOD-dedi
-          if-no-files-found: error
-          retention-days: 14
+      - name: Check the macOS portable leg
+        run: |
+          result="${{ needs.portable-tests.result }}"
+          echo "portable-tests (all platforms): $result"
+          if [ "$result" != "success" ]; then
+            echo "The macOS headless build never ran to success: $result" >&2
+            exit 1
+          fi
+          echo "Built and smoke-run in Portable tests / macOS arm64"
 
   linux-headless:
     # The POSIX headless dedicated server (NOW row 13) on Linux amd64 and
