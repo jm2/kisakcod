@@ -1,6 +1,6 @@
 # NOW
 
-Last reviewed: 2026-10-26 by kisakcod-linux (antec), coordinator; 9 open PRs (3 draft)
+Last reviewed: 2026-10-26 by kisakcod-linux (antec), coordinator; 11 open PRs (4 draft)
 Current gates: G3 (the remaining targets) and G5 (Windows ARM64, UBSan); G4a waits on the owner; G0, G1 and G2 are done
 WIP limit: 6 (at least 4 on the current gates)
 
@@ -25,18 +25,18 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 
 | # | Bead | Gate | Moves | Done-test | Size | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| 61 | G3 on the Windows ARM64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | server PASS at 2e3ba835+#828 patch: 8 bots, 8/8/8 joins in the drained reply, kick refused (win-arm64); citable run waits on merged #828 + sync; client #817 |
-| 63 | G3 on the Linux amd64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | server PASS at 26cf1841 per #827; client spectator #817 |
+| 61 | G3 on the Windows ARM64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | server PASS: 8/8/8 joins + kick refused (#828 patch, win-arm64); citable on merged #828; client #846 |
+| 63 | G3 on the Linux amd64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | server PASS at 26cf1841 per #827; client #846 |
 | 64 | G3 on the Linux arm64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | server PASS (linux-arm64); client #817 |
-| 65 | G3 on the macOS arm64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | dedi preset verified at 26cf1841, no prefix; run waits on #828; client #817 |
-| 60 | G5 Windows ARM64: the native client plays a round, a map change and a reconnect on a fork server (#184) | G5 | gate | console text on both ends; ASan clean | M | presets/ASan link at 2e3ba835 (#815); client #817 |
-| 58 | G5 client UBSan-clean: fix the triaged client reports (flattened arrays, misaligned access, LCG overflow) | G5 | gate | a client leg logs 0 UBSan reports | M | #819/#822/#823 merged; #830 (#821+#831) in review |
+| 65 | G3 on the macOS arm64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | dedi preset verified; run waits on #828; client #846 |
+| 60 | G5 Windows ARM64: the native client plays a round, a map change and a reconnect on a fork server (#184) | G5 | gate | console text on both ends; ASan clean | M | presets/ASan link at 2e3ba835 (#815); client #846 |
+| 58 | G5 client UBSan-clean: fix the triaged client reports (flattened arrays, misaligned access, LCG overflow) | G5 | gate | a client leg logs 0 UBSan reports | M | #819/#822/#823 merged; #830 leg clears :768/:769; #839 in review |
 | 36 | G4a evidence: a stock Steam 1.8 client joins the windows-x86 server | G4a | gate | a retail client connects under the `steam18` profile; capture confirms protocol 7, gamename, shortversion (#531 table) | M | yoga: discovery, connect and 2 map changes pass; left: browser, spawn and fire, reconnect (#182) |
 | 66 | G6: the macOS `.app` bundles its runtime ([ADR-0011](decisions/0011-macos-client-bundles-its-runtime.md)) | G6 | K6 | a clean account without Homebrew plays a LAN round; `otool -L` shows no `/opt/homebrew` | L | 34 MB `.app` validated at 26cf1841; clean-account LAN remains |
 
 Other `burndown` issues are off these gates or wait on the owner.
 
-**Resume here:** merge queue #826 #834 #828 #832, then #824 (this docs PR); #825/#818 merged. #840 (`pr_gate` INFRA for runner/apt stalls) is review-ready; #830 waits on a sanitizer leg, #839 on its rule-16 declaration, #836 on the #817 call. Launch rows 61-65 with `+exec cfg +map`, never `map` inside an exec'd cfg (#816/#826). #817 blocks every client half; [#804](https://github.com/jm2/kisakcod/issues/804) holds host detail.
+**Resume here:** #840 (`pr_gate` INFRA) and #825/#818 merged; merge #834, then #826 #828 #832 #830 #844 #843 #839 #845 and #824 (this docs PR). Retrigger macOS INFRA jobs by close/reopen (#838), at most two CI branches at a time. Launch rows 61-65 with `+exec cfg +map`, never `map` inside an exec'd cfg (#816/#826). #846 (`cg_autoJoin 1`) is the client half; [#804](https://github.com/jm2/kisakcod/issues/804) holds host detail.
 
 ## Blocked on owner
 
@@ -48,7 +48,6 @@ Other `burndown` issues are off these gates or wait on the owner.
 | Private vulnerability reporting (#293) | SECURITY.md |
 | Retail-fidelity call on #208 | the sweep |
 | GPU runner; Apple Developer ID | G5; G6 |
-| #817 spawn route: dev/test spawn, UI-less class selection, or menu vehicle | rows 61/63/64/65 clients, 60, 36 |
 | Sync into the Windows clones (yoga 2e3ba835, antec-win 26cf1841) | rows 61/63 post-#828 legs |
 | LAN/unsandboxed launch on mbp16 | row 65 |
 | Clean-account K6 round on mbp16 | row 66 |
@@ -68,5 +67,6 @@ Other `burndown` issues are off these gates or wait on the owner.
 Merge SHAs are in `git log`.
 
 - G0-G2 passed (rows 46, 54, 37; #178-#180); G3's Win64 target passes (row 47).
+- 2026-10-26: #815 (Windows ARM64 presets, ASan), #825 (#818 intro skip), #840 (`pr_gate` INFRA; #838 diagnosed as runner capacity).
 - G5 interim clients pass (rows 55-57, 59); 1.8 parity and 21-map rotation pass (rows 52-53).
 - 2026-10-26 merged: #815 ARM64 presets/ASan, #812/#813 row 66 bundles, #819/#822/#823 row 58, #825/#818 intro-cinematic connstate.
