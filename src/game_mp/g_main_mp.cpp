@@ -853,7 +853,10 @@ void __cdecl G_ShutdownGame(int32_t freeScripts)
     for (file = 0; file < 1; ++file)
     {
         if (level.openScriptIOFileBuffers[file])
+        {
+            Com_EndParseSession();
             Z_VirtualFree(level.openScriptIOFileBuffers[file]);
+        }
         level.openScriptIOFileBuffers[file] = 0;
         if (level.openScriptIOFileHandles[file])
             FS_FCloseFile(level.openScriptIOFileHandles[file]);
