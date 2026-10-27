@@ -2019,4 +2019,4 @@ void DynEntCl_WakeUpAroundPlayer(int localClientNum)
         } while ((uint32_t)drawType < DYNENT_DRAW_COUNT);
     }
 }
-#endif 
+#endif
