@@ -301,36 +301,14 @@ void __cdecl SCR_UpdateLoadScreen()
         SCR_UpdateScreen();
 }
 
-const char *WeaponStateNames_65[27] =
+const char *__cdecl CL_CubemapShotFaceSuffix(CubemapShot shot)
 {
-  "WEAPON_READY",
-  "WEAPON_RAISING",
-  "WEAPON_RAISING_ALTSWITCH",
-  "WEAPON_DROPPING",
-  "WEAPON_DROPPING_QUICK",
-  "WEAPON_FIRING",
-  "WEAPON_RECHAMBERING",
-  "WEAPON_RELOADING",
-  "WEAPON_RELOADING_INTERUPT",
-  "WEAPON_RELOAD_START",
-  "WEAPON_RELOAD_START_INTERUPT",
-  "WEAPON_RELOAD_END",
-  "WEAPON_MELEE_INIT",
-  "WEAPON_MELEE_FIRE",
-  "WEAPON_MELEE_END",
-  "WEAPON_OFFHAND_INIT",
-  "WEAPON_OFFHAND_PREPARE",
-  "WEAPON_OFFHAND_HOLD",
-  "WEAPON_OFFHAND_START",
-  "WEAPON_OFFHAND",
-  "WEAPON_OFFHAND_END",
-  "WEAPON_DETONATING",
-  "WEAPON_SPRINT_RAISE",
-  "WEAPON_SPRINT_LOOP",
-  "WEAPON_SPRINT_DROP",
-  "WEAPON_NIGHTVISION_WEAR",
-  "WEAPON_NIGHTVISION_REMOVE"
-}; // idb
+    static const char *const suffixes[6] = {"_rt", "_lf", "_bk", "_ft", "_up", "_dn"};
+    const int index = static_cast<int>(shot) - static_cast<int>(CUBEMAPSHOT_RIGHT);
+    if (index < 0 || index >= ARRAY_COUNT(suffixes))
+        return "";
+    return suffixes[index];
+}
 
 void __cdecl CL_CubemapShot_f()
 {
@@ -444,7 +422,7 @@ LABEL_24:
         v12 = n1;
         v11 = n0;
         v10 = (CubemapShot)shot;
-        v9 = va("env/%s%s.tga", szBaseName, WeaponStateNames_65[shot + 22]);
+        v9 = va("env/%s%s.tga", szBaseName, CL_CubemapShotFaceSuffix((CubemapShot)shot));
         R_SaveCubemapShot(v9, v10, v11, v12);
     }
 }
