@@ -9,8 +9,7 @@
 //      g_vehicles_mp, g_scr_vehicle;  2: g_active_mp;  3: g_utils_mp,
 //      g_main_mp, server/sv_game;  4: g_client_script_cmd_mp alone for the
 //      damage clamp; 5: g_cmds_mp for ClientCommand, callvote and vote. 3
-//      also checks that level shutdown pops the
-//      parse session held by an open scriptdata read buffer.
+//      also checks that level shutdown pops an open scriptdata read session.
 // The engine boundary is weak: the engine TUs replace the stubs they define.
 
 #include <cstdarg>
@@ -847,13 +846,13 @@ static void ClientCommandSaysBoundedBytes()
     CHECK(g_commandTrace.count == 1);
     CHECK(g_commandTrace.text[0][0] == 'h' && g_commandTrace.text[0][1] == ' '
           && g_commandTrace.text[0][2] == '"');
-    CHECK(g_commandTrace.text[0][std::strlen(g_commandTrace.text[0]) - 1] == '"');
-    CHECK(std::strlen(g_commandTrace.text[0]) + 1 < sizeof(g_commandTrace.text[0]));
+    const size_t textLen = strnlen(g_commandTrace.text[0], sizeof(g_commandTrace.text[0]));
+    CHECK(textLen > 0 && g_commandTrace.text[0][textLen - 1] == '"');
+    CHECK(textLen + 1 < sizeof(g_commandTrace.text[0]));
 }
 
-// ClientCommand callvote -> Cmd_CallVote_f. Check the fixed vote command,
-// display string and configstring bytes, then a 300-byte map argument against
-// the 256-byte argument copy and the 1024-byte voteString.
+// ClientCommand callvote -> Cmd_CallVote_f: fixed vote command, display
+// string and configstrings, then a 300-byte map against the 256/1024 bounds.
 static void CallVoteBuildsBoundedBytes()
 {
     ResetCommandFixture();
@@ -874,8 +873,9 @@ static void CallVoteBuildsBoundedBytes()
     ResetCommandFixture();
     RunClientCommand("callvote", "map", longMap);
     CHECK(!std::strncmp(level.voteString, "map ", 4));
-    CHECK(std::strlen(level.voteString) == 4 + 255);
-    CHECK(std::strlen(level.voteString) < sizeof(level.voteString));
+    const size_t voteLen = strnlen(level.voteString, sizeof(level.voteString));
+    CHECK(voteLen == 4 + 255);
+    CHECK(voteLen < sizeof(level.voteString));
 }
 
 // ClientCommand vote -> Cmd_Vote_f. The 64-byte token selects yes/no and the
