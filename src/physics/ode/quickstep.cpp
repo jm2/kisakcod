@@ -31,6 +31,7 @@
 #include <ode/misc.h>
 // #include "lcp.h"
 #include "util.h"
+#include "quickstep.h"
 #include <universal/profile.h>
 #include <universal/com_math.h>
 #include <qcommon/qcommon.h>
@@ -604,7 +605,7 @@ static void SOR_LCP (int constraintRowCount,
 	ConstraintRowData *row_ptr; // [esp+4Ch] [ebp-4h]
 
 	sor_w = qs->w;
-	if (constraintRowCount > 444)
+	if (constraintRowCount > ISLAND_MAX_JOINT_COUNT * 6)
 		MyAssertHandler(
 			".\\physics\\ode\\src\\quickstep.cpp",
 			769,
@@ -798,9 +799,6 @@ void __cdecl dumpBodyJoints(dxWorld *world, dxBody **bodies, int bodyCount, dxJo
 #endif
 }
 
-#define ISLAND_MAX_JOINT_COUNT 74
-#define ISLAND_MAX_BODY_COUNT 14
-
 void dxQuickStepper (dxWorld *world,
 	dxBody **body,
 	int bodyCount,
@@ -845,8 +843,9 @@ void dxQuickStepper (dxWorld *world,
 	if (jointCount >= 74 || bodyCount >= 14)
 		dumpBodyJoints(world, body, bodyCount, joint, jointCount);
 
-	bcassert(jointCount, ISLAND_MAX_JOINT_COUNT);
-	bcassert(bodyCount, ISLAND_MAX_BODY_COUNT);
+	// Counts index their arrays, so the last valid value is the array size.
+	bcassert2(jointCount, ISLAND_MAX_JOINT_COUNT);
+	bcassert2(bodyCount, ISLAND_MAX_BODY_COUNT);
 
 	inv_stepsize = 1.0 / stepsize;
 	fps = inv_stepsize;
@@ -884,7 +883,9 @@ void dxQuickStepper (dxWorld *world,
 		constraintRowCount += info[i].m;
 	}
 
-	vassert(constraintRowCount < (ISLAND_MAX_JOINT_COUNT * ISLAND_MAX_BODY_COUNT), "constraintRowCount = %d", constraintRowCount);
+	// One row per constraint dimension, at most six per joint. The previous
+	// bound multiplied the two island caps (1036) instead of the row count.
+	vassert(constraintRowCount <= (ISLAND_MAX_JOINT_COUNT * 6), "constraintRowCount = %d", constraintRowCount);
 	if (constraintRowCount > 0)
 	{
 		dSetZero(a, constraintRowCount);
