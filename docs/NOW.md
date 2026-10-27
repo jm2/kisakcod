@@ -1,8 +1,8 @@
 # NOW
 
-Last reviewed: 2026-10-27 by antec, coordinator; 2 open PRs (2 draft: #859 #836)
+Last reviewed: 2026-10-27 by the owner (bug lane added)
 Current gates: G3 and G5; G4a waits on the owner; G0-G2 done
-WIP limit: 6 (at least 4 on the current gates)
+WIP limit: 6 (bug lane first, then the current gates)
 
 The coordinator keeps this current after every merge or gate change.
 
@@ -19,6 +19,25 @@ From the master census; live values in the latest [master CI run](https://github
 | K5 | Headless TUs reaching `<d3d9.h>` on Linux | 0 on lin64 and a64 | 0 (G1 Linux) | census |
 | K6 | Target x role cells at `links` or above | 5/10, all headless: Win64 at `fork_peer`, Linux amd64 at `boots_map` | 10 at `packaged` (G6) | manifest |
 
+## Bug lane (before the gate rows)
+
+Owner, 2026-10-27: major bugs before gate work. Rows 1-3 sev:high, rest medium.
+Re-check the umbrella on master, post what is left, fix in rule-4 PRs, each with a
+test that fails without the fix. New crash or memory bugs join by severity.
+
+| # | Issue | Status |
+| --- | --- | --- |
+| 1 | #238 ODE aborts: full 4096-contact group, live asserts | — |
+| 2 | #243 physics: near-callback context, contacts, stepper | item 2 done |
+| 3 | #214 game_mp vehicles: wheel overflow, strings, heli NULLs | — |
+| 4 | #260 dynent pieces never destroyed; stale bodies on map change | — |
+| 5 | #258 game: hintStrings, vehicle table overflow, heli events | — |
+| 6 | #219 xanim: blend nodes eval first child twice; buf_cursor | — |
+| 7 | #209 qcommon/server: FS_FileTell NULL, fake-lag, voice-mute | — |
+| 8 | #198 bounds: GSC compiler, sound-alias, menu, map-name | — |
+| 9 | #195 decompiler artifacts write the wrong object | — |
+| 10 | #206 #205 #204 #217 #220 #200 #207 #208 #230 | |
+
 ## Queue
 
 S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers are stable IDs (design docs cite them); table order is priority. A bead copies its done-test into `now.done_test`.
@@ -26,17 +45,17 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 | # | Bead | Gate | Moves | Done-test | Size | Status |
 | --- | --- | --- | --- | --- | --- | --- |
 | 61 | G3 on the Windows ARM64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | server PASS 8/8/8 + kick refused (#828, win-arm64); citable rerun needs the Windows sync |
-| 63 | G3 on the Linux amd64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | PASS at 6a2ac8de: client joined, map change re-entered, rc 0/0; death and reconnect not exercised |
+| 63 | G3 on the Linux amd64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | PASS at 6a2ac8de; death and reconnect not exercised |
 | 64 | G3 on the Linux arm64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | server PASS (linux-arm64) |
 | 65 | G3 on the macOS arm64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | dedi preset verified; run needs an owner LAN host |
 | 60 | G5 Windows ARM64: the native client plays a round, a map change and a reconnect on a fork server (#184) | G5 | gate | console text on both ends; ASan clean | M | presets/ASan link at 2e3ba835 (#815) |
-| 58 | G5 client UBSan-clean: fix the triaged client reports (flattened arrays, misaligned access, LCG overflow) | G5 | gate | a client leg logs 0 UBSan reports | M | #819/#822/#823/#830/#839/#845/#849/#853/#854/#856 merged; 177f0c50: 0 ASan, 43 UBSan; physics sites fixed; left: boxbrush float[3] (PR 6), float[4] (PR 5), rb_light (#857), trimesh_box, xanim (#859) |
+| 58 | G5 client UBSan-clean: fix the triaged client reports (flattened arrays, misaligned access, LCG overflow) | G5 | gate | a client leg logs 0 UBSan reports | M | fix PRs merged through #868; #848 #850 #857 #860 close on the client UBSan close leg (#867) |
 | 36 | G4a evidence: a stock Steam 1.8 client joins the windows-x86 server | G4a | gate | a retail client connects under the `steam18` profile; capture confirms protocol 7, gamename, shortversion (#531 table) | M | yoga: discovery, connect and 2 map changes pass; left: browser, spawn and fire, reconnect (#182) |
 | 66 | G6: the macOS `.app` bundles its runtime ([ADR-0011](decisions/0011-macos-client-bundles-its-runtime.md)) | G6 | K6 | a clean account without Homebrew plays a LAN round; `otool -L` shows no `/opt/homebrew` | L | 34 MB `.app` validated at 26cf1841; clean-account LAN remains |
 
-Other `burndown` issues are off these gates or wait on the owner.
+Other `burndown` issues are below the bug lane or wait on the owner.
 
-**Resume here:** #826 #828 #830 #832 #839 #842 #844 #845 #846 #849 #852 #853 #854 #856 merged; #843 closed (superseded by #852). Open: #859 (xanim), then boxbrush float[3] (PR 6), float[4] (PR 5), #857 rb_light, trimesh_box. Windows clones need an owner sync to f99e3cb0; rows 61-65 are evidence-only. [#804](https://github.com/jm2/kisakcod/issues/804) holds host detail.
+**Resume here:** bug lane row 1. Row 58 fixes are merged; close leg with macmini (#867). Host detail: #804.
 
 ## Blocked on owner
 
@@ -49,7 +68,6 @@ Other `burndown` issues are off these gates or wait on the owner.
 | Retail-fidelity call on #208 | the sweep |
 | GPU runner; Apple Developer ID | G5; G6 |
 | Sync into the Windows clones (yoga 2e3ba835, antec-win 26cf1841) | rows 61/63 post-#828 legs |
-| Push the `ci.yml` fold (no token has `workflow` scope) | one macOS runner per run |
 | LAN/unsandboxed launch on mbp16 | row 65 |
 | Clean-account K6 round on mbp16 | row 66 |
 
@@ -62,12 +80,3 @@ Other `burndown` issues are off these gates or wait on the owner.
 - 0.1.0 is the first display version (#688); 64-bit builds load unverified families by default (`+set db_unverified64 0` restores the guard, #689); the dev autoexec needs `+set com_devAutoexec 1` (#693).
 - 0.1.0 ships the D3D9 and dxvk-native clients; native Vulkan (#713) comes after ([ADR-0010](decisions/0010-interim-renderers-ship-in-0-1-0.md)), 2026-10-25.
 - Standing rules (x86 pre-approval, sanitizer bar, vulnerabilities, retail data, shared hosts) are in [CHARTER](CHARTER.md#standing-owner-rules).
-
-## Done since last review
-
-Merge SHAs are in `git log`.
-
-- G0-G2 passed (rows 46, 54, 37; #178-#180); G3's Win64 target passes (row 47).
-- 2026-10-26: #815 (Windows ARM64 presets, ASan), #825 (#818 intro skip), #840 (`pr_gate` INFRA; #838 diagnosed as runner capacity).
-- G5 interim clients pass (rows 55-57, 59); 1.8 parity and 21-map rotation pass (rows 52-53).
-- 2026-10-26 merged: #815 ARM64 presets/ASan, #812/#813 row 66 bundles, #819/#822/#823 row 58, #825/#818 intro-cinematic connstate.
