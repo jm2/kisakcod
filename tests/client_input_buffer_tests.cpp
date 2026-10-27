@@ -83,9 +83,13 @@ WEAK uint32_t __cdecl SEH_DecodeLetter(uint32_t firstChar, uint32_t, int *usedCo
 }
 WEAK const char *__cdecl R_TextLineWrapPosition(const char *text, int, int, Font_s *, float)
 {
-    if (!*text)
+    constexpr std::size_t kMaxScan = 4096;
+    std::size_t length = 0;
+    while (length < kMaxScan && text[length] != '\0')
+        ++length;
+    if (length == 0)
         return g_empty;
-    return text + std::strlen(text) - 1;
+    return text + length - 1;
 }
 WEAK Font_s *__cdecl UI_GetFontHandle(const ScreenPlacement *, int, float) { return nullptr; }
 WEAK double __cdecl R_NormalizedTextScale(Font_s *, float) { return 1.0; }
