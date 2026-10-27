@@ -810,6 +810,10 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
         ${SRC_DIR}/game_mp/g_main_mp.cpp
         ${SRC_DIR}/universal/q_parse.cpp
         ${SRC_DIR}/server/sv_game.cpp)
+    kisakcod_game_mp_hazard_test(game-mp-script-damage 4
+        ${SRC_DIR}/game_mp/g_client_script_cmd_mp.cpp)
+    kisakcod_game_mp_hazard_test(game-mp-client-commands 5
+        ${SRC_DIR}/game_mp/g_cmds_mp.cpp)
 endif()
 
 # The game module's dvars (game_mp/g_main_mp.cpp G_RegisterDvars) carry the

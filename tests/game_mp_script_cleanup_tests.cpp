@@ -1,10 +1,11 @@
-// game_mp_script_cleanup_tests.cpp: the script-command cleanup sites from
-// #217 item 3. Each check drives the production implementation, not a copy:
+// game_mp_script_cleanup_tests.cpp: the game_mp cleanup sites from #217
+// items 1 and 3. Each check drives the production implementation, not a copy:
 //   * G_SpawnTurret's bad-weapon Com_Error text is the real apostrophe form,
 //   * PlayerCmd_ClearPerks clears both perk masks after the dead 32-bit
 //     pointer-magic checks are gone,
 //   * Scr_RandomFloatRange prints its float arguments as floats, and
-//   * GScr_IsPlayerNumber rejects negative values with an unsigned bound.
+//   * GScr_IsPlayerNumber rejects negative values with an unsigned bound,
+//   * setDvar/makeDvarServerInfo pass the value they sanitized (item 1).
 
 #include <bgame/bg_local.h>
 #include <game/game_public.h>
@@ -25,6 +26,8 @@
 
 gentity_s g_entities[MAX_GENTITIES];
 level_locals_t level;
+const dvar_t *loc_warnings;
+const dvar_t *loc_warningsAsErrors;
 
 namespace
 {
@@ -32,6 +35,11 @@ int g_failures = 0;
 gclient_s g_client;
 int g_intArg = 0;
 float g_floatArg[2] = {};
+int g_numParams = 0;
+const char *g_stringArg = "";
+int g_stringType = 0;
+char g_dvarSetValue[256] = "";
+char g_dvarRegisteredValue[256] = "";
 int g_lastInt = -1;
 float g_lastFloat = 0.0f;
 int g_scrErrors = 0;
@@ -60,6 +68,11 @@ void MyAssertHandler(const char *file, int line, int, const char *fmt, ...)
 {
     std::fprintf(stderr, "assert %s:%d %s\n", file ? file : "?", line, fmt ? fmt : "");
     std::exit(3);
+}
+
+uint8_t __cdecl I_CleanChar(uint8_t character)
+{
+    return character == 146 ? 39 : character;
 }
 
 char *__cdecl va(const char *format, ...)
@@ -113,6 +126,63 @@ void __cdecl Scr_ObjectError(const char *error)
 int __cdecl Scr_GetInt(uint32_t)
 {
     return g_intArg;
+}
+
+const char *__cdecl Scr_GetString(uint32_t index)
+{
+    return index == 0 ? "b217_dvar" : g_stringArg;
+}
+
+int __cdecl Scr_GetType(uint32_t index)
+{
+    return index == 1 ? g_stringType : 0;
+}
+
+uint32_t __cdecl Scr_GetNumParam()
+{
+    return g_numParams;
+}
+
+const char *__cdecl Scr_GetIString(uint32_t)
+{
+    return "";
+}
+
+uint32_t __cdecl Scr_GetPointerType(uint32_t)
+{
+    return 0;
+}
+
+gentity_s *__cdecl Scr_GetEntity(uint32_t)
+{
+    return nullptr;
+}
+
+void __cdecl Scr_ParamError(uint32_t, const char *) {}
+
+void QDECL Com_PrintWarning(int, const char *, ...) {}
+
+char __cdecl Dvar_IsValidName(const char *)
+{
+    return 1;
+}
+
+const dvar_s *__cdecl Dvar_FindVar(const char *)
+{
+    return nullptr;
+}
+
+void __cdecl Dvar_AddFlags(dvar_s *, int) {}
+
+const dvar_s *__cdecl Dvar_RegisterString(const char *, const char *value, uint16_t, const char *)
+{
+    std::snprintf(g_dvarRegisteredValue, sizeof(g_dvarRegisteredValue), "%s", value);
+    return nullptr;
+}
+
+void __cdecl Dvar_SetFromStringByName(const char *, const char *value)
+{
+    std::snprintf(g_dvarSetValue, sizeof(g_dvarSetValue), "%s", value);
 }
 
 float __cdecl Scr_GetFloat(uint32_t index)
@@ -223,14 +293,40 @@ void IsPlayerNumberRejectsNegativeValues()
     GScr_IsPlayerNumber();
     Check(g_lastInt == 0, "isPlayerNumber(64) is false");
 }
+// Both dvars build outString with I_CleanChar, turn a double quote into an
+// apostrophe, cap at 1023 bytes and NUL-terminate; that is the value the
+// engine must receive, not the raw script string.
+void SetDvarPassesTheSanitizedValue()
+{
+    g_numParams = 2;
+    g_stringArg = "a\"b\x92" "c";
+    g_dvarSetValue[0] = 0;
+    GScr_SetDvar();
+    Check(std::strcmp(g_dvarSetValue, "a'b'c") == 0,
+          "setDvar stores the cleaned value");
+}
+
+void MakeDvarServerInfoPassesTheSanitizedValue()
+{
+    g_numParams = 2;
+    g_stringArg = "a\"b\x92" "c";
+    g_dvarRegisteredValue[0] = 0;
+    GScr_MakeDvarServerInfo();
+    Check(std::strcmp(g_dvarRegisteredValue, "a'b'c") == 0,
+          "makeDvarServerInfo registers the cleaned value");
+}
 }  // namespace
 
 int main()
 {
+    static dvar_t falseDvar;
+    loc_warnings = loc_warningsAsErrors = &falseDvar;
     ClearPerksClearsBothMasks();
     TurretErrorUsesARealQuote();
     RandomFloatRangePrintsFloats();
     IsPlayerNumberRejectsNegativeValues();
+    SetDvarPassesTheSanitizedValue();
+    MakeDvarServerInfoPassesTheSanitizedValue();
     std::printf("game_mp_script_cleanup_tests: %d check(s) failed\n", g_failures);
     return g_failures ? 1 : 0;
 }
