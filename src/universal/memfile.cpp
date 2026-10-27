@@ -10,31 +10,33 @@
 #include <cstring>
 #include <limits>
 
-static int g_cacheSize;
-static int g_nonZeroCount;
-static int g_zeroCount;
-static int g_cacheBufferLen;
+static thread_local int g_cacheSize;
+static thread_local int g_nonZeroCount;
+static thread_local int g_zeroCount;
+static thread_local int g_cacheBufferLen;
 
-static bool g_compress;
+static thread_local bool g_compress;
 
 #define CODE_LEN_MASK 63
 #define SAVE_SEGMENT_COUNT 8
 
-static byte g_cacheBuffer[CODE_LEN_MASK + 2];
-static byte g_saveBuffer[8192];
+static thread_local byte g_cacheBuffer[CODE_LEN_MASK + 2];
+static thread_local byte g_saveBuffer[8192];
 
-static int streamModeThread;
-static MemFileMode streamMode;
+static thread_local int streamModeThread;
+static thread_local MemFileMode streamMode;
 
-static z_stream_s stream;
+static thread_local z_stream_s stream;
 
-// The legacy codec is process-global.  Keep its owner and the selected read
-// segment out of MemoryFile so the disk/runtime structure remains ABI-neutral.
-static MemoryFile* g_streamOwner;
+// The legacy codec allows one active stream per thread.  Keep its owner and
+// the selected read segment out of MemoryFile so the disk/runtime structure
+// remains ABI-neutral, and keep all decode state thread_local so streams on
+// different threads cannot interleave their RLE and zlib state.
+static thread_local MemoryFile* g_streamOwner;
 static thread_local MemoryFile* g_currentThreadStreamOwner;
-static int g_activeSegmentIndex = -1;
-static size_t g_activeSegmentDataStart;
-static size_t g_activeSegmentEnd;
+static thread_local int g_activeSegmentIndex = -1;
+static thread_local size_t g_activeSegmentDataStart;
+static thread_local size_t g_activeSegmentEnd;
 
 static const char* MemFileModeNames[] = // idb
 {

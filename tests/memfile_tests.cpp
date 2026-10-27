@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -294,6 +295,72 @@ void TestCompressedFailureResetsTheSingleton()
     CloseReader(truncatedReader);
 }
 
+struct ConcurrentDecodeResult
+{
+    MemFileReadStatus status = MemFileReadStatus::Success;
+    std::vector<std::uint8_t> bytes;
+};
+
+void TestConcurrentDecodersAreIndependent()
+{
+    const std::vector<std::uint8_t> payloadA = MakeMixedPayload(4099);
+    const std::vector<std::uint8_t> payloadB = MakeMixedPayload(8191);
+    std::vector<std::uint8_t> archiveA = WriteArchive(payloadA, true);
+    std::vector<std::uint8_t> archiveB = WriteArchive(payloadB, true);
+
+    ConcurrentDecodeResult resultA;
+    ConcurrentDecodeResult resultB;
+    std::atomic<int> ready{0};
+
+    const auto decode = [&ready](
+        std::vector<std::uint8_t> &archive,
+        const std::size_t expectedSize,
+        ConcurrentDecodeResult &result) {
+        MemoryFile reader{};
+        MemFile_InitForReading(
+            &reader,
+            static_cast<int>(archive.size()),
+            archive.data(),
+            true);
+        ready.fetch_add(1, std::memory_order_release);
+        while (ready.load(std::memory_order_acquire) < 3)
+            std::this_thread::yield();
+
+        result.bytes.resize(expectedSize);
+        std::size_t offset = 0;
+        while (offset < expectedSize)
+        {
+            const std::size_t count =
+                std::min<std::size_t>(19, expectedSize - offset);
+            result.status = MemFile_TryReadDataNoReport(
+                &reader,
+                static_cast<int>(count),
+                result.bytes.data() + offset);
+            if (result.status != MemFileReadStatus::Success)
+                break;
+            offset += count;
+        }
+        CloseReader(reader);
+    };
+
+    std::thread workerA(
+        decode, std::ref(archiveA), payloadA.size(), std::ref(resultA));
+    std::thread workerB(
+        decode, std::ref(archiveB), payloadB.size(), std::ref(resultB));
+
+    ready.fetch_add(1, std::memory_order_release);
+    while (ready.load(std::memory_order_acquire) < 3)
+        std::this_thread::yield();
+    workerA.join();
+    workerB.join();
+
+    CHECK(resultA.status == MemFileReadStatus::Success);
+    CHECK(resultA.bytes == payloadA);
+    CHECK(resultB.status == MemFileReadStatus::Success);
+    CHECK(resultB.bytes == payloadB);
+    CHECK(unexpectedReports == 0);
+}
+
 void TestErrorAbandonmentReleasesTheSingleton()
 {
     const std::vector<std::uint8_t> payload = MakeMixedPayload(257);
@@ -580,6 +647,7 @@ int main()
     TestSegmentBoundaryAndPartialFailure();
     TestRawAndCompressedRoundTrips();
     TestCompressedFailureResetsTheSingleton();
+    TestConcurrentDecodersAreIndependent();
     TestErrorAbandonmentReleasesTheSingleton();
     TestBoundedCStrings();
     TestInvalidArgumentsDoNotMutate();
