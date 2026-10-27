@@ -481,7 +481,11 @@ char __cdecl G_MoverPush(gentity_s *pusher, float *move, float *amove, gentity_s
     {
         ent = &g_entities[v23[j]];
         if (pushed_p >= &pushed[MAX_GENTITIES])
+        {
+            // MyAssertHandler is a no-op outside KISAK_PURE; break to keep the write bounded.
             MyAssertHandler(".\\game\\g_mover.cpp", 428, 0, "%s", "pushed_p < &pushed[MAX_GENTITIES]");
+            break;
+        }
         pushed_p->ent = ent;
         origin = pushed_p->origin;
         currentOrigin = ent->r.currentOrigin;
