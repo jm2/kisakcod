@@ -1342,6 +1342,13 @@ extern const dvar_t *cg_nopredict;
 extern const dvar_t *cg_drawMaterial;
 extern const dvar_t *cg_deadChatWithTeam;
 extern const dvar_t *cg_firstPersonTracerChance;
+
+// #817: answer the team/class script menus without a UI.
+extern const dvar_t *cg_autoJoin;
+extern const dvar_t *cg_autoJoinTeamMenu;
+extern const dvar_t *cg_autoJoinTeam;
+extern const dvar_t *cg_autoJoinClassMenu;
+extern const dvar_t *cg_autoJoinClass;
 extern const dvar_t *cg_synchronousClients;
 extern const dvar_t *snd_drawInfo;
 extern const dvar_t *cg_debug_overlay_viewport;

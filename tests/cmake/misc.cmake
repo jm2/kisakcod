@@ -1715,3 +1715,21 @@ set_target_properties(kisakcod-unzip-skip-tests PROPERTIES RUNTIME_OUTPUT_DIRECT
 add_test(NAME unzip-skip-contracts COMMAND kisakcod-unzip-skip-tests
     WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 kisakcod_ilp32(kisakcod-unzip-skip-tests unzip-skip-contracts)
+
+add_executable(kisakcod-cg-autojoin-tests
+    cgame_mp_autojoin_tests.cpp
+    ${SRC_DIR}/cgame_mp/cg_autojoin_mp.cpp
+)
+target_include_directories(
+    kisakcod-cg-autojoin-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-cg-autojoin-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-cg-autojoin-tests)
+set_target_properties(
+    kisakcod-cg-autojoin-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME cg-autojoin-menu-rules
+    COMMAND kisakcod-cg-autojoin-tests
+)
