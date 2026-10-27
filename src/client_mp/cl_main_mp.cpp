@@ -1436,7 +1436,7 @@ void __cdecl CL_ServersResponsePacket(netadr_t from, msg_t *msg)
         do
             v2 = *buffptr++;
         while (v2 != 92 && buffptr < buffend);
-        if (buffptr >= buffend - 6)
+        if (buffend - buffptr < 7)
             break;
         addresses[numservers].ip[0] = *buffptr++;
         addresses[numservers].ip[1] = *buffptr++;
@@ -1457,6 +1457,8 @@ void __cdecl CL_ServersResponsePacket(netadr_t from, msg_t *msg)
             addresses[numservers].ip[3],
             addresses[numservers].port);
         if (++numservers >= 256)
+            break;
+        if (buffend - buffptr < 4)
             break;
     } while (buffptr[1] != 69 || buffptr[2] != 79 || buffptr[3] != 84);
     count = cls.numglobalservers;
@@ -3094,8 +3096,8 @@ void CL_RconLogin()
     if (Cmd_Argc() == 3)
     {
         password = Cmd_Argv(2);
-        if (strlen(password) < 24)
-            memcpy(&rconGlob, password, strlen(password));
+        if (strlen(password) < sizeof(rconGlob.password))
+            I_strncpyz(rconGlob.password, password, sizeof(rconGlob.password));
         else
             Com_Printf(14, "rcon password must be %i characters or less\n", 24);
     }
@@ -3117,11 +3119,10 @@ ping_t *__cdecl CL_GetFreePing()
 {
     ping_t *best; // [esp+0h] [ebp-18h]
     DWORD currentTime; // [esp+8h] [ebp-10h]
-    int32_t oldest; // [esp+Ch] [ebp-Ch]
+    DWORD oldest; // [esp+Ch] [ebp-Ch]
     int32_t i; // [esp+10h] [ebp-8h]
     int32_t ia; // [esp+10h] [ebp-8h]
     ping_t *pingptr; // [esp+14h] [ebp-4h]
-    ping_t *pingptra; // [esp+14h] [ebp-4h]
 
     currentTime = Sys_Milliseconds();
     pingptr = cl_pinglist;
@@ -3144,17 +3145,15 @@ ping_t *__cdecl CL_GetFreePing()
         }
         ++pingptr;
     }
-    pingptra = cl_pinglist;
     best = cl_pinglist;
-    oldest = 0x80000000;
-    for (ia = 0; ia < 16; ++ia)
+    oldest = currentTime - cl_pinglist[0].start;
+    for (ia = 1; ia < 16; ++ia)
     {
-        if ((currentTime - pingptra->start) > oldest)
+        if ((currentTime - cl_pinglist[ia].start) > oldest)
         {
-            oldest = currentTime - pingptra->start;
-            best = pingptra;
+            oldest = currentTime - cl_pinglist[ia].start;
+            best = &cl_pinglist[ia];
         }
-        ++pingptra;
     }
     return best;
 }
