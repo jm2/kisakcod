@@ -1091,7 +1091,7 @@ void __cdecl G_SpawnTurret(gentity_s *self, const char *weaponinfoname)
     self->s.weapon = G_GetWeaponIndexForName(weaponinfoname);
     self->s.weaponModel = 0;
     if (!self->s.weapon)
-        Com_Error(ERR_DROP, "bad weaponinfo ',27h,'%s',27h,' specified for turret", weaponinfoname);
+        Com_Error(ERR_DROP, "bad weaponinfo '%s' specified for turret", weaponinfoname);
     weapDef = BG_GetWeaponDef(self->s.weapon);
     if (weapDef->weapClass != WEAPCLASS_TURRET)
     {

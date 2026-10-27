@@ -3351,13 +3351,9 @@ void __cdecl PlayerCmd_ClearPerks(scr_entref_t entref)
     }
     client = pSelf->client;
     p_perks = &client->ps.perks;
-    if (client == (gclient_s *)-1532)
-        MyAssertHandler("c:\\trees\\cod3\\src\\bgame\\../bgame/bg_perks_mp.h", 63, 0, "%s", "perks");
     *p_perks = 0;
     v3 = pSelf->client;
     v4 = &v3->sess.cs.perks;
-    if (v3 == (gclient_s *)-12388)
-        MyAssertHandler("c:\\trees\\cod3\\src\\bgame\\../bgame/bg_perks_mp.h", 63, 0, "%s", "perks");
     *v4 = 0;
 }
 
