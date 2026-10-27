@@ -863,6 +863,28 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_tests_properties(vid-restart-buffers PROPERTIES TIMEOUT 20)
 endif()
 
+# CL_ServersResponsePacket's master-list terminator, CL_RconLogin's terminated
+# password copy, and CL_GetFreePing's oldest slot (#206 C1): the production
+# client TU at native width, with the rest of the engine weak.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-cl-main-bounds-tests cl_main_bounds_tests.cpp
+        ${SRC_DIR}/client_mp/cl_main_mp.cpp)
+    target_compile_definitions(kisakcod-cl-main-bounds-tests PRIVATE KISAK_MP UNIX)
+    target_include_directories(kisakcod-cl-main-bounds-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    add_dependencies(kisakcod-cl-main-bounds-tests update_build_number)
+    target_compile_features(kisakcod-cl-main-bounds-tests PRIVATE cxx_std_20)
+    target_compile_options(kisakcod-cl-main-bounds-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-cl-main-bounds-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-cl-main-bounds-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-cl-main-bounds-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-cl-main-bounds-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME cl-main-bounds COMMAND kisakcod-cl-main-bounds-tests)
+    set_tests_properties(cl-main-bounds PROPERTIES TIMEOUT 20)
+endif()
+
 # Com_Memset fills the low byte at every destination alignment and length; the
 # production TU is compiled here so a return to cast-pointer stores trips UBSan.
 add_executable(kisakcod-com-shared-memset-tests
