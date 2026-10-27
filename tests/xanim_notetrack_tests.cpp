@@ -48,8 +48,10 @@ int __cdecl FS_ReadFile(const char *qpath, void **buffer)
         *buffer = nullptr;
         return -1;
     }
-    *buffer = std::malloc(g_piecesFile.size());
-    std::memcpy(*buffer, g_piecesFile.data(), g_piecesFile.size());
+    unsigned char *dest = static_cast<unsigned char *>(std::malloc(g_piecesFile.size()));
+    for (size_t i = 0; i < g_piecesFile.size(); ++i)
+        dest[i] = g_piecesFile[i];
+    *buffer = dest;
     return static_cast<int>(g_piecesFile.size());
 }
 
