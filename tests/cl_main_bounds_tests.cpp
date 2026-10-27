@@ -48,8 +48,15 @@ public:
             m_base = nullptr;
             return;
         }
+        if (count > m_pageSize)
+        {
+            munmap(m_base, m_pageSize * 2);
+            m_base = nullptr;
+            return;
+        }
         m_tail = m_base + m_pageSize - count;
-        std::memcpy(m_tail, bytes, count);
+        for (std::size_t i = 0; i < count; ++i)
+            m_tail[i] = bytes[i];
     }
 
     ~GuardedTail()
@@ -137,8 +144,10 @@ WEAK void Com_DPrintf(int, const char *, ...) {}
 WEAK void I_strncpyz(char *dest, const char *src, int size)
 {
     g_copyDest = dest;
-    std::strncpy(dest, src, static_cast<std::size_t>(size) - 1);
-    dest[size - 1] = 0;
+    int i = 0;
+    for (; i < size - 1 && src[i]; ++i)
+        dest[i] = src[i];
+    dest[i] = 0;
 }
 
 int main(int argc, char **argv)
