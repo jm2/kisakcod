@@ -35,6 +35,11 @@ bool Row(const float (&row)[3], float x, float y, float z)
 {
     return std::fabs(row[0] - x) < 1e-5f && std::fabs(row[1] - y) < 1e-5f && std::fabs(row[2] - z) < 1e-5f;
 }
+bool Angles(const float (&angles)[3], float pitch, float yaw, float roll)
+{
+    return std::fabs(angles[0] - pitch) < 1e-4f && std::fabs(angles[1] - yaw) < 1e-4f &&
+           std::fabs(angles[2] - roll) < 1e-4f;
+}
 } // namespace
 
 int main()
@@ -58,6 +63,23 @@ int main()
     Check(Row(inverse[0], 0, -1, 0) && Row(inverse[1], 1, 0, 0) && Row(inverse[2], 0, 0, 1),
           "the inverse rotation is the transpose");
     Check(Row(inverse[3], -2, 1, -3), "the inverse translation undoes the rotated translation");
+
+    // AxisToSignedAngles reads the right vector from the axis's second row.
+    float signedAngles[3] = {};
+    const float identity[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+    AxisToSignedAngles(identity, signedAngles);
+    Check(Angles(signedAngles, 0, 0, 0), "identity signed angles");
+
+    // 30 degrees of roll about the forward axis: the right row is
+    // (0, cos 30, sin 30).
+    const float roll30[3][3] = {{1, 0, 0}, {0, 0.8660254f, 0.5f}, {0, -0.5f, 0.8660254f}};
+    AxisToSignedAngles(roll30, signedAngles);
+    Check(Angles(signedAngles, 0, 0, 30), "signed angles read the right row");
+
+    // 90 degrees of yaw: forward (0, 1, 0), right (-1, 0, 0).
+    const float yaw90[3][3] = {{0, 1, 0}, {-1, 0, 0}, {0, 0, 1}};
+    AxisToSignedAngles(yaw90, signedAngles);
+    Check(Angles(signedAngles, 0, 90, 0), "yaw 90 signed angles");
 
     if (!g_failures)
         std::printf("quat to mat: all checks passed\n");
