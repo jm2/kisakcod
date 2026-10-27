@@ -25,12 +25,12 @@ struct pushed_t // sizeof=0x2C
 
 //Line 51761:  0006 : 0000559c       char const **hintStrings      827b559c     g_mover.obj
 
-pushed_t pushed[1024];
+pushed_t pushed[MAX_GENTITIES];
 pushed_t *pushed_p;
 
 void __cdecl TRACK_g_mover()
 {
-    track_static_alloc_internal(pushed, 45056, "pushed", 9);
+    track_static_alloc_internal(pushed, sizeof(pushed), "pushed", 9);
     track_static_alloc_internal(hintStrings, 20, "hintStrings", 9);
 }
 
@@ -480,8 +480,12 @@ char __cdecl G_MoverPush(gentity_s *pusher, float *move, float *amove, gentity_s
     for (j = 0; j < v10; ++j)
     {
         ent = &g_entities[v23[j]];
-        if (pushed_p >= (pushed_t *)&pushed_p)
+        if (pushed_p >= &pushed[MAX_GENTITIES])
+        {
+            // MyAssertHandler is a no-op outside KISAK_PURE; break to keep the write bounded.
             MyAssertHandler(".\\game\\g_mover.cpp", 428, 0, "%s", "pushed_p < &pushed[MAX_GENTITIES]");
+            break;
+        }
         pushed_p->ent = ent;
         origin = pushed_p->origin;
         currentOrigin = ent->r.currentOrigin;
