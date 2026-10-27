@@ -918,35 +918,35 @@ void __cdecl cldClipPolyToPlane(
     i0 = ctIn - 1;
     for (i1 = 0; i1 < ctIn; ++i1)
     {
-        fDistance0 = (*plPlane)[0] * (*avArrayIn)[4 * i0]
-            + (*plPlane)[1] * (*avArrayIn)[4 * i0 + 1]
-            + (*plPlane)[2] * (*avArrayIn)[4 * i0 + 2]
+        fDistance0 = (*plPlane)[0] * avArrayIn[i0][0]
+            + (*plPlane)[1] * avArrayIn[i0][1]
+            + (*plPlane)[2] * avArrayIn[i0][2]
             + (*plPlane)[3];
-        fDistance1 = (*plPlane)[0] * (*avArrayIn)[4 * i1]
-            + (*plPlane)[1] * (*avArrayIn)[4 * i1 + 1]
-            + (*plPlane)[2] * (*avArrayIn)[4 * i1 + 2]
+        fDistance1 = (*plPlane)[0] * avArrayIn[i1][0]
+            + (*plPlane)[1] * avArrayIn[i1][1]
+            + (*plPlane)[2] * avArrayIn[i1][2]
             + (*plPlane)[3];
         if (fDistance0 >= 0.0)
         {
-            (*avArrayOut)[4 * *ctOut] = (*avArrayIn)[4 * i0];
-            (*avArrayOut)[4 * *ctOut + 1] = (*avArrayIn)[4 * i0 + 1];
-            (*avArrayOut)[4 * (*ctOut)++ + 2] = (*avArrayIn)[4 * i0 + 2];
+            avArrayOut[*ctOut][0] = avArrayIn[i0][0];
+            avArrayOut[*ctOut][1] = avArrayIn[i0][1];
+            avArrayOut[(*ctOut)++][2] = avArrayIn[i0][2];
         }
         if (fDistance0 > 0.0 && fDistance1 < 0.0 || fDistance0 < 0.0 && fDistance1 > 0.0)
         {
-            vIntersectionPoint = (*avArrayIn)[4 * i0]
-                - ((*avArrayIn)[4 * i0] - (*avArrayIn)[4 * i1]) * fDistance0 / (fDistance0 - fDistance1);
-            vIntersectionPoint_4 = (*avArrayIn)[4 * i0 + 1]
-                - ((*avArrayIn)[4 * i0 + 1] - (*avArrayIn)[4 * i1 + 1])
+            vIntersectionPoint = avArrayIn[i0][0]
+                - (avArrayIn[i0][0] - avArrayIn[i1][0]) * fDistance0 / (fDistance0 - fDistance1);
+            vIntersectionPoint_4 = avArrayIn[i0][1]
+                - (avArrayIn[i0][1] - avArrayIn[i1][1])
                 * fDistance0
                 / (fDistance0 - fDistance1);
-            vIntersectionPoint_8 = (*avArrayIn)[4 * i0 + 2]
-                - ((*avArrayIn)[4 * i0 + 2] - (*avArrayIn)[4 * i1 + 2])
+            vIntersectionPoint_8 = avArrayIn[i0][2]
+                - (avArrayIn[i0][2] - avArrayIn[i1][2])
                 * fDistance0
                 / (fDistance0 - fDistance1);
-            (*avArrayOut)[4 * *ctOut] = vIntersectionPoint;
-            (*avArrayOut)[4 * *ctOut + 1] = vIntersectionPoint_4;
-            (*avArrayOut)[4 * (*ctOut)++ + 2] = vIntersectionPoint_8;
+            avArrayOut[*ctOut][0] = vIntersectionPoint;
+            avArrayOut[*ctOut][1] = vIntersectionPoint_4;
+            avArrayOut[(*ctOut)++][2] = vIntersectionPoint_8;
         }
         i0 = i1;
     }
@@ -1556,17 +1556,17 @@ int __cdecl dCollideBoxTriangleList(
     pIndices = indices;
     for (i = 0; i < triCount && tbData.ctContacts < LOWORD(tbData.iFlags); ++i)
     {
-        v13 = &(*verts)[3 * *pIndices];
+        v13 = verts[*pIndices];
         dv[0][0] = *v13;
         dv[0][1] = v13[1];
         dv[0][2] = v13[2];
         dv[0][3] = 0.0;
-        v12 = &(*verts)[3 * *++pIndices];
+        v12 = verts[*++pIndices];
         dv[1][0] = *v12;
         dv[1][1] = v12[1];
         dv[1][2] = v12[2];
         dv[1][3] = 0.0;
-        v11 = &(*verts)[3 * *++pIndices];
+        v11 = verts[*++pIndices];
         dv[2][0] = *v11;
         dv[2][1] = v11[1];
         dv[2][2] = v11[2];
