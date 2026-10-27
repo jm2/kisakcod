@@ -89,6 +89,13 @@ extern "C" {
  *   DEBUGMSG just prints out a message
  */
 
+/* #238: follow the engine's own release policy (universal/assertive.h) -
+ * the internal assertions are compiled out when NDEBUG is set, and stay
+ * live in debug and sanitizer builds, which configure without NDEBUG. */
+#if !defined(dNODEBUG) && defined(NDEBUG)
+#define dNODEBUG 1
+#endif
+
 #ifndef dNODEBUG
 #ifdef __GNUC__
 #define dIASSERT(a) if (!(a)) dDebug (d_ERR_IASSERT, \

@@ -366,6 +366,7 @@ struct ContactList // sizeof=0x1804
 void __cdecl TRACK_phys();
 poolstorage_t Phys_UserDataPoolStorage() noexcept;
 void __cdecl Phys_Init();
+void Phys_InstallOdeErrorHandlers();
 void __cdecl Phys_Go_f();
 void __cdecl Phys_EnableGeom(dxBody *body);
 void __cdecl Phys_Stop_f();

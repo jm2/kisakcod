@@ -329,4 +329,9 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
         ${SRC_DIR}/physics/ode/mass.cpp
         ${SRC_DIR}/physics/ode/matrix.cpp
         ${SRC_DIR}/physics/ode/odemath.cpp)
+    # #238 item 2: Phys_Init installs ODE's error/debug/message handlers;
+    # this runs them through the same weak engine boundary the server uses.
+    kisakcod_phys_contact_test(physics-ode-error-policy 6
+        ${SRC_DIR}/physics/phys_ode.cpp
+        ${SRC_DIR}/physics/ode/error.cpp)
 endif()

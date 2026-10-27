@@ -15,11 +15,14 @@
 #include <windows.h>
 #endif
 #include "ode/odeext.h"
+#include <ode/error.h>
 #include <universal/profile.h>
 #include "ode/collision_transform.h"
 
 #include <array>
 #include <climits>
+#include <cstdarg>
+#include <cstdio>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -199,6 +202,45 @@ void __cdecl TRACK_phys()
 cmd_function_s Phys_Stop_f_VAR;
 cmd_function_s Phys_Go_f_VAR;
 
+// #238 item 2: ODE's own assertion layer is fatal by default - dDebug aborts
+// and dError exits, from whatever thread hit it, bypassing Com_Error. Install
+// handlers that route those through the engine: a hard ODE error drops through
+// Com_Error, a failed internal assertion is logged and the step continues, and
+// dMessage chatter only reaches the debug log.
+static void ODE_FormatMessage(char (&out)[1024], const char *msg, va_list ap)
+{
+    vsnprintf(out, sizeof(out), msg ? msg : "", ap);
+    out[sizeof(out) - 1] = '\0';
+}
+
+static void Phys_OdeErrorHandler(int num, const char *msg, va_list ap)
+{
+    char text[1024];
+    ODE_FormatMessage(text, msg, ap);
+    Com_Error(ERR_DROP, "ODE error %d: %s", num, text);
+}
+
+static void Phys_OdeDebugHandler(int num, const char *msg, va_list ap)
+{
+    char text[1024];
+    ODE_FormatMessage(text, msg, ap);
+    Com_PrintWarning(21, "ODE assertion %d: %s\n", num, text);
+}
+
+static void Phys_OdeMessageHandler(int num, const char *msg, va_list ap)
+{
+    char text[1024];
+    ODE_FormatMessage(text, msg, ap);
+    Com_DPrintf(21, "ODE message %d: %s\n", num, text);
+}
+
+void Phys_InstallOdeErrorHandlers()
+{
+    dSetErrorHandler(Phys_OdeErrorHandler);
+    dSetDebugHandler(Phys_OdeDebugHandler);
+    dSetMessageHandler(Phys_OdeMessageHandler);
+}
+
 void __cdecl Phys_Init()
 {
     DvarLimits min; // [esp+4h] [ebp-14h]
@@ -227,6 +269,9 @@ void __cdecl Phys_Init()
     DvarLimits minw; // [esp+4h] [ebp-14h]
     DvarLimits minx; // [esp+4h] [ebp-14h]
     PhysWorld worldIndex; // [esp+14h] [ebp-4h]
+
+    // Install before the first ODE call: ODE_Init and Pool_Init can raise.
+    Phys_InstallOdeErrorHandlers();
 
     if (!physInited)
     {
