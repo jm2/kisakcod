@@ -1161,15 +1161,15 @@ void __cdecl Phys_CollideCylinderWithTriangleList(
     radius = info->radius;
     for (triIndex = 0; triIndex < triCount; ++triIndex)
     {
-        v8 = &(*verts)[3 * *indices];
+        v8 = &verts[*indices][0];
         triVerts[0][0] = *v8;
         triVerts[0][1] = v8[1];
         triVerts[0][2] = v8[2];
-        v7 = &(*verts)[3 * *++indices];
+        v7 = &verts[*++indices][0];
         triVerts[1][0] = *v7;
         triVerts[1][1] = v7[1];
         triVerts[1][2] = v7[2];
-        v6 = &(*verts)[3 * *++indices];
+        v6 = &verts[*++indices][0];
         triVerts[2][0] = *v6;
         triVerts[2][1] = v6[1];
         triVerts[2][2] = v6[2];

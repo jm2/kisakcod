@@ -167,7 +167,7 @@ void __cdecl Phys_KMeans(const ContactList *contacts, float (*centroid)[3], int 
     {
         for (groupIter = 0; groupIter != 3; ++groupIter)
         {
-            v6 = &(*centroid)[3 * groupIter];
+            v6 = &centroid[groupIter][0];
             *v6 = 0.0;
             v6[1] = 0.0;
             v6[2] = 0.0;
@@ -176,12 +176,12 @@ void __cdecl Phys_KMeans(const ContactList *contacts, float (*centroid)[3], int 
         {
             if (group[contactIter] != -1)
                 Vec3Add(
-                    &(*centroid)[3 * group[contactIter]],
+                    &centroid[group[contactIter]][0],
                     contacts->contacts[contactIter].contact.normal,
-                    &(*centroid)[3 * group[contactIter]]);
+                    &centroid[group[contactIter]][0]);
         }
         for (groupItera = 0; groupItera != 3; ++groupItera)
-            Vec3Normalize(&(*centroid)[3 * groupItera]);
+            Vec3Normalize(&centroid[groupItera][0]);
         if (step == 5)
             break;
         for (contactItera = 0; contactItera != contacts->contactCount; ++contactItera)
@@ -190,7 +190,7 @@ void __cdecl Phys_KMeans(const ContactList *contacts, float (*centroid)[3], int 
             bestDot = -FLT_MAX;
             for (groupIterb = 0; groupIterb != 3; ++groupIterb)
             {
-                dot = Vec3Dot(&(*centroid)[3 * groupIterb], contacts->contacts[contactItera].contact.normal);
+                dot = Vec3Dot(&centroid[groupIterb][0], contacts->contacts[contactItera].contact.normal);
                 if (bestDot - dot < 0.0)
                     v5 = groupIterb;
                 else
@@ -254,7 +254,7 @@ void __cdecl Phys_MergeGroups(const ContactList *contacts, float (*centroid)[3],
     {
         for (groupIter2 = groupIter + 1; groupIter2 != 3; ++groupIter2)
         {
-            dot = Vec3Dot(&(*centroid)[3 * groupIter], &(*centroid)[3 * groupIter2]);
+            dot = Vec3Dot(&centroid[groupIter][0], &centroid[groupIter2][0]);
             if (dot > 0.9990000128746033)
             {
                 if (physGlob.dumpContacts)
@@ -301,7 +301,7 @@ void __cdecl Phys_GenerateGroupContacts(
     outContacts->contactCount = 0;
     for (groupIter = 0; groupIter != 3; ++groupIter)
     {
-        v8 = &(*centroid)[3 * groupIter];
+        v8 = &centroid[groupIter][0];
         *v8 = 0.0;
         v8[1] = 0.0;
         v8[2] = 0.0;
@@ -317,7 +317,7 @@ void __cdecl Phys_GenerateGroupContacts(
     }
     for (groupIter = 0; groupIter != 3; ++groupIter)
     {
-        Vec3NormalizeTo(&(*centroid)[3 * groupIter], normal);
+        Vec3NormalizeTo(&centroid[groupIter][0], normal);
         Phys_CreateBasisFromNormal(normal, uvBasis[0], uvBasis[1]);
         for (dimIter = 0; dimIter != 2; ++dimIter)
         {
