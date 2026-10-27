@@ -11,7 +11,9 @@ every WARN line to be fixed or answered on the PR first.
 Checks:
   - the PR is open, based on master and mergeable (no conflicts);
   - no CI check failed or is still pending (Codacy and CodeRabbit must
-    finish; their findings are judged by the next two checks);
+    finish; their findings are judged by the next two checks). A job GitHub
+    never handed to a runner (capacity, #838) prints INFRA, not "CI failed",
+    and still keeps the PR NOT READY;
   - Codacy has no open Security finding; other categories warn;
   - every review thread is resolved or has a reply, no review requests
     changes, and review-body findings outside the diff warn;
@@ -37,7 +39,17 @@ FAILED = ("FAILURE", "failure", "ERROR", "error", "CANCELLED", "TIMED_OUT", "ACT
 REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 MERGEABLE_STATES = ("CLEAN", "UNSTABLE", "HAS_HOOKS")
 MISMATCH = ("FAILURE", "failure")
+# None of these prove anything about the code, so they print INFRA instead of a
+# bogus "CI failed": retrigger with close/reopen rather than hunting a defect.
+NO_RUNNER = re.compile(r"was not acquired by Runner|capacity constraints", re.IGNORECASE)
+APT_STALLED = re.compile(r"apt attempt \d+ failed or stalled", re.IGNORECASE)
+APT_STEP = re.compile(r"install clang|lld|cross headers|apt", re.IGNORECASE)
+PASSED_STEP = ("success", "skipped")
+INFORMATIONAL = ("Census scope", "Native64 census")
 GH_TIMEOUT = 120
+# A job that only aggregates other jobs' results: it fails whenever any job in
+# its `needs` failed, so it carries no evidence of its own.
+AGGREGATE_JOBS = ("Portable scaffolding complete",)
 # CodeRabbit puts findings on lines outside the diff into the review body.
 OUTSIDE_DIFF = "Outside diff range"
 
@@ -47,7 +59,7 @@ class Findings:
 
     def __init__(self):
         """Start with no findings."""
-        self.blockers, self.escalations, self.warnings = [], [], []
+        self.blockers, self.escalations, self.warnings, self.infra = [], [], [], []
 
 
 def gh(*args):
@@ -105,11 +117,79 @@ def check_x86(state, found):
         found.blockers.append(f"x86 identity job is {state}")
 
 
-def check_job(label, state, found):
+def annotation_texts(repo, run_id):
+    """The titles, messages and details of a check run's annotations."""
+    annotations = json.loads(gh("api", f"repos/{repo}/check-runs/{run_id}/annotations?per_page=100"))
+    return [(a.get("title") or "") + " " + (a.get("message") or "") + " " + (a.get("raw_details") or "")
+            for a in annotations]
+
+
+def job_steps(repo, run_id):
+    """The steps a GitHub Actions job ran, [] for a job with none, None if unreadable."""
+    # A check run's databaseId is the workflow job id, so the job endpoint is
+    # the one that can answer this. None (unreadable) must not collapse into []
+    # (a job that ran no step): the first proves nothing either way, the second
+    # is a cascade.
+    try:
+        job = json.loads(gh("api", f"repos/{repo}/actions/jobs/{run_id}"))
+    except (subprocess.CalledProcessError, json.JSONDecodeError):
+        return None
+    return job.get("steps") or []
+
+
+def apt_step_failed(steps):
+    """True when the step that installs the census toolchain itself failed."""
+    for step in steps:
+        name = step.get("name") or ""
+        if APT_STEP.search(name) and (step.get("conclusion") or "") not in PASSED_STEP:
+            return True
+    return False
+
+
+def workflow_conclusion(repo, suite_id):
+    """The conclusion of the workflow run a check suite belongs to."""
+    try:
+        runs = json.loads(gh("api", f"repos/{repo}/actions/runs?check_suite_id={suite_id}"))
+    except (subprocess.CalledProcessError, json.JSONDecodeError):
+        return None
+    found = runs.get("workflow_runs") or []
+    return found[0].get("conclusion") if len(found) == 1 else None
+
+
+def infra_reason(repo, check):
+    """Why a failed job proves nothing about the code, or None if it does."""
+    run_id = check.get("databaseId")
+    if not run_id:
+        return None
+    details = json.loads(gh("api", f"repos/{repo}/check-runs/{run_id}"))
+    if (details.get("app") or {}).get("slug") != "github-actions":
+        return None
+    suite_id = (details.get("check_suite") or {}).get("id")
+    if suite_id and workflow_conclusion(repo, suite_id) == "success":
+        return "the workflow run succeeded, so this job is informational (continue-on-error)"
+    texts = annotation_texts(repo, run_id)
+    if any(NO_RUNNER.search(text) for text in texts):
+        return "GitHub could not acquire a runner, so the job never started"
+    steps = job_steps(repo, run_id)
+    if steps is None:
+        return None
+    # The apt step retries and warns after each failed attempt, so the warning
+    # survives a later successful attempt. It only explains the failure when
+    # the install step is the one that failed.
+    if apt_step_failed(steps) and any(APT_STALLED.search(text) for text in texts):
+        return "the runner's apt install failed or stalled"
+    if not steps:
+        return "the job ran no step, so it cascaded from a job that never started"
+    return None
+
+
+def check_job(label, state, found, infra):
     # Codacy and CodeRabbit fail on findings, which the later checks judge,
     # but they must still finish: no review exists before CodeRabbit does.
     if state in FAILED:
-        if not label.startswith(JUDGED_ELSEWHERE):
+        if infra:
+            found.infra.append(f"{label}: {infra}; it proved nothing (#838). Retrigger with close/reopen")
+        elif not label.startswith(JUDGED_ELSEWHERE):
             found.blockers.append(f"CI failed: {label}")
     elif state not in PASSED:
         found.blockers.append(f"CI not finished: {label} ({state})")
@@ -119,8 +199,8 @@ def ci_checks(owner, name, head):
     # Every page: `gh pr view --json statusCheckRollup` reads only the first 100.
     query = ("query($owner:String!,$name:String!,$oid:GitObjectID!,$after:String){repository(owner:$owner,"
              "name:$name){object(oid:$oid){... on Commit{statusCheckRollup{contexts(first:100,after:$after)"
-             "{pageInfo{hasNextPage endCursor} nodes{... on CheckRun{name conclusion status} "
-             "... on StatusContext{context state}}}}}}}}")
+             "{pageInfo{hasNextPage endCursor} nodes{... on CheckRun{name conclusion status databaseId checkSuite{app{slug}}} "
+             "... on StatusContext{context state createdAt}}}}}}}}")
     after = []
     while True:
         result = json.loads(gh("api", "graphql", "-f", f"query={query}", "-F", f"owner={owner}",
@@ -134,16 +214,59 @@ def ci_checks(owner, name, head):
         after = ["-f", f"after={rollup['contexts']['pageInfo']['endCursor']}"]
 
 
-def check_ci(checks, paths, found):
-    x86_seen = False
+def check_key(check):
+    """Group one check across retriggers, not unrelated checks by name."""
+    # The originating app is part of a check run's identity: two workflows
+    # that both publish a check called "build" are two checks, while a
+    # retrigger of one of them reuses the same (app, name) pair.
+    label = check.get("name") or check.get("context") or "?"
+    if not check.get("databaseId"):
+        return ("status", label)
+    origin = ((check.get("checkSuite") or {}).get("app") or {}).get("slug") or "?"
+    return ("check", origin, label)
+
+
+def newest_per_check(checks):
+    """Keep the newest attempt of each check, not a stale retrigger row."""
+    # A retrigger starts a new run without removing the old run's rows, so the
+    # rollup carries a stale CANCELLED or SUCCESS next to the new result.
+    newest = {}
     for check in checks:
+        key = check_key(check)
+        rank = check.get("databaseId") or check.get("startedAt") or check.get("createdAt") or ""
+        if key not in newest or rank > newest[key][0]:
+            newest[key] = (rank, check)
+    return [entry[1] for entry in newest.values()]
+
+
+def check_ci(checks, paths, found, repo):
+    x86_seen = False
+    rows = []
+    for check in newest_per_check(checks):
         label = check.get("name") or check.get("context") or "?"
         state = check.get("conclusion") or check.get("state") or check.get("status")
+        infra = infra_reason(repo, check) if state in FAILED else None
         if X86_JOB in label:
             x86_seen = True
             check_x86(state, found)
         else:
-            check_job(label, state, found)
+            rows.append((label, state, infra))
+
+    # An aggregate job only restates its members' results, and every member is
+    # checked above. When no member failed on code, its failure is a cascade:
+    # an infrastructure outage, a declared x86 change, or a job the rollup does
+    # not carry. Reporting it as INFRA keeps a capacity or apt outage from
+    # holding the gate red; GitHub's own merge state still covers a required
+    # job that is genuinely missing.
+    # Only the aggregate's own members can explain its failure; the census
+    # jobs are informational and absent from its needs.
+    real_failure = any(state in FAILED and not infra
+                       for label, state, infra in rows
+                       if label not in AGGREGATE_JOBS and not label.startswith(INFORMATIONAL))
+    for label, state, infra in rows:
+        if label in AGGREGATE_JOBS and state in FAILED and not real_failure:
+            infra = "no job it aggregates failed on code, so it only cascaded"
+        check_job(label, state, found, infra)
     if not x86_seen and builds_x86(paths):
         found.escalations.append("no x86 identity result on this head (job missing or the PR predates "
                                  "it): run scripts/ci/compare-x86-pr-objects.sh or rerun CI")
@@ -210,12 +333,18 @@ def check_threads(pr, owner, name, number, found):
 def verdict(number, found):
     for line in found.blockers:
         print(f"BLOCK    {line}")
+    for line in found.infra:
+        print(f"INFRA    {line}")
     for line in found.escalations:
         print(f"ESCALATE {line}")
     for line in found.warnings:
         print(f"WARN     {line}")
+    # INFRA alone does not block: GitHub's merge state is authoritative for
+    # required checks, and a required job that never ran keeps it BLOCKED
+    # (reported above). An informational job that fails must not hold a PR.
     if found.blockers:
-        print(f"NOT READY: #{number}")
+        suffix = " (retrigger the INFRA jobs)" if found.infra else ""
+        print(f"NOT READY: #{number}{suffix}")
         return 1
     if found.escalations:
         print(f"ESCALATE: #{number}")
@@ -238,7 +367,7 @@ def main():
                        "state,mergeable,mergeStateStatus,baseRefName,headRefOid,reviewDecision,reviews"))
     found = Findings()
     check_pr(pr, found)
-    check_ci(ci_checks(owner, name, pr["headRefOid"]), changed_files(args.repo, args.number), found)
+    check_ci(ci_checks(owner, name, pr["headRefOid"]), changed_files(args.repo, args.number), found, args.repo)
     check_codacy(owner, name, args.number, found)
     check_threads(pr, owner, name, args.number, found)
     # Every check above read one head; a push since then voids the verdict.
