@@ -39,6 +39,8 @@ jobs:
     # architecture check catches a runner that silently fell back to
     # emulation.
     name: Portable tests / ${{ matrix.platform }}
+    needs: census-scope
+    if: needs.census-scope.outputs.code == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
@@ -119,6 +121,8 @@ jobs:
 
   script-sanitizers:
     name: Script production paths / ASan + UBSan
+    needs: census-scope
+    if: needs.census-scope.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -159,6 +163,8 @@ jobs:
     # C++ would overstate the coverage. The per-test timeout is the bounded
     # budget that keeps a single hung subject from occupying the runner.
     name: Portable tests / ASan + UBSan
+    needs: census-scope
+    if: needs.census-scope.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
@@ -196,6 +202,8 @@ jobs:
     # Linux build of the zone harness (the linux-x86-tests preset), where
     # db_load.cpp's 32-bit steps load the synthetic zones.
     name: Portable tests / Linux i386 zones
+    needs: census-scope
+    if: needs.census-scope.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -254,6 +262,7 @@ jobs:
     outputs:
       linux: ${{ steps.scope.outputs.linux }}
       mac64: ${{ steps.scope.outputs.mac64 }}
+      code: ${{ steps.scope.outputs.code }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -268,22 +277,26 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           if [ "$EVENT" != pull_request ]; then
-            printf 'linux=true\nmac64=true\n' >> "$GITHUB_OUTPUT"
+            printf 'linux=true\nmac64=true\ncode=true\n' >> "$GITHUB_OUTPUT"
             exit 0
           fi
           # --no-renames: names only, so the blobless clone never fetches contents.
           # If the diff fails anyway, measure everything rather than skip.
           if ! files="$(git diff --no-renames --name-only "$BASE"...HEAD)"; then
             echo "::warning::could not list the changed files; running both censuses"
-            printf 'linux=true\nmac64=true\n' >> "$GITHUB_OUTPUT"
+            printf 'linux=true\nmac64=true\ncode=true\n' >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          # Docs-only PRs (docs/, any .md, LICENSE) skip the build and test jobs;
+          # the KPI/docs-budget job still runs, and the aggregate gate accepts the skips.
+          code=true
+          if [ -n "$files" ] && ! grep -qvE '^docs/|\.md$|^LICENSE' <<<"$files"; then code=false; fi
           tool='^(scripts/ci/native64_census\.py|scripts/ci/native64-tulist\.cmake|scripts/ci/ci-stubs/|scripts/extern/)'
           inputs='^(src/|deps/|tests/|cmake/|scripts/.*\.cmake$|scripts/.*/CMakeLists\.txt$|CMakeLists\.txt$|CMakePresets\.json$|\.github/workflows/ci\.yml$)'
           linux=false; mac64=false
           if grep -qE "$tool" <<<"$files"; then linux=true; mac64=true; fi
           if grep -qE "$inputs" <<<"$files"; then linux=true; fi
-          printf 'linux=%s\nmac64=%s\n' "$linux" "$mac64" | tee -a "$GITHUB_OUTPUT"
+          printf 'linux=%s\nmac64=%s\ncode=%s\n' "$linux" "$mac64" "$code" | tee -a "$GITHUB_OUTPUT"
 
   native64-census:
     # KPIs K1, K2, K3 and K5 (docs/design/NATIVE64.md, PLATFORM_POSIX.md):
@@ -391,6 +404,8 @@ jobs:
     # mac64 census covers the macOS 27 SDK on xcode-27. Ninja bounds the bare
     # --parallel to the runner's cores.
     name: macOS headless server / arm64
+    needs: census-scope
+    if: needs.census-scope.outputs.code == 'true'
     runs-on: macos-26
     timeout-minutes: 30
     steps:
@@ -432,6 +447,8 @@ jobs:
     # per-push artifact. Keep the rendered names: "Linux headless server /
     # amd64" is a required status check.
     name: Linux headless server / ${{ matrix.arch }}
+    needs: census-scope
+    if: needs.census-scope.outputs.code == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
@@ -486,6 +503,8 @@ jobs:
     # per-push artifact. The arm64 leg (G3 prep) builds natively for ARM64 on
     # the hosted Windows ARM runner with the same cache variables.
     name: Windows headless server / ${{ matrix.arch }}
+    needs: census-scope
+    if: needs.census-scope.outputs.code == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
@@ -542,6 +561,8 @@ jobs:
     # Advisory while the 64-bit client settles: a failing leg shows on the run
     # but does not fail it, and the job is not in scaffolding-complete.
     name: Windows client / ${{ matrix.arch }}
+    needs: census-scope
+    if: needs.census-scope.outputs.code == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     continue-on-error: true
@@ -609,6 +630,8 @@ jobs:
 
   windows-x86:
     name: Windows x86 / ${{ matrix.config }}
+    needs: census-scope
+    if: needs.census-scope.outputs.code == 'true'
     runs-on: windows-2025
     timeout-minutes: 150
     strategy:
@@ -686,7 +709,8 @@ jobs:
     # a PR that declares its x86 change in its body may still merge, so this
     # job is not in scaffolding-complete.
     name: Windows x86 / objects vs base (advisory)
-    if: ${{ github.event_name == 'pull_request' }}
+    needs: census-scope
+    if: ${{ github.event_name == 'pull_request' && needs.census-scope.outputs.code == 'true' }}
     runs-on: windows-2025
     timeout-minutes: 150
     env:
@@ -767,6 +791,8 @@ jobs:
 
   windows-x86-sp:
     name: Windows x86 SP / ${{ matrix.config }}
+    needs: census-scope
+    if: needs.census-scope.outputs.code == 'true'
     runs-on: windows-2025
     timeout-minutes: 150
     strategy:
@@ -819,6 +845,8 @@ jobs:
     # source profile. Keep it independent of the legacy Windows client/media
     # build so headless cannot silently regain DirectX, Miles, Bink, or Steam.
     name: Windows x86 (headless dedicated)
+    needs: census-scope
+    if: needs.census-scope.outputs.code == 'true'
     runs-on: windows-2025
     timeout-minutes: 120
     steps:
@@ -866,6 +894,7 @@ jobs:
     # are informational and deliberately absent.
     name: Portable scaffolding complete
     needs:
+      - census-scope
       - portable-tests
       - script-sanitizers
       - portable-sanitizers
@@ -884,9 +913,12 @@ jobs:
       - name: Enforce required job results
         run: |
           results="${{ join(needs.*.result, ' ') }}"
-          echo "required results: $results"
+          code="${{ needs.census-scope.outputs.code }}"
+          echo "required results: $results (code=$code)"
           fail=0
           for r in $results; do
+            # A docs-only PR (code=false) skips the build and test jobs on purpose.
+            if [ "$r" = "skipped" ] && [ "$code" = "false" ]; then continue; fi
             if [ "$r" != "success" ]; then
               echo "required job result: $r" >&2
               fail=1
