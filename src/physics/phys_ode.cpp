@@ -1249,7 +1249,7 @@ void __cdecl Phys_OdeMatrix3ToAxis(const float *inMatrix, float (*outAxis)[3])
     for (r = 0; r < 3; ++r)
     {
         for (c = 0; c < 3; ++c)
-            (*outAxis)[3 * c + r] = inMatrix[4 * r + c];
+            outAxis[c][r] = inMatrix[4 * r + c];
     }
 }
 
