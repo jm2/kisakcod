@@ -93,7 +93,6 @@ void __cdecl XAnimCalc(
                         if (bClear)
                         {
                             calcBuffer = rotTransArray;
-                            XAnimCalc(obj, firstInfo, firstWeight, 1, 1, animInfo, rotTransArrayIndex, rotTransArray); // LWSS: add from blops.
                         }
                         else
                         {
@@ -101,7 +100,6 @@ void __cdecl XAnimCalc(
                             if (!calcBuffer)
                                 return;
                             allocedCalcBuffer = 1;
-                            XAnimCalc(obj, firstInfo, firstWeight, 1, 1, animInfo, rotTransArrayIndex, calcBuffer); // LWSS: add from blops.
                         }
                         XAnimCalc(obj, firstInfo, firstWeight, 1, 1, animInfo, rotTransArrayIndex, calcBuffer);
                     }

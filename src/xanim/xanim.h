@@ -1463,6 +1463,7 @@ void DObjTransfer(const DObj_s *fromObj, DObj_s *toObj, double dtime);
 // xanim_load_obj
 XModelPieces *__cdecl XModelPiecesPrecache(const char *name, void *(__cdecl *Alloc)(int));
 XAnimParts *__cdecl XAnimLoadFile(char *name, void *(__cdecl *Alloc)(int));
+void __cdecl XAnimResetLoadState();
 
 
 // KISAK HACK: These are for gfx_d3d/r_material.h
