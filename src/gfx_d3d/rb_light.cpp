@@ -669,7 +669,7 @@ void __cdecl R_GetLightGridSampleEntryQuad(
     uint32_t firstBlockEntrya; // [esp+2Ch] [ebp-28h]
     uint32_t z; // [esp+30h] [ebp-24h]
     uint32_t localZ; // [esp+38h] [ebp-1Ch]
-    const GfxLightGridRow *row; // [esp+3Ch] [ebp-18h]
+    GfxLightGridRow row; // [esp+3Ch] [ebp-18h]
     const uint8_t *rleData; // [esp+40h] [ebp-14h]
     const uint8_t *rleDataa; // [esp+40h] [ebp-14h]
     uint32_t rleSizeFull; // [esp+44h] [ebp-10h]
@@ -691,12 +691,12 @@ void __cdecl R_GetLightGridSampleEntryQuad(
         return;
     }
     bcassert(lightGrid->rowDataStart[rowIndex] * 4, lightGrid->rawRowDataSize);
-    row = (const GfxLightGridRow *)&lightGrid->rawRowData[4 * lightGrid->rowDataStart[rowIndex]];
-    bcassert(row->firstEntry, lightGrid->entryCount);
+    row = R_LightGridRowHeader(lightGrid, rowIndex);
+    bcassert(row.firstEntry, lightGrid->entryCount);
 
-    colIndex = pos[lightGrid->colAxis] - row->colStart;
-    z = pos[2] - row->zStart;
-    if (colIndex + 1 > row->colCount)
+    colIndex = pos[lightGrid->colAxis] - row.colStart;
+    z = pos[2] - row.zStart;
+    if (colIndex + 1 > row.colCount)
     {
         entries[0] = 0;
         entries[1] = 0;
@@ -704,35 +704,35 @@ void __cdecl R_GetLightGridSampleEntryQuad(
         entries[3] = 0;
         return;
     }
-    if (z + 1 > row->zCount)
+    if (z + 1 > row.zCount)
     {
         entries[0] = 0;
         entries[1] = 0;
         entries[2] = 0;
         entries[3] = 0;
-        if (pos[2] < row->zStart)
+        if (pos[2] < row.zStart)
             *defaultGridEntry = 0;
         return;
     }
 
-    firstBlockEntry = row->firstEntry;
-    rleData = (const uint8_t *)&row[1];
-    rleSizeFull = (row->zCount > 255) + 3;
+    firstBlockEntry = row.firstEntry;
+    rleData = R_LightGridRowBytes(lightGrid, rowIndex) + sizeof(GfxLightGridRow);
+    rleSizeFull = (row.zCount > 255) + 3;
 
     if (colIndex == -1)
     {
         entries[0] = 0;
         entries[1] = 0;
-        baseZ = LOBYTE(row[1].colCount);
-        if (row->zCount > 255)
-            baseZ += HIBYTE(row[1].colCount) << 8;
+        baseZ = rleData[2];
+        if (row.zCount > 255)
+            baseZ += rleData[3] << 8;
         lookup = z - baseZ + firstBlockEntry;
-        if (z - baseZ < HIBYTE(row[1].colStart))
+        if (z - baseZ < rleData[1])
             v13 = &lightGrid->entries[lookup];
         else
             v13 = 0;
         entries[2] = v13;
-        if (z - baseZ + 1 < HIBYTE(row[1].colStart))
+        if (z - baseZ + 1 < rleData[1])
             v12 = &lightGrid->entries[lookup + 1];
         else
             v12 = 0;
@@ -747,7 +747,7 @@ void __cdecl R_GetLightGridSampleEntryQuad(
             colIndex -= *rleData;
             firstBlockEntry += rleData[1] * *rleData;
             if (rleData[1])
-                v11 = (row->zCount > 255) + 3;
+                v11 = (row.zCount > 255) + 3;
             else
                 v11 = 2;
             rleData += v11;
@@ -755,7 +755,7 @@ void __cdecl R_GetLightGridSampleEntryQuad(
         if (rleData[1])
         {
             baseZb = rleData[2];
-            if (row->zCount > 255)
+            if (row.zCount > 255)
                 baseZb += rleData[3] << 8;
             if (z < baseZb)
                 *defaultGridEntry = 0;
@@ -794,7 +794,7 @@ void __cdecl R_GetLightGridSampleEntryQuad(
             if (rleData[3])
             {
                 baseZa = rleData[4];
-                if (row->zCount > 0xFFu)
+                if (row.zCount > 0xFFu)
                     baseZa += rleData[5] << 8;
                 if (z < baseZa + rleData[3])
                     *defaultGridEntry = 0;
@@ -806,7 +806,7 @@ void __cdecl R_GetLightGridSampleEntryQuad(
                 return;
             }
         }
-        if (pos[lightGrid->colAxis] + 1 == row->colCount + row->colStart)
+        if (pos[lightGrid->colAxis] + 1 == row.colCount + row.colStart)
         {
             entries[2] = 0;
             entries[3] = 0;
@@ -820,7 +820,7 @@ void __cdecl R_GetLightGridSampleEntryQuad(
                 v6 = 2;
             rleDataa = &rleData[v6];
             baseZc = rleDataa[2];
-            if (row->zCount > 0xFFu)
+            if (row.zCount > 0xFFu)
                 baseZc += rleDataa[3] << 8;
             lookupc = z - baseZc + firstBlockEntrya;
             if (z - baseZc < rleDataa[1])

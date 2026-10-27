@@ -1,4 +1,5 @@
 #include "r_light.h"
+#include "rb_light.h"
 #include <qcommon/com_bsp.h>
 #include "r_bsp.h"
 
@@ -252,7 +253,7 @@ uint8_t *R_LoadLightGridEntries()
 void __cdecl R_AssertLightGridValid(const GfxLightGrid *lightGrid)
 {
     uint32_t rowCount; // [esp+0h] [ebp-Ch]
-    const GfxLightGridRow *row; // [esp+4h] [ebp-8h]
+    GfxLightGridRow row; // [esp+4h] [ebp-8h]
     uint32_t rowIndex; // [esp+8h] [ebp-4h]
 
     if (lightGrid->mins[0] > lightGrid->maxs[0])
@@ -300,14 +301,14 @@ void __cdecl R_AssertLightGridValid(const GfxLightGrid *lightGrid)
                     "lightGrid->rowDataStart[rowIndex] * 4 doesn't index lightGrid->rawRowDataSize\n\t%i not in [0, %i)",
                     4 * lightGrid->rowDataStart[rowIndex],
                     lightGrid->rawRowDataSize);
-            row = (const GfxLightGridRow *)&lightGrid->rawRowData[4 * lightGrid->rowDataStart[rowIndex]];
-            if (row->firstEntry >= lightGrid->entryCount)
+            row = R_LightGridRowHeader(lightGrid, rowIndex);
+            if (row.firstEntry >= lightGrid->entryCount)
                 MyAssertHandler(
                     ".\\r_bsp_load_obj.cpp",
                     1444,
                     0,
                     "row->firstEntry doesn't index lightGrid->entryCount\n\t%i not in [0, %i)",
-                    row->firstEntry,
+                    row.firstEntry,
                     lightGrid->entryCount);
         }
     }

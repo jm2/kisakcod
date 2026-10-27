@@ -2,6 +2,24 @@
 #include "r_gfx.h"
 #include "r_model_lighting.h"
 
+#include <cstring>
+
+// The light-grid row blob is a byte stream (DB_AllocStreamPos(0) under the
+// database loader), so a row header is not guaranteed to sit on a 4-byte
+// boundary even though the 4 * rowDataStart offset is a multiple of four.
+// Copy the fixed-size header out by value instead of aliasing it.
+static inline const uint8_t *R_LightGridRowBytes(const GfxLightGrid *lightGrid, uint32_t rowIndex)
+{
+    return &lightGrid->rawRowData[4 * lightGrid->rowDataStart[rowIndex]];
+}
+
+static inline GfxLightGridRow R_LightGridRowHeader(const GfxLightGrid *lightGrid, uint32_t rowIndex)
+{
+    GfxLightGridRow rowHeader;
+    std::memcpy(&rowHeader, R_LightGridRowBytes(lightGrid, rowIndex), sizeof(rowHeader));
+    return rowHeader;
+}
+
 enum GfxSortedHistoryAdd : __int32
 {                                       // ...
     SH_ADD_NEVER = 0x0,
