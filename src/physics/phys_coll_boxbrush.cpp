@@ -2729,13 +2729,13 @@ int __cdecl CircularRemoveRange(float (*xyz)[3], int pointCount, int begin, int 
         return pointCount;
     if (begin >= end)
     {
-        if (xyz != (float (*)[3]) & (*xyz)[3 * end])
-            memmove((uint8_t *)xyz, (uint8_t *)&(*xyz)[3 * end], 12 * (begin - end + 1));
+        if (xyz != &xyz[end])
+            memmove((uint8_t *)xyz, (uint8_t *)&xyz[end][0], 12 * (begin - end + 1));
         return begin - end + 1;
     }
     else
     {
-        memmove((uint8_t *)&(*xyz)[3 * begin + 3], (uint8_t *)&(*xyz)[3 * end], 12 * (pointCount - end));
+        memmove((uint8_t *)&xyz[begin + 1][0], (uint8_t *)&xyz[end][0], 12 * (pointCount - end));
         return pointCount - end + begin + 1;
     }
 }
@@ -2748,8 +2748,8 @@ void __cdecl InsertPoint(float (*xyz)[3], int pointCount, int maxPoints, int ins
 
     if (insertAfter + 1 != pointCount)
         memmove(
-            (uint8_t *)&(*xyz)[3 * insertAfter + 6],
-            (uint8_t *)&(*xyz)[3 * insertAfter + 3],
+            (uint8_t *)&xyz[insertAfter + 2][0],
+            (uint8_t *)&xyz[insertAfter + 1][0],
             12 * (pointCount - insertAfter - 1));
 }
 
@@ -2879,9 +2879,9 @@ int __cdecl Phys_ClipPolyAgainstPlane(
                 v6 = va(
                     " %i) 0x%x, 0x%x, 0x%x\n",
                     ptIndexa,
-                    (*poly)[3 * ptIndexa],
-                    (*poly)[3 * ptIndexa + 1],
-                    (*poly)[3 * ptIndexa + 2]);
+                    poly[ptIndexa][0],
+                    poly[ptIndexa][1],
+                    poly[ptIndexa][2]);
                 Com_PrintError(20, v6);
             }
             v7 = va(
@@ -2904,21 +2904,21 @@ int __cdecl Phys_ClipPolyAgainstPlane(
             enterPair_4a = (enterPaira + 1) % polyCounta;
             if (exitPair > exitPair_4)
                 ++exitPair;
-            Vec3Sub(&(*poly)[3 * exitPair_4], &(*poly)[3 * enterPair_4a], v2);
+            Vec3Sub(&poly[exitPair_4][0], &poly[enterPair_4a][0], v2);
             denom = Vec3Dot(v2, choppingPlane);
             if (denom == 0.0)
             {
-                v12 = &(*poly)[3 * enterPaira];
-                v13 = &(*poly)[3 * exitPair_4];
+                v12 = &poly[enterPaira][0];
+                v13 = &poly[exitPair_4][0];
                 *v12 = *v13;
                 v12[1] = v13[1];
                 v12[2] = v13[2];
             }
             else
             {
-                v8 = Vec3Dot(&(*poly)[3 * enterPair_4a], choppingPlane);
+                v8 = Vec3Dot(&poly[enterPair_4a][0], choppingPlane);
                 frac = (choppingPlane[3] - v8) / denom;
-                Vec3Lerp(&(*poly)[3 * enterPair_4a], &(*poly)[3 * exitPair_4], frac, &(*poly)[3 * enterPaira]);
+                Vec3Lerp(&poly[enterPair_4a][0], &poly[exitPair_4][0], frac, &poly[enterPaira][0]);
             }
             Vec3Sub(&poly[exitPair_4][0], &poly[exitPair][0], v2);
             denom = Vec3Dot(v2, choppingPlane);
