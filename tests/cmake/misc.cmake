@@ -635,6 +635,31 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_tests_properties(scr-fx-angles PROPERTIES TIMEOUT 20)
 endif()
 
+# #217 item 3: the game_mp script-command cleanup sites. The executable links
+# the production TUs and drives G_SpawnTurret, PlayerCmd_ClearPerks,
+# Scr_RandomFloatRange and GScr_IsPlayerNumber; --gc-sections drops the rest.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-game-mp-script-cleanup-tests game_mp_script_cleanup_tests.cpp
+        ${SRC_DIR}/game_mp/g_misc_mp.cpp
+        ${SRC_DIR}/game_mp/g_client_script_cmd_mp.cpp
+        ${SRC_DIR}/game_mp/g_scr_main_mp.cpp
+        ${SRC_DIR}/universal/com_math.cpp)
+    target_include_directories(kisakcod-game-mp-script-cleanup-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-game-mp-script-cleanup-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-game-mp-script-cleanup-tests PRIVATE
+        KISAK_MP KISAK_DEDICATED DEDICATED KISAK_DEDI_HEADLESS UNIX)
+    target_compile_options(kisakcod-game-mp-script-cleanup-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-game-mp-script-cleanup-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-game-mp-script-cleanup-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-game-mp-script-cleanup-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-game-mp-script-cleanup-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME game-mp-script-cleanup COMMAND kisakcod-game-mp-script-cleanup-tests)
+    set_tests_properties(game-mp-script-cleanup PROPERTIES TIMEOUT 20)
+endif()
+
 # World-sector link lists: the production cm_world.cpp with the Linux headless
 # server's defines; --gc-sections drops what the two link calls never reach.
 if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8

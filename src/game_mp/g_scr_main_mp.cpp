@@ -3147,7 +3147,7 @@ void Scr_RandomFloatRange()
     {
         Com_Printf(
             23,
-            "Scr_RandomFloatRange parms: %d %d ",
+            "Scr_RandomFloatRange parms: %g %g ",
             fMin, fMax
             //(uint32_t )COERCE_UNSIGNED_INT64(fMin),
             //(uint32_t )HIDWORD(COERCE_UNSIGNED_INT64(fMin))
@@ -4678,7 +4678,7 @@ void GScr_IsPlayer()
 
 void GScr_IsPlayerNumber()
 {
-    if (Scr_GetInt(0) < 0x40)
+    if ((uint32_t)Scr_GetInt(0) < 0x40)
         Scr_AddInt(1);
     else
         Scr_AddInt(0);
