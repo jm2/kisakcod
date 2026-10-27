@@ -69,7 +69,7 @@ PolyOrientation __cdecl GetPolyOrientation(const float *polyNormal, const float 
 
     for (ptIndex = 1; ptIndex < ptCount - 1; ++ptIndex)
     {
-        Vec3Sub(&(*poly)[3 * ptIndex + 3], &(*poly)[3 * ptIndex], v2);
+        Vec3Sub(&poly[ptIndex + 1][0], &poly[ptIndex][0], v2);
         Vec3Cross(v1, v2, v3);
         if (Vec3LengthSq(v3) > 0.009999999776482582)
             return (PolyOrientation)(Vec3Dot(v3, polyNormal) < 0.0);
@@ -166,8 +166,8 @@ uint32_t __cdecl Phys_ClipLineSegmentAgainstPoly(
     {
         if (Phys_GetChoppingPlaneForPolyEdge(
             polyNormal,
-            &(*poly)[3 * polyIndex],
-            &(*poly)[3 * ((polyIndex + 1) % polyCount)],
+            &poly[polyIndex][0],
+            &poly[(polyIndex + 1) % polyCount][0],
             orient == POLY_CLOCKWISE,
             choppingPlane)
             && !Phys_ClipLineSegmentAgainstPlane(pt1, pt2, choppingPlane))
@@ -249,8 +249,8 @@ uint32_t __cdecl ClipPolys(
     {
         if (Phys_GetChoppingPlaneForPolyEdge(
             polyNormal,
-            &(*poly1)[3 * lastPoly1Index],
-            &(*poly1)[3 * poly1Index],
+            &poly1[lastPoly1Index][0],
+            &poly1[poly1Index][0],
             orient == POLY_CLOCKWISE,
             choppingPlane))
         {
@@ -2241,8 +2241,8 @@ int __cdecl Phys_GetPlaneForTriangle2(const float (*triangle)[3], const float *o
     if (triangleEdge[0][0] < 0.0)
         v39 = (*triangle)[0];
     else
-        v39 = (*triangle)[3];
-    v40 = (*triangle)[6];
+        v39 = triangle[1][0];
+    v40 = triangle[2][0];
     v23 = v40 - v39;
     if (v23 < 0.0)
         v22 = v40;
@@ -2252,8 +2252,8 @@ int __cdecl Phys_GetPlaneForTriangle2(const float (*triangle)[3], const float *o
     if (triangleEdge[0][1] < 0.0)
         v37 = (*triangle)[1];
     else
-        v37 = (*triangle)[4];
-    v38 = (*triangle)[7];
+        v37 = triangle[1][1];
+    v38 = triangle[2][1];
     v21 = v38 - v37;
     if (v21 < 0.0)
         v20 = v38;
@@ -2263,8 +2263,8 @@ int __cdecl Phys_GetPlaneForTriangle2(const float (*triangle)[3], const float *o
     if (triangleEdge[0][2] < 0.0)
         v35 = (*triangle)[2];
     else
-        v35 = (*triangle)[5];
-    v36 = (*triangle)[8];
+        v35 = triangle[1][2];
+    v36 = triangle[2][2];
     v19 = v36 - v35;
     if (v19 < 0.0)
         v18 = v36;
@@ -2272,10 +2272,10 @@ int __cdecl Phys_GetPlaneForTriangle2(const float (*triangle)[3], const float *o
         v18 = v35;
     mins[2] = v18;
     if (triangleEdge[0][0] < 0.0)
-        v33 = (*triangle)[3];
+        v33 = triangle[1][0];
     else
         v33 = (*triangle)[0];
-    v34 = (*triangle)[6];
+    v34 = triangle[2][0];
     v17 = v33 - v34;
     if (v17 < 0.0)
         v16 = v34;
@@ -2283,10 +2283,10 @@ int __cdecl Phys_GetPlaneForTriangle2(const float (*triangle)[3], const float *o
         v16 = v33;
     maxs[0] = v16;
     if (triangleEdge[0][1] < 0.0)
-        v31 = (*triangle)[4];
+        v31 = triangle[1][1];
     else
         v31 = (*triangle)[1];
-    v32 = (*triangle)[7];
+    v32 = triangle[2][1];
     v15 = v31 - v32;
     if (v15 < 0.0)
         v14 = v32;
@@ -2294,10 +2294,10 @@ int __cdecl Phys_GetPlaneForTriangle2(const float (*triangle)[3], const float *o
         v14 = v31;
     maxs[1] = v14;
     if (triangleEdge[0][2] < 0.0)
-        v29 = (*triangle)[5];
+        v29 = triangle[1][2];
     else
         v29 = (*triangle)[2];
-    v30 = (*triangle)[8];
+    v30 = triangle[2][2];
     v13 = v29 - v30;
     if (v13 < 0.0)
         v12 = v30;
@@ -2333,7 +2333,7 @@ int __cdecl Phys_GetPlaneForTriangle2(const float (*triangle)[3], const float *o
         v6 = v25;
     if (radius <= (double)v6)
         return 0;
-    Vec3Sub(&(*triangle)[6], (const float *)triangle, triangleEdge[1]);
+    Vec3Sub(&triangle[2][0], (const float *)triangle, triangleEdge[1]);
     Vec3Cross(triangleEdge[0], triangleEdge[1], result);
     Vec3Normalize(result);
     Vec3Sub(origin, (const float *)triangle, point);
@@ -2349,7 +2349,7 @@ int __cdecl Phys_GetPlaneForTriangle2(const float (*triangle)[3], const float *o
     Vec3Normalize(clipPlane);
     if (-radius >= Vec3Dot(point, clipPlane))
         return 0;
-    Vec3Sub(&(*triangle)[3], &(*triangle)[6], triangleEdge[2]);
+    Vec3Sub(&triangle[1][0], &triangle[2][0], triangleEdge[2]);
     Vec3Sub(origin, &(*triangle)[3], point);
     Vec3Cross(result, triangleEdge[2], clipPlane);
     Vec3Normalize(clipPlane);
@@ -2812,9 +2812,9 @@ int __cdecl Phys_ClipPolyAgainstPlane(
     enterPair_4 = -1;
     anyInside = 0;
     prevPtIndex = polyCount - 1;
-    if ((COERCE_UNSIGNED_INT((*poly)[3 * polyCount - 3]) & 0x7F800000) == 0x7F800000
-        || (COERCE_UNSIGNED_INT((*poly)[3 * prevPtIndex + 1]) & 0x7F800000) == 0x7F800000
-        || (COERCE_UNSIGNED_INT((*poly)[3 * prevPtIndex + 2]) & 0x7F800000) == 0x7F800000)
+    if ((COERCE_UNSIGNED_INT(poly[polyCount - 1][0]) & 0x7F800000) == 0x7F800000
+        || (COERCE_UNSIGNED_INT(poly[prevPtIndex][1]) & 0x7F800000) == 0x7F800000
+        || (COERCE_UNSIGNED_INT(poly[prevPtIndex][2]) & 0x7F800000) == 0x7F800000)
     {
         MyAssertHandler(
             ".\\physics\\phys_coll_boxbrush.cpp",
@@ -2823,13 +2823,13 @@ int __cdecl Phys_ClipPolyAgainstPlane(
             "%s",
             "!IS_NAN((poly[prevPtIndex])[0]) && !IS_NAN((poly[prevPtIndex])[1]) && !IS_NAN((poly[prevPtIndex])[2])");
     }
-    isPrevPointInside = choppingPlane[3] >= Vec3Dot(&(*poly)[3 * prevPtIndex], choppingPlane);
+    isPrevPointInside = choppingPlane[3] >= Vec3Dot(&poly[prevPtIndex][0], choppingPlane);
     isLastPointInside = isPrevPointInside;
     for (ptIndex = 0; ptIndex < polyCount; ++ptIndex)
     {
-        if ((COERCE_UNSIGNED_INT((*poly)[3 * ptIndex]) & 0x7F800000) == 0x7F800000
-            || (COERCE_UNSIGNED_INT((*poly)[3 * ptIndex + 1]) & 0x7F800000) == 0x7F800000
-            || (COERCE_UNSIGNED_INT((*poly)[3 * ptIndex + 2]) & 0x7F800000) == 0x7F800000)
+        if ((COERCE_UNSIGNED_INT(poly[ptIndex][0]) & 0x7F800000) == 0x7F800000
+            || (COERCE_UNSIGNED_INT(poly[ptIndex][1]) & 0x7F800000) == 0x7F800000
+            || (COERCE_UNSIGNED_INT(poly[ptIndex][2]) & 0x7F800000) == 0x7F800000)
         {
             MyAssertHandler(
                 ".\\physics\\phys_coll_boxbrush.cpp",
@@ -2841,7 +2841,7 @@ int __cdecl Phys_ClipPolyAgainstPlane(
         if (ptIndex == polyCount - 1)
             isCurrPointInside = isLastPointInside;
         else
-            isCurrPointInside = choppingPlane[3] >= Vec3Dot(&(*poly)[3 * ptIndex], choppingPlane);
+            isCurrPointInside = choppingPlane[3] >= Vec3Dot(&poly[ptIndex][0], choppingPlane);
         if (isPrevPointInside)
         {
             anyInside = 1;
