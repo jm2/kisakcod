@@ -732,6 +732,13 @@ int __cdecl SV_KickClient(client_t *cl, char *playerName, int maxPlayerNameLen, 
         SV_SendServerCommand(0, SV_CMD_CAN_IGNORE, "%c \"EXE_CANNOTKICKHOSTPLAYER\"", 101);
         return 0;
     }
+    // Engine-owned test clients (SV_AddTestClient, scr_testclients) have no
+    // socket and are re-entered on every map change by the server. A script
+    // or console kick cannot meaningfully remove one: it would drop the slot
+    // and never reconnect, leaving the map's test population short. Refuse it
+    // the same way the host player is refused.
+    if (cl->bIsTestClient)
+        return 0;
     else
     {
         if (playerName)
