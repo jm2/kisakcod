@@ -221,7 +221,8 @@ set_tests_properties(phys-obj-id-sidecar-contracts PROPERTIES TIMEOUT 20)
 # checks sidecar release and slot recycling without an ODE world.
 # --gc-sections keeps only the helpers under test, so the physics, renderer
 # and dvar boundary needs no stubs.
-if (KISAK_PLATFORM STREQUAL "linux")
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     # The engine build does not run -Werror over these decompiled TUs; the
     # diagnostics below predate the pool helpers and are not part of this test.
     set_source_files_properties(
