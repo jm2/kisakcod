@@ -130,7 +130,7 @@ less. Nothing else lives in `docs/`.
 | `AGENTS.md` (root) | 6 KB | operator | Operating rules |
 | `CHARTER.md` | 8 KB | operator | This file |
 | `ROADMAP.md` | 15 KB | operator | Gates, vehicles, workstreams |
-| `NOW.md` | 6 KB | mayor | KPIs, queue, owner blockers |
+| `NOW.md` | 6 KB | coordinator | KPIs, queue, owner blockers |
 | `decisions/NNNN-*.md` | 2 KB each | operator | ADRs |
 | `design/NATIVE64.md` | 15 KB | WS-1/WS-3 | Layouts, hazards, K1-K3 |
 | `design/FASTFILE_LOADER.md` | 12 KB | WS-2 | Two-layout loader, K4 |

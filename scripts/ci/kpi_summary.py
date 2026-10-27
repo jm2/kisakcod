@@ -2,7 +2,7 @@
 """Render the KPI summary (K1-K6) as Markdown for $GITHUB_STEP_SUMMARY.
 
 Inputs:
-  docs/NOW.md                  the KPI table the mayor maintains (all KPIs)
+  docs/NOW.md                  the KPI table the coordinator maintains (all KPIs)
   docs/capability/manifest.json  target x role delivery cells (K6)
   --census PATH                optional native64-census JSON; its measured
                                values replace the NOW.md values for K1, K2,

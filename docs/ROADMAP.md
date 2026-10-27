@@ -1,6 +1,6 @@
 # Roadmap
 
-Owner: operator. The mayor ranks work against this file in [NOW.md](NOW.md).
+Owner: operator. The coordinator ranks work against this file in [NOW.md](NOW.md).
 Scope and evidence rules are in [CHARTER.md](CHARTER.md).
 
 ## Gates
@@ -31,7 +31,7 @@ FFmpeg (owner, 2026-10-22); no build links Miles or Bink.
 Estimates are ranges for one strong engineer, with low confidence. They don't
 convert to swarm time.
 
-**Where things stand (2026-10-25).** G0, G1 and G2 are done (#178-#180). The x86
+**Where things stand (2026-10-26).** G0, G1 and G2 are done (#178-#180). The x86
 client and server play on Steam 1.8 data natively and under Wine (#178), and
 the 64-bit headless server loads every family with its guard on (K4 25/25)
 and passes the 30-minute ASan/UBSan proof on Linux amd64 and Win64 (#180).
@@ -39,10 +39,11 @@ G3's first target passes: an x86 fork client plays a round, map changes and
 a reconnect on the Win64 server with 8 bots. G5's interim clients are done:
 the Win64 D3D9 client and the Linux and macOS dxvk-native clients play on a
 fork server and on a Steam 1.8 server, ASan-clean; Windows ARM64's run is
-left. Vulkan (#713) comes after 0.1.0.
+left. Vulkan (#713) comes after 0.1.0. Row 58 is down to #821; row 66's
+runtime and pins are merged, leaving clean-account validation.
 G4a is under way: a stock 1.8 client joins the x86 server and stays through
 map changes (#182), and the wire captures wait on the owner. G3 (#181), G4b
-(#183) and G6 (#185) are open; G4b and G6 haven't started.
+(#183) and G6 (#185) are open; G4b and G6 gate execution have not started.
 
 ```mermaid
 graph LR

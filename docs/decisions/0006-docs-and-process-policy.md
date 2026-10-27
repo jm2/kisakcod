@@ -31,7 +31,8 @@ source text.
 
 - New findings go into the owning design doc, a bead or an issue, never a
   new file.
-- The mayor re-ranks `NOW.md` at least every 10 days; CI warns after that.
+- The coordinator refreshes `NOW.md` after every merge or gate change and
+  re-ranks it at least every 10 days; CI warns after that.
 
 ## Amendments (approved by the owner)
 

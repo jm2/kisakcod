@@ -67,7 +67,7 @@ def warn_stale_now() -> None:
         return
     if age > NOW_MAX_AGE_DAYS:
         print("::warning file=docs/NOW.md::last reviewed %d days ago (limit %d); "
-              "the mayor must re-rank the queue" % (age, NOW_MAX_AGE_DAYS))
+              "the coordinator must re-rank the queue" % (age, NOW_MAX_AGE_DAYS))
 
 
 def main() -> int:

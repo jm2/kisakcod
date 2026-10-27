@@ -18,10 +18,10 @@ D3DX9 has no ARM64 library, so `KISAK_USE_D3DX` (set by `pre_build.cmake` for 32
 
 - **Replacements:** 6 sites (`r_material_load_obj.cpp` ×4, `binktextures.cpp` ×2) use `gfx_d3d/r_shader_reflect` (CTAB constant table, semantics) and `gfx_d3d/r_shader_compile` (`ShaderBuffer`, D3DCompile).
 - **Native D3DX9_43 rules the reflection matches:** ps_2_x reads `COLOR1` as COLOR0, as retail did (don't fix it); ps_1_x always outputs COLOR0; an SM1 CTAB sits only in the comments after the version token; pixel outputs are `oC#`/`oDepth`.
-- **Dependencies:** no `d3dx9.lib`, but the Microsoft.DXSDK.D3DX 9.29.952.8 NuGet supplies the headers.
-- **ARM64 build:** VS 2026 `-A ARM64` (CMake ≥ 4.2) with `-DKISAK_ALLOW_UNSUPPORTED_64BIT=ON -DKISAK_ENABLE_STEAM=OFF -DCICD=ON -DDXSDK_DIR=…`; check with `scripts/ci/verify-artifact-arch.ps1 -Expected ARM64`. MSVC defines `_M_ARM64`, not `__aarch64__`; `Sys_CycleCounter` reads CNTVCT_EL0. OpenAL Soft 1.25.x Release arm64 hangs in `alcDestroyContext` at shutdown, so vcpkg pins 1.24.3 until an arm64 Release re-test (overrides need a full vcpkg clone). An arm64 host also builds and runs the Win32 x86 targets under emulation, so one machine compares x86, Win64 and arm64 on the same data.
-- **Run (antec-win):** D3D9 needs the console session: a disconnected session fails `GetDeviceCaps` with Invalid call, and an RDP session lists the GPU but returns `D3DERR_NOTAVAILABLE`. After an RDP login, hand the session over with `tscon (Get-Process -Id $PID).SessionId /dest:console` (PowerShell); from SSH, as admin, `schtasks /create /tn tscon1 /sc once /st 00:00 /ru SYSTEM /f /tr "tscon 1 /dest:console"` then `schtasks /run /tn tscon1`. Any RDP login takes the console back. Don't set the Terminal Services GPU policies (`bEnumerateHWBeforeSW`, `AVC444ModePreferred`, `AVCHardwareEncodePreferred`) on Windows 11 26H2: RdpIdd and TermService then crash-loop every 12 s. A fatal D3D error leaves a modal dialog, so automation must time out and kill the process. While connected, console commands need a leading `/`, or they go out as chat. Windows Firewall prompts once per new exe; Deny is fine for a loopback `devmap`.
-- **Host quirk:** `platform-socket-stream-contracts` times out on a host that drops loopback RSTs; hosted CI is the reference.
+- **Dependencies:** no `d3dx9.lib`; the Microsoft.DXSDK.D3DX 9.29.952.8 NuGet supplies the headers.
+- **ARM64 build:** VS 2026 `-A ARM64` (CMake ≥ 4.2) with `-DKISAK_ALLOW_UNSUPPORTED_64BIT=ON -DKISAK_ENABLE_STEAM=OFF -DCICD=ON -DDXSDK_DIR=…`; check with `scripts/ci/verify-artifact-arch.ps1 -Expected ARM64`. MSVC defines `_M_ARM64`, not `__aarch64__`; `Sys_CycleCounter` reads CNTVCT_EL0. OpenAL Soft 1.25.x Release arm64 hangs in `alcDestroyContext` at shutdown, so vcpkg pins 1.24.3 until an arm64 Release re-test (overrides need a full vcpkg clone). One arm64 host also runs the x86 targets under emulation.
+- **Run (antec-win):** D3D9 needs the console session: a disconnected session fails `GetDeviceCaps` with Invalid call, and an RDP session lists the GPU but returns `D3DERR_NOTAVAILABLE`. After an RDP login, hand the session over with `tscon (Get-Process -Id $PID).SessionId /dest:console` (PowerShell); from SSH, as admin, `schtasks /create /tn tscon1 /sc once /st 00:00 /ru SYSTEM /f /tr "tscon 1 /dest:console"` then `schtasks /run /tn tscon1`. Any RDP login takes the console back. Don't set the Terminal Services GPU policies (`bEnumerateHWBeforeSW`, `AVC444ModePreferred`, `AVCHardwareEncodePreferred`) on Windows 11 26H2: RdpIdd and TermService then crash-loop every 12 s. A fatal D3D error leaves a modal dialog; automation must time out and kill it. While connected, console commands need a leading `/`, or they go out as chat. Windows Firewall prompts once per new exe; Deny is fine for a loopback `devmap`.
+- **Host quirk:** `platform-socket-stream-contracts` times out when a host drops loopback RSTs; hosted CI is the reference.
 - **CI `windows-client-64`:** builds KisakCOD-mp on `amd64`, native `arm64` and `amd64-sdl3`, and checks the PE machine type; it doesn't run the client. It's advisory, so read each leg. A link error on arm64 alone usually means new x86- or D3DX-only code.
 - **vcpkg:** the x86 and Win64 clients take OpenAL Soft and FFmpeg from vcpkg; use a full git clone at the manifest baseline (a blobless clone fails port lookups). The nightly no-Steam job needs `setup-vcpkg`. A renamed exe that dies before writing a log: check the name length (30+ characters overran `Sys_GetSemaphoreFileName`, #777).
 - **ASan (MSVC):** `CFLAGS`/`CXXFLAGS=/fsanitize=address`, `-DCMAKE_TRY_COMPILE_CONFIGURATION=Release` (ASan rejects the Debug CRT in try-compile), and `clang_rt.asan_dynamic-x86_64.dll` from `VC\Tools\MSVC\<ver>\bin\Hostx64\x64` beside the exe. MSVC has no UBSan.
@@ -32,7 +32,7 @@ D3DX9 has no ARM64 library, so `KISAK_USE_D3DX` (set by `pre_build.cmake` for 32
 
 - The Steam client fails `CL_CDKeyValidate` off loopback (127.0.0.1 included) with no Steam running; use the nightly `KisakCOD-windows-x86-nosteam-Release` artifact. Bind `+set net_ip 127.0.0.1` on both ends.
 - Put an x86 `d3dx9_43.dll` (NuGet Microsoft.DXSDK.D3DX 9.29.952.8) beside the exe; the build copies the OpenAL Soft and FFmpeg DLLs there itself.
-- An empty dm server still rotates: a 1-minute round takes about 2 minutes of wall time with intermission and load.
+- An empty dm server still rotates: a 1-minute round takes ~2 minutes with intermission and load.
 - **Wine (Fedora):** `wine32` with a `WINEARCH=win32` prefix; `wine-common` must be installed or `wineboot` loops on missing `winmd` files; disable `mscoree,mshtml`; Fedora ships the builtin d3d9 as `wine-d3d9.dll`, so copy it to `d3d9.dll` in the prefix, and set `HKCU\Software\Wine\Direct3D\renderer=vulkan`. The display driver is chosen when the prefix's desktop starts, so restart `wineserver` after changing it. Piped stdin doesn't reach the Win32 console. A fresh profile shows a modal "Set Optimal Settings?" box before `R_Init`; under headless mutter answer it over XTest. The non-headless dedi reads `localization.txt` from its working directory, so run it from the install dir (else zones become `zone\(null)\`). A DB-thread `Com_Error` in a non-headless build hits a deliberate `__debugbreak`: `winedbg --file`, `cont`, then `x /s <com_errorMessage>`.
 - **Stock 1.8 client (row 36):** it reads the CD key from `HKLM\SOFTWARE\Activision\Call of Duty 4`, value `codkey`, in the 32-bit view (`reg add … /reg:32`). Writing it needs a person to approve UAC on that host; the key never goes into files, logs or messages.
 
@@ -44,7 +44,7 @@ D3DX9 has no ARM64 library, so `KISAK_USE_D3DX` (set by `pre_build.cmake` for 32
 - **Minimums:** the client targets macOS 26 (`scripts/mp`); the server keeps 13.0. `scripts/extern/dxvk_macos.cmake` builds the dxvk dylibs with `MACOSX_DEPLOYMENT_TARGET=26.0` to match.
 - **Frame rate:** KosmicKrisp presents FIFO even with `r_vsync 0`, so in-game FPS reads the display refresh (120 on the M1 Max). Compare CPU cost with `sample` instead.
 - **Run:** `./build.sh --install-deps client` (Homebrew; preset `macos-arm64-client`), or `--run` to launch too. Launch with `DXVK_WSI_DRIVER=SDL3` and a local retail `fs_basepath`. Capture frames with Mesa's `VK_LAYER_MESA_screenshot` (`VK_LAYER_MESA_SCREENSHOT_CONFIG=frames=…,output_dir=…`).
-- **Evidence:** zones loaded, the first error, and what each frame shows, described in text. Frames and data stay local.
+- **Evidence:** zones loaded, the first error and each frame's content, in text; data stays local.
 
 Every client, x86 included, answers the engine's Miles and Bink calls with OpenAL Soft (`sound/snd_openal.cpp`: PCM/ADPCM samples, 2D pan, 3D position, FFmpeg streams; no reverb or EQ) and FFmpeg's Bink decoder (`gfx_d3d/r_bink_ffmpeg.cpp`, file opens only; movie audio is silent), owner 2026-10-22. No build links `mss32` or `binkw32`. Windows takes both from vcpkg (`vcpkg.json`, pinned by its baseline; `build-win.ps1 -InstallDeps` fetches vcpkg), Linux and macOS from pkg-config (`scripts/client_media.cmake`).
 
@@ -145,7 +145,9 @@ on the binary path, not `pgrep -x`.
   doesn't delay in exec'd configs, and there's no `echo`; before the client is active, an
   unknown command's `Unknown command "X"` line works as a marker.
 - Spawn without input after about 30 s: `openScriptMenu team_marinesopfor
-  autoassign`, then `openScriptMenu changeclass assault_mp,0`.
+  autoassign`, then a class answer to the flat `changeclass` menu
+  (`assault_mp,0`). The per-team `changeclass_marines` menu ignores that
+  response; `+set cg_autoJoin 1` sends both (`2` only logs the names, #846).
 - Markers: `byte snapshot for <name>` is a server print, so a listen server
   shows it once the client is active. On headless, `Huffman Took` marks only
   the first map; later maps print `Hitch warning`. `iassert` compiles to
@@ -165,7 +167,7 @@ on the binary path, not `pgrep -x`.
 - A client that plays cinematics (Win32, and POSIX with FFmpeg) runs the
   intro chain on a fresh profile, as retail does. The intro drops a connect
   in flight, so a scripted `+devmap` sets `+set com_introPlayed 1`. Stub
-  builds skip the intro while connecting (#614).
+  builds skip the intro while a connect is in flight (#614, #818).
 
 **Screenshots.**
 
