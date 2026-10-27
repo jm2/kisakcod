@@ -236,22 +236,29 @@ void __cdecl ODE_BreakupIslandIfTooBig(
     int *const jointCount)
 {
     ShouldNotRemoveJoint pred; // [esp+3Ch] [ebp-Ch]
-    int oldBodyCount; // [esp+44h] [ebp-4h]
+    int removedBodyCount; // [esp+44h] [ebp-4h]
 
     iassert(body);
     iassert(joint);
 
-    if (*bodyCount >= 14 || *jointCount >= 74)
+    // The arrays hold exactly these counts, so only a larger island is too big.
+    if (*bodyCount > ISLAND_MAX_BODY_COUNT || *jointCount > ISLAND_MAX_JOINT_COUNT)
     {
-        oldBodyCount = *bodyCount;
-        while (*bodyCount > 14)
+        removedBodyCount = 0;
+        while (*bodyCount > ISLAND_MAX_BODY_COUNT)
+        {
             body[--*bodyCount]->tag = 0;
+            ++removedBodyCount;
+        }
         while (1)
         {
-            if (oldBodyCount - *bodyCount > 0)
+            // The predicate covers every body removed so far, not just the
+            // last one, so joints between two removed bodies leave the island
+            // (their bodies are stepped in the next island formed this pass).
+            if (removedBodyCount > 0)
             {
                 pred.body = &body[*bodyCount];
-                pred.bodyCount = oldBodyCount - *bodyCount;
+                pred.bodyCount = removedBodyCount;
                 //*jointCount = std::_Partition<dxJoint **, ShouldNotRemoveJoint>(joint, &joint[*jointCount], v4) - joint;
                 //std::partition(&joint[0], &joint[*jointCount], v4);
 
@@ -263,14 +270,24 @@ void __cdecl ODE_BreakupIslandIfTooBig(
                     ) - joint);
             }
 
-            if (*jointCount < 74)
+            if (*jointCount <= ISLAND_MAX_JOINT_COUNT)
                 break;
 
-            oldBodyCount = (*bodyCount)--;
+            // Removing the last body cannot shrink the joint list any further;
+            // decrementing below it would write body[-1]->tag. Keep the prefix
+            // the partition left in front and bound the list here instead.
+            if (*bodyCount <= 1)
+            {
+                *jointCount = ISLAND_MAX_JOINT_COUNT;
+                break;
+            }
+
+            --*bodyCount;
             body[*bodyCount]->tag = 0;
+            ++removedBodyCount;
         }
 
-        iassert(*bodyCount > 0);
+        iassert(*bodyCount >= 0);
     }
 }
 

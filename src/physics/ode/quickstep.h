@@ -25,6 +25,12 @@
 
 #include <ode/common.h>
 
+// Fixed island caps. dxQuickStepper's per-island arrays are sized from these
+// numbers (dxWorld::sd.order and QuickstepData::rowData hold
+// ISLAND_MAX_JOINT_COUNT * 6 constraint rows), so dxProcessIslands must never
+// hand the stepper a larger island.
+#define ISLAND_MAX_JOINT_COUNT 74
+#define ISLAND_MAX_BODY_COUNT 14
 
 //void dxQuickStepper (dxWorld *world, dxBody * const *body, int nb,
 //		     dxJoint * const *_joint, int nj, dReal stepsize);

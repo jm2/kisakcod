@@ -33,6 +33,13 @@
 void dInternalHandleAutoDisabling (dxWorld *world, dReal stepsize);
 void dxStepBody (dxBody *b, dReal h);
 
+// Trims an island to the caps dxQuickStepper's fixed arrays enforce.
+void __cdecl ODE_BreakupIslandIfTooBig(
+    dxBody *const *body,
+    int *const bodyCount,
+    dxJoint **joint,
+    int *const jointCount);
+
 typedef void (*dstepper_fn_t) (dxWorld *world, dxBody * const *body, int nb,
         dxJoint * const *_joint, int nj, dReal stepsize);
 
