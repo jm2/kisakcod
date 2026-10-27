@@ -1653,7 +1653,7 @@ void __cdecl Phys_GetWindingForBrushFace(
         nonAxialSideIndex = brushSide - 6;
         offset = brush->sides[brushSide - 6].firstAdjacentSideOffset;
         edgeCount = brush->sides[brushSide - 6].edgeCount;
-        v27 = (float *)&(*inPlanes)[4 * brushSide];
+        v27 = const_cast<float *>(inPlanes[brushSide]);
         planes[0][0] = *v27;
         planes[0][1] = v27[1];
         planes[0][2] = v27[2];
@@ -1663,7 +1663,7 @@ void __cdecl Phys_GetWindingForBrushFace(
     {
         offset = brush->firstAdjacentSideOffsets[brushSide & 1][brushSide >> 1];
         edgeCount = brush->edgeCount[brushSide & 1][brushSide >> 1];
-        v28 = (float *)&(*inPlanes)[4 * brushSide];
+        v28 = const_cast<float *>(inPlanes[brushSide]);
         planes[0][0] = *v28;
         planes[0][1] = v28[1];
         planes[0][2] = v28[2];
@@ -1684,7 +1684,7 @@ void __cdecl Phys_GetWindingForBrushFace(
                 side1,
                 brush->numsides + 6);
         v25 = planes[1];
-        v26 = (float *)&(*inPlanes)[4 * side1];
+        v26 = const_cast<float *>(inPlanes[side1]);
         planes[1][0] = *v26;
         planes[1][1] = v26[1];
         planes[1][2] = v26[2];
@@ -1702,7 +1702,7 @@ void __cdecl Phys_GetWindingForBrushFace(
                     side2,
                     brush->numsides + 6);
             v23 = planes[2];
-            v24 = (float *)&(*inPlanes)[4 * side2];
+            v24 = const_cast<float *>(inPlanes[side2]);
             planes[2][0] = *v24;
             planes[2][1] = v24[1];
             planes[2][2] = v24[2];
@@ -1900,7 +1900,7 @@ char __cdecl Phys_TestVertsAgainstPlanes(
     *outSideIndex = -1;
     for (sideIndex = 0; sideIndex < brushContainingThePlanes->numsides + 6; ++sideIndex)
     {
-        dist = Phys_TestVertsAgainstPlane(verts, vertCount, &(*planes)[4 * sideIndex]);
+        dist = Phys_TestVertsAgainstPlane(verts, vertCount, planes[sideIndex]);
         if (dist >= 0.0)
             return 0;
         if (sideIndex >= 6)
@@ -1916,7 +1916,7 @@ char __cdecl Phys_TestVertsAgainstPlanes(
         {
             maxSeparation = dist;
             *outSideIndex = sideIndex;
-            v8 = (float *)&(*planes)[4 * sideIndex];
+            v8 = const_cast<float *>(planes[sideIndex]);
             *outPlane = *v8;
             outPlane[1] = v8[1];
             outPlane[2] = v8[2];
@@ -2010,12 +2010,12 @@ int __cdecl GetClosestOrientedBrushFace(
     {
         if (brushPolys[sideIndex].ptCount)
         {
-            dot = Vec3Dot(normal, &(*orientedPlanes)[4 * sideIndex]);
+            dot = Vec3Dot(normal, orientedPlanes[sideIndex]);
             if (minDot > (double)dot)
             {
                 minDot = dot;
                 outSideIndex = sideIndex;
-                v6 = (float *)&(*orientedPlanes)[4 * sideIndex];
+                v6 = const_cast<float *>(orientedPlanes[sideIndex]);
                 *outBrushPlane = *v6;
                 outBrushPlane[1] = v6[1];
                 outBrushPlane[2] = v6[2];
@@ -2097,7 +2097,7 @@ char __cdecl Phys_DoesPolyIntersectOrientedBrush(
             clippedPts,
             clippedPtsCount,
             0x100u,
-            (float *)&(*transformedPlanes)[4 * sideIndex]);
+            const_cast<float *>(transformedPlanes[sideIndex]));
         if (!clippedPtsCount)
             return 0;
     }
