@@ -25,18 +25,18 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 
 | # | Bead | Gate | Moves | Done-test | Size | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| 61 | G3 on the Windows ARM64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | server PASS 8/8/8 + kick refused (#828, win-arm64); citable rerun needs the Windows sync; client #846 |
-| 63 | G3 on the Linux amd64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | PASS at 6a2ac8de: Linux amd64 client joined, map change re-entered, rc 0 both ends; death and reconnect not exercised |
-| 64 | G3 on the Linux arm64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | server PASS (linux-arm64); client #846 |
-| 65 | G3 on the macOS arm64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | dedi preset verified; run needs an owner LAN host; client #846 |
-| 60 | G5 Windows ARM64: the native client plays a round, a map change and a reconnect on a fork server (#184) | G5 | gate | console text on both ends; ASan clean | M | presets/ASan link at 2e3ba835 (#815); client #846 |
-| 58 | G5 client UBSan-clean: fix the triaged client reports (flattened arrays, misaligned access, LCG overflow) | G5 | gate | a client leg logs 0 UBSan reports | M | #819/#822/#823/#830/#839/#845/#849/#853/#854/#856 merged; leg at 177f0c50: 0 ASan, 43 UBSan; the boxbrush, contact, ODE and capsule/cylinder physics sites are fixed; left: the boxbrush float[3] residuals (PR 6), the float[4] trio (PR 5), rb_light light-grid (#857), trimesh_box, xanim (#859) |
+| 61 | G3 on the Windows ARM64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | server PASS 8/8/8 + kick refused (#828, win-arm64); citable rerun needs the Windows sync |
+| 63 | G3 on the Linux amd64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | PASS at 6a2ac8de: client joined, map change re-entered, rc 0/0; death and reconnect not exercised |
+| 64 | G3 on the Linux arm64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | server PASS (linux-arm64) |
+| 65 | G3 on the macOS arm64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | dedi preset verified; run needs an owner LAN host |
+| 60 | G5 Windows ARM64: the native client plays a round, a map change and a reconnect on a fork server (#184) | G5 | gate | console text on both ends; ASan clean | M | presets/ASan link at 2e3ba835 (#815) |
+| 58 | G5 client UBSan-clean: fix the triaged client reports (flattened arrays, misaligned access, LCG overflow) | G5 | gate | a client leg logs 0 UBSan reports | M | #819/#822/#823/#830/#839/#845/#849/#853/#854/#856 merged; 177f0c50: 0 ASan, 43 UBSan; physics sites fixed; left: boxbrush float[3] (PR 6), float[4] (PR 5), rb_light (#857), trimesh_box, xanim (#859) |
 | 36 | G4a evidence: a stock Steam 1.8 client joins the windows-x86 server | G4a | gate | a retail client connects under the `steam18` profile; capture confirms protocol 7, gamename, shortversion (#531 table) | M | yoga: discovery, connect and 2 map changes pass; left: browser, spawn and fire, reconnect (#182) |
 | 66 | G6: the macOS `.app` bundles its runtime ([ADR-0011](decisions/0011-macos-client-bundles-its-runtime.md)) | G6 | K6 | a clean account without Homebrew plays a LAN round; `otool -L` shows no `/opt/homebrew` | L | 34 MB `.app` validated at 26cf1841; clean-account LAN remains |
 
 Other `burndown` issues are off these gates or wait on the owner.
 
-**Resume here:** #826 #828 #830 #832 #839 #842 #844 #845 #846 #849 #852 #853 #854 #856 merged; #843 closed (superseded by #852). Open: #859 draft (xanim), then the boxbrush float[3] residuals (PR 6), the float[4] trio (PR 5), #857 rb_light and the trimesh_box issue. Windows clones need an owner sync to f99e3cb0; rows 61-65 are evidence-only. [#804](https://github.com/jm2/kisakcod/issues/804) holds host detail.
+**Resume here:** #826 #828 #830 #832 #839 #842 #844 #845 #846 #849 #852 #853 #854 #856 merged; #843 closed (superseded by #852). Open: #859 (xanim), then boxbrush float[3] (PR 6), float[4] (PR 5), #857 rb_light, trimesh_box. Windows clones need an owner sync to f99e3cb0; rows 61-65 are evidence-only. [#804](https://github.com/jm2/kisakcod/issues/804) holds host detail.
 
 ## Blocked on owner
 
