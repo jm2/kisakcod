@@ -542,6 +542,38 @@ if (NOT KISAK_PLATFORM STREQUAL "win32")
     endforeach()
 endif()
 
+# An exec'd cfg lives in hunk temp memory while its commands run.  A command
+# that clears temp memory (as a map load does) must not invalidate the text of
+# the remaining commands.  The real cmd.cpp exec path and real hunk allocator
+# run against a synthetic cfg and virtual-memory backend.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-cmd-exec-hunk-lifetime-tests
+        cmd_exec_hunk_lifetime_tests.cpp
+        ${SRC_DIR}/qcommon/cmd.cpp
+        ${SRC_DIR}/universal/com_memory.cpp
+    )
+    target_include_directories(kisakcod-cmd-exec-hunk-lifetime-tests PRIVATE ${SRC_DIR})
+    target_include_directories(kisakcod-cmd-exec-hunk-lifetime-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-cmd-exec-hunk-lifetime-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-cmd-exec-hunk-lifetime-tests PRIVATE
+        KISAK_MP KISAK_DEDICATED DEDICATED KISAK_DEDI_HEADLESS)
+    target_compile_options(kisakcod-cmd-exec-hunk-lifetime-tests PRIVATE
+        -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-cmd-exec-hunk-lifetime-tests PRIVATE -Wl,--gc-sections)
+    set_source_files_properties(
+        ${SRC_DIR}/qcommon/cmd.cpp
+        ${SRC_DIR}/universal/com_memory.cpp
+        PROPERTIES COMPILE_OPTIONS -w)
+    kisakcod_test_warnings(kisakcod-cmd-exec-hunk-lifetime-tests)
+    set_target_properties(kisakcod-cmd-exec-hunk-lifetime-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME cmd-exec-hunk-lifetime-contracts
+        COMMAND kisakcod-cmd-exec-hunk-lifetime-tests)
+    set_tests_properties(cmd-exec-hunk-lifetime-contracts PROPERTIES TIMEOUT 20)
+endif()
+
 # The Win32 autoconfigure CPU benchmark after the real timer calibration: the
 # timed loop must survive the optimizer on every Windows target (amd64 and
 # arm64 on the portable legs, x86 on the ilp32 legs).
