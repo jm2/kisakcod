@@ -4,6 +4,7 @@
 
 #include "cg_local_mp.h"
 #include "cg_public_mp.h"
+#include "cg_autojoin_mp.h"
 #include <universal/surfaceflags.h>
 #include <ui_mp/ui_mp.h>
 #include <qcommon/mem_track.h>
@@ -102,6 +103,11 @@ const dvar_t *cg_packetAnalysisClient;
 const dvar_t *cg_debugPosition;
 const dvar_t *cg_drawThroughWalls;
 const dvar_t *cg_drawGun;
+const dvar_t *cg_autoJoin;
+const dvar_t *cg_autoJoinTeamMenu;
+const dvar_t *cg_autoJoinTeam;
+const dvar_t *cg_autoJoinClassMenu;
+const dvar_t *cg_autoJoinClass;
 const dvar_t *cg_hudGrenadeIconOffset;
 const dvar_t *cg_hudSplitscreenScoreboardScale;
 const dvar_t *cg_overheadNamesSize;
@@ -338,6 +344,22 @@ void __cdecl CG_RegisterDvars()
     DvarLimits mincz; // [esp+8h] [ebp-10h]
     DvarLimits minda; // [esp+8h] [ebp-10h]
     DvarLimits mindb; // [esp+8h] [ebp-10h]
+
+    cg_autoJoin = Dvar_RegisterInt(
+        "cg_autoJoin",
+        0,
+        (DvarLimits)0x200000000LL,
+        DVAR_NOFLAG,
+        "Answer the team/class script menus without a UI: 0 off, 1 answer, 2 log only (#817)");
+    cg_autoJoinTeamMenu = Dvar_RegisterString(
+        "cg_autoJoinTeamMenu", "team", DVAR_NOFLAG, "Script-menu name prefix that asks for a team (#817)");
+    cg_autoJoinTeam = Dvar_RegisterString(
+        "cg_autoJoinTeam", "autoassign", DVAR_NOFLAG, "Response sent to cg_autoJoinTeamMenu (#817)");
+    cg_autoJoinClassMenu = Dvar_RegisterString(
+        "cg_autoJoinClassMenu", "changeclass", DVAR_NOFLAG,
+        "Script-menu name prefix for the class step; the exact name is preferred (#817)");
+    cg_autoJoinClass = Dvar_RegisterString(
+        "cg_autoJoinClass", "assault_mp,0", DVAR_NOFLAG, "Response sent to cg_autoJoinClassMenu (#817)");
 
     cg_drawGun = Dvar_RegisterBool("cg_drawGun", 1, DVAR_CHEAT, "Draw the view model");
     cg_cursorHints = Dvar_RegisterInt(
@@ -1685,6 +1707,8 @@ void __cdecl CG_Init(int32_t localClientNum, int32_t serverMessageNum, int32_t s
     char mapname[68]; // [esp+28h] [ebp-48h] BYREF
 
     iassert(Sys_IsMainThread());
+
+    CG_AutoJoinResetConnection();
 
     cg_s *cgameGlob = CG_GetLocalClientGlobals(localClientNum);
     cgs_t *cgs = CG_GetLocalClientStaticGlobals(localClientNum);

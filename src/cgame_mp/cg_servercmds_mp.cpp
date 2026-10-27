@@ -4,6 +4,9 @@
 
 #include "cg_local_mp.h"
 #include "cg_public_mp.h"
+#include "cg_autojoin_mp.h"
+
+#include <cstring>
 
 #include <client_mp/client_mp.h>
 #include <database/database.h>
@@ -1083,6 +1086,73 @@ void __cdecl CG_AddToTeamChat(int32_t localClientNum, const char *str)
     }
 }
 
+// #817: a client with no UI never answers a script menu, so the game script
+// never sets sessionstate "playing" and never calls ClientSpawn. Answer the
+// configured join menus here with the same "mr" the menu system sends
+// (Script_ScriptMenuResponse). Mode 2 only logs the menu names.
+static cgAutoJoinAnswerState_t cg_autoJoinAnswers;
+
+static bool CG_AutoJoinScriptMenu(int32_t localClientNum, uint32_t menuIndex, const char *menuName)
+{
+    if (!cg_autoJoin || !cg_autoJoin->current.integer)
+        return false;
+    if (cg_autoJoin->current.integer >= 2)
+    {
+        Com_Printf(14, "autojoin: observed script menu '%s' index %u\n", menuName, menuIndex);
+        return false;
+    }
+
+    cgAutoJoinAnswerState_t &answers = cg_autoJoinAnswers;
+    const int32_t serverId = Dvar_GetInt("sv_serverid");
+    if (menuIndex >= sizeof(answers.answeredMenus))
+        return false;
+
+    const cgAutoJoinRules_t rules = {
+        cg_autoJoinTeamMenu->current.string,
+        cg_autoJoinTeam->current.string,
+        cg_autoJoinClassMenu->current.string,
+        cg_autoJoinClass->current.string,
+    };
+    const char *response = nullptr;
+    const cgAutoJoinKind_t kind = CG_AutoJoinResponse(rules, menuName, &response);
+    if (kind == CG_AUTOJOIN_NONE || !response)
+        return false;
+
+    // A class change is answered on the server's flat "changeclass" script menu,
+    // not on the per-team menu it opens ("changeclass_marines" / "..._opfor"):
+    // only the flat one takes the game script through to a spawn. The index is
+    // resolved the same way the openScriptMenu command resolves it, from the
+    // script-menu config strings, and falls back to the opened menu.
+    int32_t targetIndex = static_cast<int32_t>(menuIndex);
+    if (kind == CG_AUTOJOIN_CLASS)
+    {
+        for (int32_t i = 0; i < 32; ++i)
+        {
+            const char *candidate = CL_GetConfigString(localClientNum, 1970 + i);
+            if (candidate && *candidate && !I_stricmp(candidate, rules.classMenuPrefix))
+            {
+                targetIndex = i;
+                break;
+            }
+        }
+    }
+    if (targetIndex < 0 || static_cast<uint32_t>(targetIndex) >= sizeof(answers.answeredMenus))
+        return false;
+    if (!CG_AutoJoinClaimAnswer(&answers, serverId, static_cast<uint32_t>(targetIndex)))
+        return false;
+
+    Cbuf_AddText(localClientNum, va("cmd mr %i %i %s\n", serverId, targetIndex, response));
+    Com_Printf(14, "autojoin: answered '%s' index %i with '%s'\n", menuName, targetIndex, response);
+    return true;
+}
+
+// #817: a reconnect to the same server keeps sv_serverid, so the static answer
+// state above would otherwise still be set from the previous connection.
+void CG_AutoJoinResetConnection()
+{
+    CG_AutoJoinResetAnswers(&cg_autoJoinAnswers);
+}
+
 void __cdecl CG_OpenScriptMenu(int32_t localClientNum)
 {
     int32_t v4; // eax
@@ -1105,6 +1175,8 @@ void __cdecl CG_OpenScriptMenu(int32_t localClientNum)
         Cbuf_AddText(localClientNum, va("cmd mr %i bad\n", menuIndex));
         return;
     }
+    if (CG_AutoJoinScriptMenu(localClientNum, menuIndex, menuName))
+        return;
     if (Cmd_Argc() > 2 && Cmd_Argv(2) && *Cmd_Argv(2))
     {
         useMouse = 0;
