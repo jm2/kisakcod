@@ -117,8 +117,8 @@ void __cdecl Dvar_WriteVariables(int f)
 // passed (here the file handle).
 namespace
 {
-// A value that starts with this marker is hex after it. Only a value with a
-// quote or line break is written this way.
+// A value that starts with this marker is hex after it. Only a value that
+// can't survive a quoted seta line is written this way.
 constexpr char kArchivedHexMarker[] = "kisakhex:";
 constexpr int kArchivedHexMarkerLength = sizeof(kArchivedHexMarker) - 1;
 
@@ -135,7 +135,15 @@ int HexDigit(char c)
 bool __cdecl Dvar_EncodeArchivedValue(const char *value, char *out, int outSize)
 {
     static const char digits[] = "0123456789abcdef";
-    if (!value || !strpbrk(value, "\"\n\r"))
+    if (!value)
+        return false;
+    // A quote or line break would end the line; a trailing backslash would
+    // escape the closing quote; a value that already starts with the marker
+    // would be decoded on reload. Everything else is written as retail does.
+    const size_t scan = strnlen(value, static_cast<size_t>(outSize));
+    const bool endsInBackslash = scan && value[scan - 1] == '\\';
+    if (!strpbrk(value, "\"\n\r") && !endsInBackslash
+        && strncmp(value, kArchivedHexMarker, kArchivedHexMarkerLength))
         return false;
     // A value longer than half the buffer can't be encoded; bound the scan.
     const int length = static_cast<int>(strnlen(value, static_cast<size_t>(outSize)));

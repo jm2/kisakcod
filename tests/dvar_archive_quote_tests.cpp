@@ -102,6 +102,7 @@ void RoundTrips(const char *value)
     CHECK(g_written.compare(g_written.size() - 2, 2, "\"\n") == 0);
     const std::string inner = g_written.substr(prefix.size(), g_written.size() - prefix.size() - 2);
     CHECK(inner.find_first_of("\"\n\r") == std::string::npos);
+    CHECK(inner.empty() || inner.back() != '\\');
 
     Dvar_SetStringByName("test_archived", "");
     g_args = {"seta", "test_archived", inner};
@@ -116,6 +117,8 @@ int main()
     RoundTrips("plain value");                  // written as retail writes it
     RoundTrips("server\";quit;echo \"");        // a quote can't end the line
     RoundTrips("two\nlines");                   // nor can a line break
+    RoundTrips("C:\\path\\");                    // nor a trailing backslash
+    RoundTrips("kisakhex:41");                  // a marker-shaped value stays itself
     if (g_failures)
     {
         std::fprintf(stderr, "%d check(s) failed\n", g_failures);
