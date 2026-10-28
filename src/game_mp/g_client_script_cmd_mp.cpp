@@ -1443,7 +1443,8 @@ void __cdecl PlayerCmd_finishPlayerDamage(scr_entref_t entref)
                 }
                 if (tempBulletHitEntity)
                     tempBulletHitEntity->s.un1.scale |= 2u;
-                if (pSelf->health < -999)
+                // Retail 1.8 compares unsigned (0x004A98C6): health 0 also becomes -999.
+                if (static_cast<uint32_t>(pSelf->health) <= 0xFFFFFC18u)
                     pSelf->health = -999;
                 die = entityHandlers[pSelf->handler].die;
                 if (die)
