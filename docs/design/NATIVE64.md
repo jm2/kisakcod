@@ -143,6 +143,10 @@ These allowlists fail on *new* debt, and on stale entries once a site is fixed. 
 - **zlib** is stock 1.3.1. IW's 1.1.4 dropped inflate output when `next_out`
   was NULL, and `FS_Seek` skips IWD data that way, so `unzip.cpp` skips
   through a scratch buffer (`unzip-skip-contracts`); keep that in any swap.
+- **Loader globals.** `Mark_*` walkers reuse the `Load_*` `var*` globals, so
+  a legacy `Load_*Ptr` keeps its slot in a local (#764). Regression run:
+  `+loadzone ui_mp +map mp_crash +db_graphhash menu list +quit` gives one
+  360-menu hash on x86, Win64 and arm64 headless.
 
 ## G2 run
 

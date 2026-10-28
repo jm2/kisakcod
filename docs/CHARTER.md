@@ -101,6 +101,9 @@ The CI `native64-census` and `KPI summary` jobs render the current values.
   fix with neutral wording.
 - Retail Steam 1.8 data never enters CI, the repo, PRs or issues. Evidence is
   text only, and runs use a copy-on-write clone, never the original install.
+- Retail 1.8 is the behaviour reference ([ADR-0009](decisions/0009-retail-1-8-behaviour-reference.md)):
+  read the exe before changing what players, peers or scripts see, and never
+  reopen a `matches-retail` issue without a retail address (2026-10-28).
 - Shared hosts: ask openETQW-linux or -win before heavy builds or GPU runs on
   antec or antec-win, and tell openETQW-mac before game windows on mbp16.
 
