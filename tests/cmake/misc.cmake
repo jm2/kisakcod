@@ -1903,6 +1903,27 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_tests_properties(r-marks-allow-surf-contracts PROPERTIES TIMEOUT 20)
 endif()
 
+# Archived dvar values with quotes or line breaks (universal/dvar.cpp's
+# config writer and dvar_cmds.cpp's seta) round-trip without ending their
+# config line early. Linux and clang only, as above.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-dvar-archive-quote-tests dvar_archive_quote_tests.cpp
+        ${SRC_DIR}/universal/dvar.cpp ${SRC_DIR}/universal/dvar_cmds.cpp ${SRC_DIR}/universal/q_shared.cpp)
+    target_include_directories(kisakcod-dvar-archive-quote-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-dvar-archive-quote-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-dvar-archive-quote-tests PRIVATE KISAK_MP UNIX)
+    target_compile_options(kisakcod-dvar-archive-quote-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-dvar-archive-quote-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-dvar-archive-quote-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-dvar-archive-quote-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-dvar-archive-quote-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME dvar-archive-quotes COMMAND kisakcod-dvar-archive-quote-tests)
+    set_tests_properties(dvar-archive-quotes PROPERTIES TIMEOUT 20)
+endif()
+
 # FS_Startup (universal/com_files.cpp): the 1.8 MP fs_usedevdir gates the
 # development directories. Linux and clang only, as above; the client's defines.
 if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8

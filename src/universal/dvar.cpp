@@ -115,6 +115,77 @@ void __cdecl Dvar_WriteVariables(int f)
 // Dvar_ForEach's callbacks take its void * user data at their declared type,
 // so each is called through the type it has; userData is what its caller
 // passed (here the file handle).
+namespace
+{
+// A value that starts with this marker is hex after it. Only a value that
+// can't survive a quoted seta line is written this way.
+constexpr char kArchivedHexMarker[] = "kisakhex:";
+constexpr int kArchivedHexMarkerLength = sizeof(kArchivedHexMarker) - 1;
+
+int HexDigit(char c)
+{
+    if (c >= '0' && c <= '9')
+        return c - '0';
+    if (c >= 'a' && c <= 'f')
+        return c - 'a' + 10;
+    return -1;
+}
+} // namespace
+
+bool __cdecl Dvar_EncodeArchivedValue(const char *value, char *out, int outSize)
+{
+    static const char digits[] = "0123456789abcdef";
+    if (!value)
+        return false;
+    // A quote or line break would end the line; a trailing backslash would
+    // escape the closing quote; a value that already starts with the marker
+    // would be decoded on reload. Everything else is written as retail does.
+    const size_t scan = strnlen(value, static_cast<size_t>(outSize));
+    const bool endsInBackslash = scan && value[scan - 1] == '\\';
+    if (!strpbrk(value, "\"\n\r") && !endsInBackslash
+        && strncmp(value, kArchivedHexMarker, kArchivedHexMarkerLength))
+        return false;
+    // A value longer than half the buffer can't be encoded; bound the scan.
+    const int length = static_cast<int>(strnlen(value, static_cast<size_t>(outSize)));
+    if (kArchivedHexMarkerLength + 2 * length + 1 > outSize)
+    {
+        // Too long to encode: write nothing that could break out of the line.
+        I_strncpyz(out, "", outSize);
+        return true;
+    }
+    std::copy_n(kArchivedHexMarker, kArchivedHexMarkerLength, out);
+    char *cursor = out + kArchivedHexMarkerLength;
+    for (int i = 0; i < length; ++i)
+    {
+        const unsigned char byte = static_cast<unsigned char>(value[i]);
+        *cursor++ = digits[byte >> 4];
+        *cursor++ = digits[byte & 15];
+    }
+    *cursor = 0;
+    return true;
+}
+
+bool __cdecl Dvar_DecodeArchivedValue(const char *value, char *out, int outSize)
+{
+    if (!value || strncmp(value, kArchivedHexMarker, kArchivedHexMarkerLength))
+        return false;
+    const char *hex = value + kArchivedHexMarkerLength;
+    const size_t limit = 2 * static_cast<size_t>(outSize);
+    const int length = static_cast<int>(strnlen(hex, limit));
+    if (static_cast<size_t>(length) == limit || length % 2 || length / 2 + 1 > outSize)
+        return false;
+    for (int i = 0; i < length / 2; ++i)
+    {
+        const int high = HexDigit(hex[2 * i]);
+        const int low = HexDigit(hex[2 * i + 1]);
+        if (high < 0 || low < 0)
+            return false;
+        out[i] = static_cast<char>(high << 4 | low);
+    }
+    out[length / 2] = 0;
+    return true;
+}
+
 void __cdecl Dvar_WriteSingleVariable(const dvar_s *dvar, void *userData)
 {
     const char *v2; // eax
@@ -126,6 +197,9 @@ void __cdecl Dvar_WriteSingleVariable(const dvar_s *dvar, void *userData)
         {
             f = *static_cast<const int *>(userData);
             v2 = Dvar_DisplayableLatchedValue(dvar);
+            char encoded[2 * 4096 + 16];
+            if (Dvar_EncodeArchivedValue(v2, encoded, sizeof(encoded)))
+                v2 = encoded;
             FS_Printf(f, "seta %s \"%s\"\n", dvar->name, v2);
         }
     }

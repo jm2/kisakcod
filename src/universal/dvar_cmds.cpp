@@ -288,7 +288,17 @@ void __cdecl Dvar_SetA_f()
 
     if (Cmd_Argc() >= 3)
     {
-        Dvar_Set_f();
+        // An archived value the config writer hex-encoded (a quote or line
+        // break in it) is restored as the raw value; anything else is set as
+        // retail sets it.
+        char combined[4096];
+        char decoded[4096];
+        Dvar_GetCombinedString(combined, 2);
+        if (Dvar_IsValidName(Cmd_Argv(1))
+            && Dvar_DecodeArchivedValue(combined, decoded, sizeof(decoded)))
+            Dvar_SetCommand(Cmd_Argv(1), decoded);
+        else
+            Dvar_Set_f();
         v0 = Cmd_Argv(1);
         dvar = Dvar_FindVar(v0);
         if (dvar)
