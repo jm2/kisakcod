@@ -18,7 +18,11 @@ Checks:
   - every review thread is resolved or has a reply, no review requests
     changes, and review-body findings outside the diff warn;
   - the advisory x86 identity job: CODE escalates, and so does a missing
-    result when the PR touches compiled inputs.
+    result when the PR touches compiled inputs;
+  - ADR-0009 (retail 1.8 is the behaviour reference): a PR that changes
+    src/ carries a "Retail check:" line citing a retail address (0x...) or
+    naming why behaviour can't differ from retail; one that touches an issue
+    labelled matches-retail must cite a retail address.
 """
 
 import argparse
@@ -50,6 +54,15 @@ GH_TIMEOUT = 120
 # A job that only aggregates other jobs' results: it fails whenever any job in
 # its `needs` failed, so it carries no evidence of its own.
 AGGREGATE_JOBS = ("Portable scaffolding complete",)
+# ADR-0009: the PR body's "Retail check:" line, a retail address, the reasons
+# that mean behaviour can't differ from retail, and issue references.
+RETAIL_LINE = re.compile(r"^[\s*_>-]*retail check\s*\**\s*:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
+RETAIL_ADDRESS = re.compile(r"\b0x00[0-9a-f]{6}\b", re.IGNORECASE)
+NOT_BEHAVIOURAL = re.compile(r"memory safety|invalid input|debug only|build only|test only|"
+                             r"port only|no behaviour change|no behavior change", re.IGNORECASE)
+ISSUE_REF = re.compile(r"(?:fix(?:es|ed)?|close[sd]?|resolve[sd]?|part of|item[s]? [0-9, and]+ of)\s+#(\d+)",
+                       re.IGNORECASE)
+SETTLED_LABEL = "matches-retail"
 # CodeRabbit puts findings on lines outside the diff into the review body.
 OUTSIDE_DIFF = "Outside diff range"
 
@@ -115,6 +128,25 @@ def check_x86(state, found):
         found.blockers.append(f"x86 identity job is {state}, so it proved nothing: rerun it")
     elif state not in PASSED:
         found.blockers.append(f"x86 identity job is {state}")
+
+
+def check_retail(pr, paths, repo, found):
+    """ADR-0009: behaviour changes in src/ need retail evidence."""
+    body = pr.get("body") or ""
+    if any(path.startswith("src/") for path in paths):
+        lines = RETAIL_LINE.findall(body)
+        if not lines:
+            found.blockers.append('no "Retail check:" line: cite the retail 1.8 address (0x00...) or why '
+                                  "behaviour can't differ, e.g. memory safety (ADR-0009)")
+        elif not any(RETAIL_ADDRESS.search(line) or NOT_BEHAVIOURAL.search(line) for line in lines):
+            found.blockers.append('"Retail check:" cites no retail address and no non-behavioural reason (ADR-0009)')
+    issues = {int(n) for n in ISSUE_REF.findall(body)}
+    issues |= {ref["number"] for ref in pr.get("closingIssuesReferences") or []}
+    for number in sorted(issues):
+        labels = gh("api", f"repos/{repo}/issues/{number}", "--jq", "[.labels[].name] | join(\",\")")
+        if SETTLED_LABEL in labels.strip().split(",") and not RETAIL_ADDRESS.search(body):
+            found.blockers.append(f"#{number} is labelled {SETTLED_LABEL}: changing settled behaviour needs a "
+                                  "retail address showing retail differs (ADR-0009)")
 
 
 def annotation_texts(repo, run_id):
@@ -364,10 +396,13 @@ def main():
     owner, name = args.repo.split("/")
 
     pr = json.loads(gh("pr", "view", str(args.number), "-R", args.repo, "--json",
-                       "state,mergeable,mergeStateStatus,baseRefName,headRefOid,reviewDecision,reviews"))
+                       "state,mergeable,mergeStateStatus,baseRefName,headRefOid,reviewDecision,reviews,"
+                       "body,closingIssuesReferences"))
     found = Findings()
     check_pr(pr, found)
-    check_ci(ci_checks(owner, name, pr["headRefOid"]), changed_files(args.repo, args.number), found, args.repo)
+    paths = changed_files(args.repo, args.number)
+    check_ci(ci_checks(owner, name, pr["headRefOid"]), paths, found, args.repo)
+    check_retail(pr, paths, args.repo, found)
     check_codacy(owner, name, args.number, found)
     check_threads(pr, owner, name, args.number, found)
     # Every check above read one head; a push since then voids the verdict.

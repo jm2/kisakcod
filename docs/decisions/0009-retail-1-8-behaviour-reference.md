@@ -1,32 +1,32 @@
 # ADR-0009: Retail Steam 1.8 is the behaviour reference
 
-Status: accepted
+Status: accepted (amended 2026-10-28)
 Date: 2026-10-25
 
 ## Context
 
-The decompile has real errors, but code that looks wrong is often what
-retail does. In the 2026-10-25 sweep four suspected bugs matched retail
-(setDvar's raw value, the finishPlayerDamage clamp, the psoffsettime getter
-reading archiveTime, map vehicles keeping their classname); the int-division
-sprint meter and `MY_DIMS[idx+4]` were decompile errors.
+Code that looks wrong is often what retail does. The 2026-10-25 sweep found
+four "bugs" that matched retail; #895, #882, #876 and #877 then changed
+retail behaviour without reading the exe, and #897-#900 reverted them.
 
 ## Decision
 
-- Before changing x86-visible behaviour, read the retail 1.8 `iw3mp.exe`
-  ([ADR-0004](0004-reverse-engineering-scope.md)) on a host-local copy:
-  `dumpbin /disasm:nobytes /section:.text` or objdump. Find the function by a
-  unique `.rdata` string, a dvar global (the `mov [global],eax` after its
-  `Dvar_Register`), a field-table entry or float-table bytes.
-- Retail does the same: keep it, and close the issue "matches retail" with
-  the address and instruction. Never quote bytes.
-- Ours differs by a decompile error: fix it and declare the x86 change.
-- A zone-reload regression run: `+loadzone ui_mp +map mp_crash
-  +db_graphhash menu list +quit` gives the same 360-menu hash on x86, Win64
-  and arm64 headless. The `Mark_*` walkers share the `Load_*` `var*`
-  globals, so a legacy `Load_*Ptr` keeps its slot in a local (#764).
+- Read the retail 1.8 `iw3mp.exe` before any change that can alter what a
+  player, a peer or a script sees ([ADR-0004](0004-reverse-engineering-scope.md)):
+  objdump or `dumpbin /disasm`, on a host-local copy. Find the function by
+  an `.rdata` string, a dvar global, or a constant (`0x32`, `0x64`).
+- Retail does the same: keep it, label the issue `matches-retail`, and
+  close the item with the address and instruction. Never quote bytes.
+- Ours differs by a decompile error: fix it and cite the address.
+- Exempt only fixes that can't change retail-visible behaviour: memory
+  safety, invalid input, debug, build, test or port-only code. Name the
+  reason.
+- Every PR that touches `src/` has a `Retail check:` line with the address
+  or the exempt reason. `scripts/ci/pr_gate.py` blocks without one, and
+  blocks a PR on a `matches-retail` issue unless it cites a retail address.
+- A test pins retail's behaviour, not the fix author's guess.
 
 ## Consequences
 
-Fidelity questions are settled from the retail exe, not from intuition, and
-the sweep's "matches retail" closes are re-checkable.
+Fidelity is settled from the exe. Reopening a settled item needs new retail
+evidence.

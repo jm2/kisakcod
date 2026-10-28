@@ -19,8 +19,9 @@ From the master census; live values in the latest [master CI run](https://github
 
 ## Bug lane (before the gate rows)
 
-Owner, 2026-10-27: bugs before gate work. Rows 1-3 high, rest medium. Fix in
-rule-4 PRs, each with a test that fails without the fix; new crash or memory bugs join by severity.
+Owner, 2026-10-27: bugs first; rows 1-3 high. Rule-4 PRs with a test
+that fails without the fix and a `Retail check:` line (ADR-0009); new crash
+and memory bugs join by rank.
 
 | # | Issue | Status |
 | --- | --- | --- |

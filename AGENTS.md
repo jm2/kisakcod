@@ -1,8 +1,8 @@
 # AGENTS.md: operating rules
 
-Every agent (coordinator, refinery, polecat, reviewer) and every human contributor
-reads this first. A bead closes on a bug-lane fix, a KPI move or a gate
-pass (`docs/NOW.md`, `docs/ROADMAP.md`). Each rule names the failure it prevents.
+Every agent and human contributor reads this first. A bead closes on a
+bug-lane fix, a KPI move or a gate pass (`docs/NOW.md`, `docs/ROADMAP.md`).
+Each rule names the failure it prevents.
 
 ## Rules
 
@@ -26,7 +26,7 @@ pass (`docs/NOW.md`, `docs/ROADMAP.md`). Each rule names the failure it prevents
    owner action is marked `blocked-owner`, and the worker takes the next item.
    *Prevents: evidence paperwork replacing code.*
 7. **Tests must compile and execute code:** engine code, or helpers the
-   engine calls. No source-text (regex or substring) tests, no tests over CI
+   engine calls. No source-text tests, no tests over CI
    or markdown files, no mutation tests of checkers. The only text scans
    allowed are the three debt tripwires in `docs/design/NATIVE64.md` and the
    `call-site-*` pins (`tests/engine_call_site_test.cmake`); both may shrink,
@@ -36,7 +36,7 @@ pass (`docs/NOW.md`, `docs/ROADMAP.md`). Each rule names the failure it prevents
    *Prevents: merge conflicts in derived output.*
 9. **Polecats branch from fresh master and never sync-merge master into their
    branch.** The refinery rebases and integrates.
-   *Prevents: 43 sync merges a month and their conflicts.*
+   *Prevents: sync-merge conflicts.*
 10. **Keep the Windows x86 baseline building.** Don't harden or refactor
     Windows-only code unless it blocks a gate.
     *Prevents: polishing the one target that already works.*
@@ -51,6 +51,7 @@ pass (`docs/NOW.md`, `docs/ROADMAP.md`). Each rule names the failure it prevents
     - Is it inside its bead's scope?
     - Does it avoid adding process artifacts?
     - Would its tests fail if the feature broke?
+    - Does it keep retail 1.8 behaviour (ADR-0009)?
 
     *Prevents: merged work that moves nothing.*
 14. **Coordinator docs role.**
@@ -68,7 +69,8 @@ pass (`docs/NOW.md`, `docs/ROADMAP.md`). Each rule names the failure it prevents
 16. **Merge only when all hold:** required CI green; every Codacy finding
     fixed or answered, Security ones always; every bot or human thread
     answered; x86 objects identical, or each change is metadata-only (the
-    x86 identity CI job) or declared in the PR body. Stacked PRs merge
+    x86 identity CI job) or declared in the PR body; a `src/` change has a
+    `Retail check:` line (ADR-0009). Stacked PRs merge
     base first; retarget, then close and reopen to start CI.
     `scripts/ci/pr_gate.py <n>` checks this: merge only when it prints
     READY and each WARN it lists is fixed or answered on the PR.
@@ -90,9 +92,9 @@ pass (`docs/NOW.md`, `docs/ROADMAP.md`). Each rule names the failure it prevents
     *Prevents: confident wrong merges.*
 22. **The coordinator is the first responsive session in host order:**
     antec, antec-win, mbp16-m1max, macmini-m1, yoga-slim7x. It
-    merges per rule 16. If it doesn't answer for 30 minutes or leaves the
-    fleet list, the next responsive host tells the others it's taking over.
-    A higher host coming back takes the role back after a handoff message.
+    merges per rule 16. If it's silent for 30 minutes or leaves the fleet
+    list, the next responsive host announces it's taking over; a higher host
+    that returns takes the role back after a handoff.
     *Prevents: work stopping when a host reboots.*
 23. **Subagents:** DeepSeek and Xiaomi sessions may run up to 4 at once;
     other models use one agent plus at most one no-context review pass.
