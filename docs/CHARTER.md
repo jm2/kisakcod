@@ -104,6 +104,11 @@ The CI `native64-census` and `KPI summary` jobs render the current values.
 - Retail 1.8 is the behaviour reference ([ADR-0009](decisions/0009-retail-1-8-behaviour-reference.md)):
   read the exe before changing what players, peers or scripts see, and never
   reopen a `matches-retail` issue without a retail address (2026-10-28).
+- Stuck CI doesn't hold the queue: when `scripts/ci/pr_gate.py` passes except
+  required jobs queued or cancelled with no runner for 30+ minutes (or INFRA),
+  the coordinator runs the PR's tests locally, posts the results on the PR and
+  merges with `gh pr merge --admin --match-head-commit`. A job that ran and
+  failed never qualifies (2026-10-28).
 - Shared hosts: ask openETQW-linux or -win before heavy builds or GPU runs on
   antec or antec-win, and tell openETQW-mac before game windows on mbp16.
 
