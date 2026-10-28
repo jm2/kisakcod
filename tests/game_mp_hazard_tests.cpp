@@ -355,6 +355,7 @@ WEAK int Com_sprintf(char *dest, uint32_t size, const char *format, ...)
 {
     va_list args;
     va_start(args, format);
+    // flawfinder: ignore (test-only wrapper forwarding the production TU literal format)
     const int written = size ? std::vsnprintf(dest, size, format, args) : 0;
     va_end(args);
     return written;
@@ -765,6 +766,7 @@ static void FinishPlayerDamageClampsLethalHealth()
     g_client.lastStand = 0;
     g_client.ps.pm_type = PM_NORMAL;
     g_client.ps.perks = 0;
+    // cppcheck-suppress y2038-unsafe-call (fixture writes zero server time; no libc time call)
     level.time = 0;
     g_scrIntArgs[2] = 10;
     g_scrIntArgs[3] = 4;
@@ -851,8 +853,7 @@ static void ClientCommandSaysBoundedBytes()
     CHECK(textLen + 1 < sizeof(g_commandTrace.text[0]));
 }
 
-// ClientCommand callvote -> Cmd_CallVote_f: fixed vote command, display
-// string and configstrings, then a 300-byte map against the 256/1024 bounds.
+// ClientCommand callvote -> Cmd_CallVote_f: fixed vote command/display strings/configstrings, then a 300-byte map against the 256/1024 bounds.
 static void CallVoteBuildsBoundedBytes()
 {
     ResetCommandFixture();
