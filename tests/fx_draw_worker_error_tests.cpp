@@ -148,6 +148,7 @@ void __cdecl Com_Error(const errorParm_t code, const char *const fmt, ...)
 {
     ++g_comErrorCalls;
     std::va_list args; va_start(args, fmt);
+    // flawfinder: ignore (test-only capture stub forwards the production TU format)
     std::vsnprintf(g_comErrorMessage, sizeof(g_comErrorMessage), fmt, args);
     va_end(args);
     std::fprintf(stderr, "Com_Error(%d): %s\n", static_cast<int>(code), g_comErrorMessage);
