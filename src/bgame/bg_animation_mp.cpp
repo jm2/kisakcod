@@ -657,7 +657,9 @@ int32_t __cdecl BG_ExecuteCommand(
     if (scriptCommand->bodyPart[1])
     {
         duration = scriptCommand->animDuration[0] + 50;
-        if (scriptCommand->bodyPart[1] == 1 || scriptCommand->bodyPart[1] == 3)
+        // Retail 1.8 decides the legs path from bodyPart[0] here too, while
+        // playing bodyPart[1] (0x004052D9: movzx ecx, word ptr [ebx]).
+        if (scriptCommand->bodyPart[0] == 1 || scriptCommand->bodyPart[0] == 3)
             playedLegsAnim = BG_PlayAnim(
                 ps,
                 scriptCommand->animIndex[1],
