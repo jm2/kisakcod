@@ -16,7 +16,6 @@ BreakablePiece g_breakablePieces[100];
 
 namespace
 {
-int32_t g_pieceRecycleCursor;
 
 struct DynEntPiecesPhysSpawnResult
 {
@@ -106,23 +105,14 @@ DynEntPieceSlotCommit __cdecl DynEntPieces_CommitSlotLocked(
     dxBody *body,
     const XModel *model)
 {
-    DynEntPieceSlotCommit commit{false, nullptr};
+    DynEntPieceSlotCommit commit{false};
 
-    int32_t index;
-    if (numPieces < 100)
-    {
-        index = numPieces;
-    }
-    else
-    {
-        // The pool is full: recycle the next slot round-robin so a session
-        // that breaks more than 100 pieces keeps producing them. Releasing
-        // the old binding rolls the generation forward, so any token still
-        // held for that slot resolves as stale rather than as the new body.
-        index = g_pieceRecycleCursor;
-        g_pieceRecycleCursor = (g_pieceRecycleCursor + 1) % 100;
-        commit.retiredBody = DynEntPieces_ReleaseSlotLocked(index);
-    }
+    // Retail 1.8 stops spawning pieces once numPieces reaches 100 and never
+    // resets the count (0x0048C423 cmp numPieces,0x64; 0x0048C745 is its only
+    // store), so the pool is not recycled (ADR-0009).
+    if (numPieces >= 100)
+        return commit;
+    const int32_t index = numPieces;
 
     const phys_obj_id::TokenResult bind =
         g_breakablePieceBodySidecar.Bind(
@@ -135,8 +125,7 @@ DynEntPieceSlotCommit __cdecl DynEntPieces_CommitSlotLocked(
     piece.model = model;
     piece.lightingHandle = 0;
     piece.active = true;
-    if (index == numPieces)
-        ++numPieces;
+    ++numPieces;
     commit.committed = true;
     return commit;
 }
@@ -153,8 +142,9 @@ void __cdecl DynEntPieces_Shutdown()
         if (retiredBody)
             retiredBodies[retiredCount++] = retiredBody;
     }
-    numPieces = 0;
-    g_pieceRecycleCursor = 0;
+    // The count stays: retail never resets it, so a process that has spawned
+    // 100 pieces spawns no more (see DynEntPieces_CommitSlotLocked). Only
+    // the bodies and their sidecar bindings go, so no token outlives them.
     Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
 
     // Phys_ObjDestroy takes CRITSECT_PHYSICS itself, so the bodies leave the
@@ -385,9 +375,8 @@ bool __cdecl DynEntPieces_SpawnPhysicsModel(
         }
         // Binding and publishing run inside the physics lock span per the
         // sidecar contract (same span as creation and the bullet-impact
-        // rollback). On a full pool CommitSlotLocked evicts the oldest slot
-        // and returns its body; that body is destroyed after the lock.
-        DynEntPieceSlotCommit pieceCommit{false, nullptr};
+        // rollback). A full pool fails the commit, as retail does.
+        DynEntPieceSlotCommit pieceCommit{false};
         if (spawnResult.status == PhysBodyModelCreateStatus::Success)
         {
             pieceCommit =
@@ -406,8 +395,6 @@ bool __cdecl DynEntPieces_SpawnPhysicsModel(
         }
         Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
 
-        if (pieceCommit.retiredBody)
-            Phys_ObjDestroy(PHYS_WORLD_FX, pieceCommit.retiredBody);
         if (spawnResult.cleanupFailed)
             std::abort();
         physObjId = spawnResult.body;
