@@ -750,8 +750,8 @@ static void ShutdownPopsOpenScriptReadSession()
 }
 #elif GAME_MP_HAZARD_SUBJECT == 4
 // g_client_script_cmd_mp.cpp finishPlayerDamage: exactly lethal damage drops
-// health to 0. The old unsigned comparison treated 0 as below the signed
-// sentinel and clamped it to -999; the signed comparison leaves it at 0.
+// health to 0, and retail 1.8's unsigned compare (0x004A98C6) clamps that to
+// -999, as it does any health below -999 (ADR-0009: retail is the reference).
 static void FinishPlayerDamageClampsLethalHealth()
 {
     static dvar_t zeroDvar;
@@ -777,7 +777,7 @@ static void FinishPlayerDamageClampsLethalHealth()
     entref.entnum = 4;
     entref.classnum = 0;
     PlayerCmd_finishPlayerDamage(entref);
-    CHECK(self->health == 0);
+    CHECK(self->health == -999);
 }
 
 #elif GAME_MP_HAZARD_SUBJECT == 5

@@ -976,7 +976,8 @@ void GScr_SetDvar()
     if (Dvar_IsValidName(dvarName))
     {
         v3 = Scr_GetNumParam() >= 3 && Scr_GetInt(2);
-        Dvar_SetFromStringByName(dvarName, outString);
+        // Retail 1.8 builds outString but sets the raw value (0x004C6EDF push edi).
+        Dvar_SetFromStringByName(dvarName, (char *)dvarValue);
         if (v3)
         {
             dvar = Dvar_FindVar(dvarName);
@@ -5390,7 +5391,8 @@ void GScr_MakeDvarServerInfo()
             ++pCh;
         }
         *pCh = 0;
-        Dvar_RegisterString(dvarName, outString, DVAR_TEMP | DVAR_EXTERNAL, "Script defined user info dvar");
+        // Retail 1.8 registers the raw value, not outString (0x004D1B3D).
+        Dvar_RegisterString(dvarName, (char *)dvarValue, DVAR_TEMP | DVAR_EXTERNAL, "Script defined user info dvar");
     }
 }
 

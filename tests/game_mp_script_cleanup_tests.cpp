@@ -293,27 +293,28 @@ void IsPlayerNumberRejectsNegativeValues()
     GScr_IsPlayerNumber();
     Check(g_lastInt == 0, "isPlayerNumber(64) is false");
 }
-// Both dvars build outString with I_CleanChar, turn a double quote into an
-// apostrophe, cap at 1023 bytes and NUL-terminate; that is the value the
-// engine must receive, not the raw script string.
-void SetDvarPassesTheSanitizedValue()
+// Both dvars build a cleaned outString, but retail 1.8 hands the engine the
+// raw script string (GScr_SetDvar 0x004C6EDF push edi; MakeDvarServerInfo
+// 0x004D1B3D). ADR-0009: retail is the behaviour reference, so the raw value
+// is what the engine must receive.
+void SetDvarPassesTheRawValue()
 {
     g_numParams = 2;
     g_stringArg = "a\"b\x92" "c";
     g_dvarSetValue[0] = 0;
     GScr_SetDvar();
-    Check(std::strcmp(g_dvarSetValue, "a'b'c") == 0,
-          "setDvar stores the cleaned value");
+    Check(std::strcmp(g_dvarSetValue, "a\"b\x92" "c") == 0,
+          "setDvar stores the raw value, as retail does");
 }
 
-void MakeDvarServerInfoPassesTheSanitizedValue()
+void MakeDvarServerInfoPassesTheRawValue()
 {
     g_numParams = 2;
     g_stringArg = "a\"b\x92" "c";
     g_dvarRegisteredValue[0] = 0;
     GScr_MakeDvarServerInfo();
-    Check(std::strcmp(g_dvarRegisteredValue, "a'b'c") == 0,
-          "makeDvarServerInfo registers the cleaned value");
+    Check(std::strcmp(g_dvarRegisteredValue, "a\"b\x92" "c") == 0,
+          "makeDvarServerInfo registers the raw value, as retail does");
 }
 }  // namespace
 
@@ -325,8 +326,8 @@ int main()
     TurretErrorUsesARealQuote();
     RandomFloatRangePrintsFloats();
     IsPlayerNumberRejectsNegativeValues();
-    SetDvarPassesTheSanitizedValue();
-    MakeDvarServerInfoPassesTheSanitizedValue();
+    SetDvarPassesTheRawValue();
+    MakeDvarServerInfoPassesTheRawValue();
     std::printf("game_mp_script_cleanup_tests: %d check(s) failed\n", g_failures);
     return g_failures ? 1 : 0;
 }
