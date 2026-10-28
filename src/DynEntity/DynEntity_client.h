@@ -250,16 +250,15 @@ void __cdecl DynEntPieces_CalcForceDir(const float *hitDir, float spreadFraction
 
 // Breakable-piece pool lifecycle. The caller owns CRITSECT_PHYSICS.
 // Shutdown releases every sidecar binding and destroys the bodies, so the FX
-// world is empty before Phys_Shutdown and no stale token survives a map.
+// world is empty before Phys_Shutdown and no stale token survives a map. It
+// leaves numPieces alone: retail never resets it.
 void __cdecl DynEntPieces_Shutdown();
 
-// Result of publishing a created piece body. retiredBody is the body evicted
-// from a recycled slot, if any; the caller destroys it after leaving the
-// physics lock (Phys_ObjDestroy takes the lock itself).
+// Result of publishing a created piece body. A full pool (numPieces 100)
+// refuses the commit, as retail 1.8 does.
 struct DynEntPieceSlotCommit
 {
     bool committed;
-    dxBody *retiredBody;
 };
 
 DynEntPieceSlotCommit __cdecl DynEntPieces_CommitSlotLocked(
