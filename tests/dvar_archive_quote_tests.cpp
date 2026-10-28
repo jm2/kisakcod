@@ -37,16 +37,21 @@ WEAK void Com_DPrintf(int, const char *, ...) {}
 WEAK void Com_PrintWarning(int, const char *, ...) {}
 WEAK void Com_PrintError(int, const char *, ...) {}
 WEAK void __cdecl Com_Error(errorParm_t, const char *, ...) {}
+// The config writer prints one fixed format; check it and assemble the line
+// from its two arguments, so the stub never forwards a format string.
+constexpr char kSetaFormat[] = "seta %s \"%s\"\n";
 WEAK int FS_Printf(int, const char *fmt, ...)
 {
-    char line[16384];
+    CHECK(std::strcmp(fmt, kSetaFormat) == 0);
     va_list args;
     va_start(args, fmt);
-    std::vsnprintf(line, sizeof(line), fmt, args);
+    const char *const name = va_arg(args, const char *);
+    const char *const value = va_arg(args, const char *);
     va_end(args);
-    g_written += line;
+    g_written += std::string("seta ") + name + " \"" + value + "\"\n";
     return 0;
 }
+const dvar_t *com_logfile;
 WEAK void __cdecl Cmd_AddCommandInternal(const char *, void (*)(), cmd_function_s *) {}
 WEAK char __cdecl Com_Filter(const char *, char *, int) { return 0; }
 WEAK bool __cdecl Com_LogFileOpen() { return false; }
@@ -57,10 +62,10 @@ WEAK char *__cdecl SEH_LocalizeTextMessage(const char *text, const char *, msgLo
 {
     return const_cast<char *>(text);
 }
+va_info_t g_vaInfo;
 WEAK void *__cdecl Sys_GetValue(int valueIndex)
 {
-    static va_info_t vaInfo;
-    return valueIndex == 1 ? &vaInfo : nullptr;
+    return valueIndex == 1 ? &g_vaInfo : nullptr;
 }
 WEAK void KISAK_CDECL Sys_LockRead(FastCriticalSection *) {}
 WEAK void KISAK_CDECL Sys_UnlockRead(FastCriticalSection *) {}

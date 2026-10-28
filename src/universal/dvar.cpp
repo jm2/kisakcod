@@ -137,7 +137,8 @@ bool __cdecl Dvar_EncodeArchivedValue(const char *value, char *out, int outSize)
     static const char digits[] = "0123456789abcdef";
     if (!value || !strpbrk(value, "\"\n\r"))
         return false;
-    const int length = static_cast<int>(strlen(value));
+    // A value longer than half the buffer can't be encoded; bound the scan.
+    const int length = static_cast<int>(strnlen(value, static_cast<size_t>(outSize)));
     if (kArchivedHexMarkerLength + 2 * length + 1 > outSize)
     {
         // Too long to encode: write nothing that could break out of the line.
@@ -161,8 +162,9 @@ bool __cdecl Dvar_DecodeArchivedValue(const char *value, char *out, int outSize)
     if (!value || strncmp(value, kArchivedHexMarker, kArchivedHexMarkerLength))
         return false;
     const char *hex = value + kArchivedHexMarkerLength;
-    const int length = static_cast<int>(strlen(hex));
-    if (length % 2 || length / 2 + 1 > outSize)
+    const size_t limit = 2 * static_cast<size_t>(outSize);
+    const int length = static_cast<int>(strnlen(hex, limit));
+    if (static_cast<size_t>(length) == limit || length % 2 || length / 2 + 1 > outSize)
         return false;
     for (int i = 0; i < length / 2; ++i)
     {
