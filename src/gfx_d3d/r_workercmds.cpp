@@ -738,6 +738,7 @@ void __cdecl R_WaitFrontendWorkerCmds()
     //KISAK_NULLSUB();
 
     R_ProcessWorkerCmdsWithTimeout(R_FinishedWorkerCmds, 1);
+    FX_ConvertPendingDrawFatal();
 }
 
 int __cdecl R_FinishedWorkerCmds()
@@ -762,4 +763,5 @@ void __cdecl R_WaitWorkerCmds()
     //KISAK_NULLSUB();
 
     R_ProcessWorkerCmdsWithTimeout(R_FinishedWorkerCmds, 1);
+    FX_ConvertPendingDrawFatal();
 }
