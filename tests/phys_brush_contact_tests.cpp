@@ -493,15 +493,14 @@ int main()
 #include <physics/ode/quickstep.h>
 #include <physics/ode/util.h>
 
-// #243 item 3: ODE_BreakupIslandIfTooBig trimmed an island body by body and
-// stopped only when the joint list got small. Two-body joints never satisfy
-// ShouldNotRemoveJoint for one removed body alone, so a 15th body plus 74
-// joints ran *bodyCount through 0 and wrote body[-1]->tag (and beyond) in
-// Release, where iassert(*bodyCount > 0) is compiled out.
+// #243 item 3: ODE_BreakupIslandIfTooBig against retail 1.8 (0x005B38E0,
+// ADR-0009). Retail trims an island of 14 bodies or 74 joints, bodies first
+// down to 14, then one at a time until fewer than 74 joints remain; each
+// partition sees only the body just removed. Retail then walks to body[-1]
+// once every body is gone; the port stops there with an empty joint list.
 //
-// Each check passes the body list one past a canary slot, so an indexing
-// underflow lands on a body this test owns and fails in every build, not only
-// under ASan.
+// Each body list sits one past a canary slot, so an indexing underflow lands
+// on a body this test owns and fails in every build, not only under ASan.
 
 // dxBody's dMass member default-constructs through dMassSetZero; the checks
 // never read a mass, so an empty definition keeps the link to util.cpp small.
@@ -509,11 +508,7 @@ void dMassSetZero(dMass *) {}
 
 namespace
 {
-constexpr int kTooManyBodies = ISLAND_MAX_BODY_COUNT + 1;
-constexpr int kFirstShapeParallel = ISLAND_MAX_JOINT_COUNT - 1;
-constexpr int kFirstShapeJoints = kFirstShapeParallel + 3;
-constexpr int kSecondShapeBodies = 13;
-constexpr int kSecondShapeJoints = ISLAND_MAX_JOINT_COUNT + 1;
+constexpr int kParallel = ISLAND_MAX_JOINT_COUNT - 1; // 73 joints body[0]-body[1]
 
 void TwoBodyJoint(dxJoint *joint, dxBody *a, dxBody *b)
 {
@@ -523,98 +518,91 @@ void TwoBodyJoint(dxJoint *joint, dxBody *a, dxBody *b)
     joint->node[1].body = b;
 }
 
-// A world-attached joint (node[1].body == 0) leaves the island with its body.
-void OneBodyJoint(dxJoint *joint, dxBody *a)
-{
-    TwoBodyJoint(joint, a, nullptr);
-}
-
-// 15 bodies, 73 joints between body[0] and body[1], and three joints the
-// canary owns. Nothing in the body list can remove those 73 from the list, so
-// the old loop tagged body[0], then the canary as body[-1]; the canary's
-// joints are what stop it there instead of walking further out of the array.
-void OneBodyTooMany()
+// A world-attached joint (b == nullptr) leaves the island with its body.
+struct Island
 {
     dxBody canary = {};
-    dxBody bodies[kTooManyBodies] = {};
-    dxBody *slot[kTooManyBodies + 2] = {};
-    dxJoint joints[kFirstShapeJoints] = {};
-    dxJoint *list[kFirstShapeJoints] = {};
+    dxBody bodies[16] = {};
+    dxBody *slot[17] = {};
+    dxJoint joints[80] = {};
+    dxJoint *list[80] = {};
+    int bodyCount = 0;
+    int jointCount = 0;
 
-    canary.tag = 1;
-    slot[0] = &canary;
-    for (int i = 0; i < kTooManyBodies; ++i)
+    explicit Island(int count)
     {
-        bodies[i].tag = 1;
-        slot[i + 1] = &bodies[i];
+        canary.tag = 1;
+        slot[0] = &canary;
+        for (int i = 0; i < count; ++i)
+        {
+            bodies[i].tag = 1;
+            slot[i + 1] = &bodies[i];
+        }
+        bodyCount = count;
+        for (int i = 0; i < kParallel; ++i)
+            AddJoint(&bodies[0], &bodies[1]);
     }
-
-    for (int i = 0; i < kFirstShapeParallel; ++i)
+    void AddJoint(dxBody *a, dxBody *b)
     {
-        TwoBodyJoint(&joints[i], &bodies[0], &bodies[1]);
-        list[i] = &joints[i];
+        TwoBodyJoint(&joints[jointCount], a, b);
+        list[jointCount] = &joints[jointCount];
+        ++jointCount;
     }
-    for (int i = kFirstShapeParallel; i < kFirstShapeJoints; ++i)
-    {
-        OneBodyJoint(&joints[i], &canary);
-        list[i] = &joints[i];
-    }
+    void Breakup() { ODE_BreakupIslandIfTooBig(&slot[1], &bodyCount, list, &jointCount); }
+};
 
-    int bodyCount = kTooManyBodies;
-    int jointCount = kFirstShapeJoints;
-    ODE_BreakupIslandIfTooBig(&slot[1], &bodyCount, list, &jointCount);
+// At the caps: 14 bodies and 73 joints is left alone; 13 bodies and exactly
+// 74 joints is trimmed, because retail needs fewer than 74 (0x005B3938).
+void TrimsAtTheRetailCaps()
+{
+    Island atBodyCap(ISLAND_MAX_BODY_COUNT);
+    atBodyCap.Breakup();
+    CHECK(atBodyCap.bodyCount == ISLAND_MAX_BODY_COUNT);
+    CHECK(atBodyCap.jointCount == kParallel);
 
-    CHECK(bodyCount == 1);
-    CHECK(canary.tag == 1);
-    CHECK(bodies[0].tag == 1);
-    CHECK(jointCount <= ISLAND_MAX_JOINT_COUNT);
-    for (int i = 0; i < jointCount; ++i)
-        CHECK(list[i]->tag == 1);
+    Island atJointCap(13);
+    atJointCap.AddJoint(&atJointCap.bodies[12], nullptr); // 74: body[12]'s world joint
+    atJointCap.Breakup();
+    CHECK(atJointCap.bodyCount == 12);
+    CHECK(atJointCap.jointCount == kParallel);
+    CHECK(atJointCap.bodies[12].tag == 0);
 }
 
-// 13 bodies stay inside the body cap, but 73 joints between body[0] and
-// body[1] keep the list too long. Only removing both body[12] and body[11]
-// drops the two joints that connect them, and that needs the removal
-// predicate to see every body removed so far rather than just the last one.
-void JointsAcrossRemovedBodies()
+// Each pass sees only the body just removed, so a joint between two removed
+// bodies never leaves: 13 bodies with two joints body[11]-body[12] lose every
+// body. With none left, the list empties and nothing touches body[-1].
+void PredicateSeesOneBodyThenStopsAtZero()
 {
-    dxBody bodies[kSecondShapeBodies] = {};
-    dxBody *slot[kSecondShapeBodies] = {};
-    dxJoint joints[kSecondShapeJoints] = {};
-    dxJoint *list[kSecondShapeJoints] = {};
+    Island island(13);
+    island.AddJoint(&island.bodies[11], &island.bodies[12]);
+    island.AddJoint(&island.bodies[11], &island.bodies[12]);
+    island.Breakup();
+    CHECK(island.bodyCount == 0);
+    CHECK(island.jointCount == 0);
+    CHECK(island.canary.tag == 1);
+    CHECK(island.bodies[0].tag == 0);
+}
 
-    for (int i = 0; i < kSecondShapeBodies; ++i)
-    {
-        bodies[i].tag = 1;
-        slot[i] = &bodies[i];
-    }
-
-    constexpr int kParallel = ISLAND_MAX_JOINT_COUNT - 1;
-    for (int i = 0; i < kParallel; ++i)
-    {
-        TwoBodyJoint(&joints[i], &bodies[0], &bodies[1]);
-        list[i] = &joints[i];
-    }
-    for (int i = kParallel; i < kSecondShapeJoints; ++i)
-    {
-        TwoBodyJoint(&joints[i], &bodies[11], &bodies[12]);
-        list[i] = &joints[i];
-    }
-
-    int bodyCount = kSecondShapeBodies;
-    int jointCount = kSecondShapeJoints;
-    ODE_BreakupIslandIfTooBig(slot, &bodyCount, list, &jointCount);
-
-    CHECK(bodyCount == 11);
-    CHECK(jointCount == kParallel);
+// 15 bodies: the first trim takes body[14], then the walk goes to zero as
+// above; the canary's world joints must never be reached.
+void UnderflowStopsBeforeTheCanary()
+{
+    Island island(ISLAND_MAX_BODY_COUNT + 1);
+    for (int i = 0; i < 3; ++i)
+        island.AddJoint(&island.canary, nullptr);
+    island.Breakup();
+    CHECK(island.bodyCount == 0);
+    CHECK(island.jointCount == 0);
+    CHECK(island.canary.tag == 1);
 }
 
 }  // namespace
 
 int main()
 {
-    OneBodyTooMany();
-    JointsAcrossRemovedBodies();
+    TrimsAtTheRetailCaps();
+    PredicateSeesOneBodyThenStopsAtZero();
+    UnderflowStopsBeforeTheCanary();
     if (g_failures)
         std::fprintf(stderr, "%d check(s) failed\n", g_failures);
     return g_failures ? 1 : 0;

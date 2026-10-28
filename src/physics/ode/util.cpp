@@ -236,32 +236,27 @@ void __cdecl ODE_BreakupIslandIfTooBig(
     int *const jointCount)
 {
     ShouldNotRemoveJoint pred; // [esp+3Ch] [ebp-Ch]
-    int removedBodyCount; // [esp+44h] [ebp-4h]
+    int oldBodyCount; // [esp+44h] [ebp-4h]
 
     iassert(body);
     iassert(joint);
 
-    // The arrays hold exactly these counts, so only a larger island is too big.
-    if (*bodyCount > ISLAND_MAX_BODY_COUNT || *jointCount > ISLAND_MAX_JOINT_COUNT)
+    // Retail 1.8 (0x005B38E0), ADR-0009: an island of 14 bodies or 74 joints
+    // is trimmed; bodies go first, down to 14, then one at a time until fewer
+    // than 74 joints remain. Each partition sees only the bodies removed since
+    // the last one, which after the first pass is the single body just
+    // removed, as retail computes it (0x005B3914 sub ecx,eax).
+    if (*bodyCount >= ISLAND_MAX_BODY_COUNT || *jointCount >= ISLAND_MAX_JOINT_COUNT)
     {
-        removedBodyCount = 0;
+        oldBodyCount = *bodyCount;
         while (*bodyCount > ISLAND_MAX_BODY_COUNT)
-        {
             body[--*bodyCount]->tag = 0;
-            ++removedBodyCount;
-        }
         while (1)
         {
-            // The predicate covers every body removed so far, not just the
-            // last one, so joints between two removed bodies leave the island
-            // (their bodies are stepped in the next island formed this pass).
-            if (removedBodyCount > 0)
+            if (oldBodyCount - *bodyCount > 0)
             {
                 pred.body = &body[*bodyCount];
-                pred.bodyCount = removedBodyCount;
-                //*jointCount = std::_Partition<dxJoint **, ShouldNotRemoveJoint>(joint, &joint[*jointCount], v4) - joint;
-                //std::partition(&joint[0], &joint[*jointCount], v4);
-
+                pred.bodyCount = oldBodyCount - *bodyCount;
                 *jointCount = static_cast<int>(
                     std::partition(
                         joint,
@@ -270,21 +265,20 @@ void __cdecl ODE_BreakupIslandIfTooBig(
                     ) - joint);
             }
 
-            if (*jointCount <= ISLAND_MAX_JOINT_COUNT)
+            if (*jointCount < ISLAND_MAX_JOINT_COUNT)
                 break;
 
-            // Removing the last body cannot shrink the joint list any further;
-            // decrementing below it would write body[-1]->tag. Keep the prefix
-            // the partition left in front and bound the list here instead.
-            if (*bodyCount <= 1)
+            // KISAK: retail goes on to body[-1] once every body is gone
+            // (0x005B3940). With no body left there is nothing to step, so
+            // stop with an empty joint list instead.
+            if (*bodyCount <= 0)
             {
-                *jointCount = ISLAND_MAX_JOINT_COUNT;
+                *jointCount = 0;
                 break;
             }
 
-            --*bodyCount;
+            oldBodyCount = (*bodyCount)--;
             body[*bodyCount]->tag = 0;
-            ++removedBodyCount;
         }
 
         iassert(*bodyCount >= 0);
