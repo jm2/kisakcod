@@ -1,7 +1,8 @@
 // bgame/bg_animation_mp.cpp in a headless harness: BG_SetConditionValue's
 // 64-bit store into a 4-byte-aligned pair (the sanitizer build traps a single
-// 64-bit access) and its change log, and BG_ExecuteCommand's selection of the
-// second body part's playback path.
+// 64-bit access) and its change log, and BG_ExecuteCommand's second body part,
+// which retail 1.8 plays while taking the legs decision from bodyPart[0]
+// (0x004052D9; ADR-0009).
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -33,7 +34,9 @@ void TestExecuteCommandBodyPart()
     command.animIndex[0] = 0;
     command.animIndex[1] = 1;
     command.animDuration[0] = 10;
-    CHECK(BG_ExecuteCommand(&ps, &command, 0, 0, 1) == 60);
+    // Torso first, legs second: the legs anim plays, but as in retail the
+    // second block's legs check reads bodyPart[0], so no duration comes back.
+    CHECK(BG_ExecuteCommand(&ps, &command, 0, 0, 1) == -1);
     CHECK((ps.legsAnim & 0xFFFFFDFF) == 1);
 }
 
