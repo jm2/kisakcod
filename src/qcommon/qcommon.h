@@ -351,6 +351,11 @@ void __cdecl Dvar_SetFromDvar_f();
 void __cdecl Dvar_Reset_f();
 void __cdecl Dvar_WriteVariables(int f);
 void __cdecl Dvar_WriteSingleVariable(const dvar_s *dvar, void *userData);
+// KISAK: an archived value with a quote or line break would end its seta line
+// early on reload, so the writer hex-encodes it behind a marker and seta
+// decodes it; other values are written as retail writes them.
+bool __cdecl Dvar_EncodeArchivedValue(const char *value, char *out, int outSize);
+bool __cdecl Dvar_DecodeArchivedValue(const char *value, char *out, int outSize);
 void __cdecl Dvar_WriteDefaults(int f);
 void __cdecl Dvar_WriteSingleDefault(const dvar_s *dvar, void *userData);
 void __cdecl Dvar_List_f();
