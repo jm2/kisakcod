@@ -15,8 +15,9 @@
 #ifdef KISAK_MP
 void __cdecl CG_LoadingString(int32_t localClientNum, const char *s)
 {
-    CG_GetLocalClientGlobals(localClientNum)->isLoading = *s != 0;
-    if (s && *s)
+    const bool loading = s && *s;
+    CG_GetLocalClientGlobals(localClientNum)->isLoading = loading;
+    if (loading)
     {
         Com_Printf(14, "LOADING... %s\n", s);
     }

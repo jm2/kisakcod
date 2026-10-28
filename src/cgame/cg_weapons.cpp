@@ -2627,8 +2627,13 @@ void __cdecl DrawBulletImpacts(
 
     cgameGlob = CG_GetLocalClientGlobals(localClientNum);
     nextSnap = cgameGlob->nextSnap;
-    // KISAKFIX: MP `(otherFlags & 6) != 0 && ...` → SP IDA just `number == clientNum`.
+    // KISAKFIX: MP gates the local/spectated player on otherFlags; SP IDA only
+    // compares the entity number.
+#ifdef KISAK_MP
+    if ((nextSnap->ps.otherFlags & 6) != 0 && ent->nextState.number == nextSnap->ps.clientNum)
+#elif KISAK_SP
     if (ent->nextState.number == nextSnap->ps.clientNum)
+#endif
     {
         weaponNum = BG_GetViewmodelWeaponIndex(ps);
         dobjNumber = CG_WeaponDObjHandle(weaponNum);
@@ -3379,8 +3384,13 @@ cg_s *__cdecl CG_GetLocalClientGlobalsForEnt(int32_t localClientNum, int32_t ent
         {
             nextSnap = cgameGlob->nextSnap;
 
-            // KISAKFIX: MP `(otherFlags & 6) != 0 && ...` → SP IDA just `entityNum == clientNum`.
+            // KISAKFIX: MP gates the local/spectated player on otherFlags; SP
+            // IDA only compares the entity number.
+#ifdef KISAK_MP
+            if ((nextSnap->ps.otherFlags & 6) != 0 && entityNum == nextSnap->ps.clientNum)
+#elif KISAK_SP
             if (entityNum == nextSnap->ps.clientNum)
+#endif
                 return cgameGlob;
         }
     }
@@ -3846,8 +3856,13 @@ bool __cdecl ShouldSpawnTracer(int32_t localClientNum, int32_t sourceEntityNum)
 
     nextSnap = cgameGlob->nextSnap;
 
-    // KISAKFIX: MP `(otherFlags & 6) != 0 && ...` → SP IDA just `sourceEntityNum == clientNum`.
+    // KISAKFIX: MP gates the local/spectated player on otherFlags; SP IDA only
+    // compares the entity number.
+#ifdef KISAK_MP
+    if ((nextSnap->ps.otherFlags & 6) != 0 && sourceEntityNum == nextSnap->ps.clientNum)
+#elif KISAK_SP
     if (sourceEntityNum == nextSnap->ps.clientNum)
+#endif
         return 0;
 
     if (CG_PlayerUsingScopedTurret(localClientNum)
