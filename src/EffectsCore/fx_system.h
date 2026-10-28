@@ -902,6 +902,9 @@ void __cdecl Vec3MadMad(
     float *result);
 void __cdecl FX_DrawSpriteEffect(FxSystem *system, FxEffect *effect, int32_t drawTime);
 void __cdecl FX_GenerateVerts(FxGenerateVertsCmd *cmd);
+// Main-thread safe point after joining the renderer worker: converts the first
+// draw failure recorded while generating FX verts on that worker into ERR_DROP.
+void __cdecl FX_ConvertPendingDrawFatal();
 void __cdecl FX_FillGenerateVertsCmd(int32_t localClientNum, FxGenerateVertsCmd *cmd);
 void __cdecl FX_EvaluateDistanceFade(FxDrawState *draw);
 double __cdecl FX_ClampRangeLerp(float dist, const FxFloatRange *range);

@@ -1581,6 +1581,30 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_tests_properties(fx-beam-contracts PROPERTIES TIMEOUT 20)
 endif()
 
+# FX trail draw on the vert worker (EffectsCore/fx_draw.cpp): a corrupt trail
+# must record the first reason instead of raising Com_Error on the worker, and
+# an oversized trail must let R_ReserveCodeMeshVerts fail and skip drawing, as
+# retail did. Same Linux/clang/dxvk-d3d9 gate as the beam test above.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND KISAK_CIN_TEST_DXVK_D3D9_FOUND)
+    add_executable(kisakcod-fx-draw-worker-error-tests fx_draw_worker_error_tests.cpp
+        ${SRC_DIR}/EffectsCore/fx_draw.cpp ${SRC_DIR}/EffectsCore/fx_random.cpp
+        ${SRC_DIR}/universal/com_math.cpp com_math_test_stubs.cpp)
+    target_include_directories(kisakcod-fx-draw-worker-error-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-fx-draw-worker-error-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-fx-draw-worker-error-tests PRIVATE KISAK_MP UNIX KISAK_DXVK_NATIVE)
+    target_compile_options(kisakcod-fx-draw-worker-error-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_libraries(kisakcod-fx-draw-worker-error-tests PRIVATE PkgConfig::KISAK_CIN_TEST_DXVK_D3D9)
+    target_link_options(kisakcod-fx-draw-worker-error-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-fx-draw-worker-error-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-fx-draw-worker-error-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-fx-draw-worker-error-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME fx-draw-worker-error-contracts COMMAND kisakcod-fx-draw-worker-error-tests)
+    set_tests_properties(fx-draw-worker-error-contracts PROPERTIES TIMEOUT 20)
+endif()
+
 # CG_SetupWeaponDef (cgame/cg_weapons.cpp) at 64-bit: the weapon-file names it
 # hands ParseWeaponDefFiles. Linux and clang only, as above; the client's
 # defines.
