@@ -689,6 +689,7 @@ WEAK int Com_sprintf(char *dest, uint32_t size, const char *format, ...)
 #if GAME_MP_HAZARD_SUBJECT == 5
     va_list args;
     va_start(args, format);
+    // flawfinder: ignore (test-only wrapper forwarding the production TU literal format)
     const int written = size ? std::vsnprintf(dest, size, format, args) : 0;
     va_end(args);
     return written;
@@ -803,6 +804,7 @@ static void ResetCommandFixture()
     level.clients = g_levelClients;
     level.maxclients = 1;
     level.numConnectedClients = 2;
+    // cppcheck-suppress y2038-unsafe-call (fixture writes zero server time; no libc time call)
     level.time = 0;
     level.voteTime = 0;
     level.voteExecuteTime = 0;
@@ -830,8 +832,7 @@ static const char *ConfigValue(int index)
     return nullptr;
 }
 
-// ClientCommand say -> Cmd_Say_f -> ConcatArgs -> G_Say -> G_SayTo. Check the
-// exact server-command bytes and the 150-byte chat copy boundary.
+// ClientCommand say -> Cmd_Say_f -> ConcatArgs -> G_Say -> G_SayTo: exact server-command bytes and 150-byte chat copy boundary.
 static void ClientCommandSaysBoundedBytes()
 {
     ResetCommandFixture();
@@ -879,8 +880,7 @@ static void CallVoteBuildsBoundedBytes()
     CHECK(voteLen < sizeof(level.voteString));
 }
 
-// ClientCommand vote -> Cmd_Vote_f. The 64-byte token selects yes/no and the
-// resulting counter is written to configstring 15 or 16.
+// ClientCommand vote -> Cmd_Vote_f: the 64-byte token selects yes/no; the counter goes to configstring 15 or 16.
 static void VoteUpdatesConfigstringBytes()
 {
     ResetCommandFixture();
