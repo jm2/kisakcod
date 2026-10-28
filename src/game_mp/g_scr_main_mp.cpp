@@ -976,7 +976,7 @@ void GScr_SetDvar()
     if (Dvar_IsValidName(dvarName))
     {
         v3 = Scr_GetNumParam() >= 3 && Scr_GetInt(2);
-        Dvar_SetFromStringByName(dvarName, (char *)dvarValue);
+        Dvar_SetFromStringByName(dvarName, outString);
         if (v3)
         {
             dvar = Dvar_FindVar(dvarName);
@@ -5390,7 +5390,7 @@ void GScr_MakeDvarServerInfo()
             ++pCh;
         }
         *pCh = 0;
-        Dvar_RegisterString(dvarName, (char *)dvarValue, DVAR_TEMP | DVAR_EXTERNAL, "Script defined user info dvar");
+        Dvar_RegisterString(dvarName, outString, DVAR_TEMP | DVAR_EXTERNAL, "Script defined user info dvar");
     }
 }
 

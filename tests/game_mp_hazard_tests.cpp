@@ -3,12 +3,13 @@
 // read attach names and entrefs through 32-bit address arithmetic; each check
 // runs the production function at 64-bit and fails on the old code.
 //
-// One source, three executables (GAME_MP_HAZARD_SUBJECT), so no subject's
+// One source, five executables (GAME_MP_HAZARD_SUBJECT), so no subject's
 // function tables pull another subject's engine code into the link:
 //   1: g_spawn_mp, g_client_script_cmd_mp, g_combat_mp, g_player_corpse_mp,
 //      g_vehicles_mp, g_scr_vehicle;  2: g_active_mp;  3: g_utils_mp,
-//      g_main_mp, server/sv_game. 3 also checks that level shutdown pops the
-//      parse session held by an open scriptdata read buffer.
+//      g_main_mp, server/sv_game;  4: g_client_script_cmd_mp alone for the
+//      damage clamp; 5: g_cmds_mp for ClientCommand, callvote and vote. 3
+//      also checks that level shutdown pops an open scriptdata read session.
 // The engine boundary is weak: the engine TUs replace the stubs they define.
 
 #include <cstdarg>
@@ -72,6 +73,38 @@ uint32_t g_numParam = 1;
 uint32_t g_constString = 0;
 float g_float = 0.0f;
 int g_offset = -1; // what Scr_GetOffset returns for the key
+int g_scrIntArgs[10] = {};
+int g_scrTypes[10] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+
+#if GAME_MP_HAZARD_SUBJECT == 5
+dvar_t g_allowVoteDvar, g_oldVotingDvar, g_cheatsDvar, g_deadChatDvar;
+dvar_t g_dedicatedDvar, g_gametypeDvar, g_mapnameDvar, g_useFastFileDvar;
+gclient_s g_levelClients[1];
+
+struct CommandTrace
+{
+    int count = 0;
+    int clients[4] = {};
+    char text[4][1024] = {};
+    int configCount = 0;
+    int configIndex[8] = {};
+    char configValue[8][1024] = {};
+};
+CommandTrace g_commandTrace;
+const char *g_cmdArgs[3] = {};
+int g_cmdArgc = 0;
+
+void RecordCommand(int clientNum, const char *text)
+{
+    if (g_commandTrace.count < 4)
+    {
+        const int index = g_commandTrace.count;
+        g_commandTrace.clients[index] = clientNum;
+        std::snprintf(g_commandTrace.text[index], sizeof(g_commandTrace.text[index]), "%s", text);
+    }
+    ++g_commandTrace.count;
+}
+#endif
 
 [[maybe_unused]] gentity_s *Ent(int n)
 {
@@ -91,6 +124,13 @@ WEAK scr_data_t g_scr_data;
 WEAK server_t sv;
 WEAK bgs_t level_bgs;
 WEAK bgs_t *bgs;
+
+#if GAME_MP_HAZARD_SUBJECT == 5
+WEAK const dvar_t *g_allowVote = &g_allowVoteDvar; WEAK const dvar_t *g_oldVoting = &g_oldVotingDvar;
+WEAK const dvar_t *g_cheats = &g_cheatsDvar; WEAK const dvar_t *g_deadChat = &g_deadChatDvar;
+WEAK const dvar_t *g_dedicated = &g_dedicatedDvar; WEAK const dvar_t *g_gametype = &g_gametypeDvar;
+WEAK const dvar_t *useFastFile = &g_useFastFileDvar;
+#endif
 
 WEAK void MyAssertHandler(const char *filename, int line, int, const char *, ...)
 {
@@ -153,8 +193,8 @@ WEAK uint32_t Scr_GetNumParam() { return g_numParam; }
 WEAK uint32_t Scr_GetConstString(uint32_t) { return g_constString; }
 WEAK uint32_t Scr_GetConstStringIncludeNull(uint32_t) { return 0; }
 WEAK float Scr_GetFloat(uint32_t) { return g_float; }
-WEAK int Scr_GetInt(uint32_t) { return 0; }
-WEAK int Scr_GetType(uint32_t) { return 1; }
+WEAK int Scr_GetInt(uint32_t index) { return index < 10 ? g_scrIntArgs[index] : 0; }
+WEAK int Scr_GetType(uint32_t index) { return index < 10 ? g_scrTypes[index] : 1; }
 WEAK void Scr_GetVector(uint32_t, float *value) { value[0] = value[1] = value[2] = 0.0f; }
 WEAK scr_entref_t Scr_GetEntityRef(uint32_t) { scr_entref_t entity7; entity7.entnum = 7; return entity7; }
 WEAK void Scr_SetString(uint16_t *to, uint32_t from) { *to = static_cast<uint16_t>(from); }
@@ -173,6 +213,16 @@ WEAK char *va(const char *format, ...)
     va_end(args);
     return g_vaText;
 }
+WEAK uint32_t G_GetWeaponIndexForName(const char *) { return 0; }
+WEAK int32_t G_MeansOfDeathFromScriptParam(uint32_t) { return MOD_CRUSH; }
+WEAK int32_t G_GetHitLocationIndexFromString(uint16_t) { return HITLOC_NONE; }
+WEAK uint32_t Scr_GetPointerType(uint32_t) { return 0; } WEAK gentity_s *Scr_GetEntity(uint32_t) { return nullptr; }
+WEAK void Scr_PlayerLastStand(gentity_s *, gentity_s *, gentity_s *, int32_t, uint32_t, uint32_t,
+                              const float *, hitLocation_t, int32_t) {}
+WEAK gentity_s *G_TempEntity(const float *, int) { return &g_entities[0]; } WEAK uint8_t DirToByte(const float *) { return 0; }
+WEAK WeaponDef *BG_GetWeaponDef(uint32_t) { return nullptr; } WEAK const dvar_t *g_knockback;
+WEAK const dvar_t *player_dmgtimer_timePerPoint; WEAK const dvar_t *player_dmgtimer_maxTime;
+
 WEAK gentity_s *EntHandle::ent() const { return nullptr; }
 WEAK bool EntHandle::isDefined() const { return false; }
 WEAK void EntHandle::setEnt(gentity_s *) {}
@@ -181,8 +231,12 @@ WEAK uint32_t G_ModelName(uint32_t index) { return index; }
 WEAK uint32_t SV_GetConfigstringConst(uint32_t index) { seen.configstring = index; return 0x333; }
 WEAK void SV_GameSendServerCommand(int clientNum, svscmd_type, const char *text)
 {
+#if GAME_MP_HAZARD_SUBJECT == 5
+    RecordCommand(clientNum, text);
+#else
     seen.commandClient = clientNum;
     std::snprintf(seen.command, sizeof(seen.command), "%s", text);
+#endif
 }
 WEAK void G_FreeEntity(gentity_s *ed) { seen.freed = ed; }
 WEAK void TeleportPlayer(gentity_s *, float *, float *) {}
@@ -230,8 +284,83 @@ STUB_THINK(Reached_ScriptMover) STUB_THINK(turret_think) STUB_THINK(turret_think
 STUB_TOUCH(hurt_touch) STUB_TOUCH(Touch_Item_Auto) STUB_TOUCH(G_VehEntHandler_Touch)
 STUB_USE(hurt_use) STUB_USE(Use_trigger_damage) STUB_USE(turret_use) STUB_USE(G_VehEntHandler_Use)
 STUB_CONTROLLER(G_VehEntHandler_Controller) STUB_CONTROLLER(Helicopter_Controller) STUB_CONTROLLER(turret_controller)
+STUB_CONTROLLER(G_PlayerController)
 STUB_PAIN(Pain_trigger_damage) STUB_PAIN(Helicopter_Pain)
 STUB_DIE(Die_trigger_damage) STUB_DIE(G_VehEntHandler_Die) STUB_DIE(Helicopter_Die) STUB_DIE(player_die)
+
+#if GAME_MP_HAZARD_SUBJECT == 5
+// g_cmds_mp.cpp engine boundary: the command token stream, server replies,
+// configstrings and the few game helpers reached by the command switch.
+WEAK int SV_Cmd_Argc() { return g_cmdArgc; }
+WEAK const char *SV_Cmd_Argv(int arg) { return arg >= 0 && arg < g_cmdArgc ? g_cmdArgs[arg] : ""; }
+WEAK void SV_Cmd_ArgvBuffer(int arg, char *buffer, int bufferLength)
+{
+    std::snprintf(buffer, bufferLength, "%s", SV_Cmd_Argv(arg));
+}
+WEAK void SV_SetConfigstring(int index, const char *value)
+{
+    if (g_commandTrace.configCount < 8)
+    {
+        const int slot = g_commandTrace.configCount;
+        g_commandTrace.configIndex[slot] = index;
+        std::snprintf(g_commandTrace.configValue[slot], sizeof(g_commandTrace.configValue[slot]), "%s", value);
+    }
+    ++g_commandTrace.configCount;
+}
+WEAK void SV_GetConfigstring(uint32_t, char *buffer, int bufferSize)
+{
+    if (bufferSize)
+        buffer[0] = 0;
+}
+WEAK int Dvar_GetInt(const char *) { return 0; }
+WEAK const char *Dvar_GetString(const char *) { return ""; }
+WEAK const dvar_t *Dvar_RegisterString(const char *, const char *value, uint16_t, const char *)
+{
+    g_mapnameDvar.current.string = value;
+    return &g_mapnameDvar;
+}
+WEAK bool SV_MapExists(char *) { return true; }
+WEAK void Cbuf_AddText(int, const char *) {}
+WEAK bool Scr_IsValidGameType(const char *) { return true; }
+WEAK char *Scr_GetGameTypeNameForScript(const char *) { return const_cast<char *>("dm"); }
+WEAK void Scr_VoteCalled(gentity_s *, char *, char *, char *) {}
+WEAK void Scr_PlayerVote(gentity_s *, char *) {}
+WEAK char *SV_GetGuid(int) { return const_cast<char *>("guid"); }
+WEAK void G_LogPrintf(const char *, ...) {} WEAK void Com_DPrintf(int, const char *, ...) {}
+WEAK void Com_PrintError(int, const char *, ...) {} WEAK char *I_CleanStr(char *value) { return value; }
+WEAK void I_strncpyz(char *dest, const char *src, int size) { std::snprintf(dest, size, "%s", src); }
+WEAK int I_strnicmp(const char *lhs, const char *rhs, int count)
+{
+    for (int i = 0; i < count && (*lhs || *rhs); ++i)
+    {
+        const int left = std::tolower(static_cast<unsigned char>(*lhs++));
+        const int right = std::tolower(static_cast<unsigned char>(*rhs++));
+        if (left != right)
+            return left - right;
+    }
+    return 0;
+}
+WEAK bool OnSameTeam(gentity_s *, gentity_s *) { return true; } WEAK bool G_ClientCanSpectateTeam(gclient_s *, team_t) { return false; }
+WEAK int SV_GetClientPing(int) { return 0; } WEAK int SV_GetArchivedClientInfo(int, int *, playerState_s *, clientState_s *) { return 0; }
+WEAK void G_PrintEntities() {} WEAK char *vtos(const float *) { return const_cast<char *>(""); }
+WEAK void G_SetOrigin(gentity_s *, const float *) {} WEAK void SetClientViewAngle(gentity_s *, const float *) {}
+WEAK int32_t Add_Ammo(gentity_s *, uint32_t, uint8_t, int32_t, int32_t) { return 0; } WEAK const gitem_s *G_FindItem(const char *, int32_t) { return nullptr; }
+WEAK void G_SpawnItem(gentity_s *, const gitem_s *) {} WEAK void G_GetItemClassname(const gitem_s *, uint16_t *) {}
+WEAK int32_t G_GivePlayerWeapon(playerState_s *, int32_t, uint8_t) { return 0; } WEAK void G_SelectWeaponIndex(int32_t, int32_t) {}
+WEAK uint32_t BG_GetNumWeapons() { return 0; } WEAK bool BG_CanPlayerHaveWeapon(uint32_t) { return false; }
+WEAK int32_t BG_TakePlayerWeapon(playerState_s *, uint32_t, int32_t) { return 0; } WEAK int32_t BG_AmmoForWeapon(uint32_t) { return 0; }
+WEAK int32_t BG_ClipForWeapon(uint32_t) { return 0; } WEAK void Touch_Item(gentity_s *, gentity_s *, int32_t) {}
+WEAK gentity_s *G_Spawn() { return nullptr; }
+WEAK int Com_sprintf(char *dest, uint32_t size, const char *format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    // flawfinder: ignore (test-only wrapper forwarding the production TU literal format)
+    const int written = size ? std::vsnprintf(dest, size, format, args) : 0;
+    va_end(args);
+    return written;
+}
+#endif
 
 #if GAME_MP_HAZARD_SUBJECT == 1
 // g_spawn_mp.cpp fields_1: every script entity field reads its own member.
@@ -555,11 +684,20 @@ static void BgCallbacksHaveTheirCallersTypes()
 // is 0 and freeScripts is 0, so the entity, tree and script paths stay empty.
 WEAK void Com_SafeServerDObjFree(uint32_t) {}
 WEAK void Com_FreeWeaponInfoMemory(int) {}
-WEAK int Com_sprintf(char *dest, uint32_t size, const char *, ...)
+WEAK int Com_sprintf(char *dest, uint32_t size, const char *format, ...)
 {
+#if GAME_MP_HAZARD_SUBJECT == 5
+    va_list args;
+    va_start(args, format);
+    // flawfinder: ignore (test-only wrapper forwarding the production TU literal format)
+    const int written = size ? std::vsnprintf(dest, size, format, args) : 0;
+    va_end(args);
+    return written;
+#else
     if (size)
         dest[0] = 0;
     return 0;
+#endif
 }
 WEAK XAnimTree_s *DObjGetTree(const DObj_s *) { return nullptr; }
 WEAK int32_t EntHandle::entnum() { return -1; }
@@ -610,6 +748,162 @@ static void ShutdownPopsOpenScriptReadSession()
     const char *line = "GUID name";
     CHECK(!std::strcmp(Com_Parse(&line)->token, "GUID"));
 }
+#elif GAME_MP_HAZARD_SUBJECT == 4
+// g_client_script_cmd_mp.cpp finishPlayerDamage: exactly lethal damage drops
+// health to 0. The old unsigned comparison treated 0 as below the signed
+// sentinel and clamped it to -999; the signed comparison leaves it at 0.
+static void FinishPlayerDamageClampsLethalHealth()
+{
+    static dvar_t zeroDvar;
+    g_knockback = &zeroDvar;
+    player_dmgtimer_timePerPoint = &zeroDvar;
+    player_dmgtimer_maxTime = &zeroDvar;
+
+    gentity_s *const self = Ent(4);
+    self->client = &g_client;
+    self->handler = ENT_HANDLER_NULL;
+    self->health = 10;
+    self->flags = static_cast<gentityFlags_t>(0);
+    g_client.lastStand = 0;
+    g_client.ps.pm_type = PM_NORMAL;
+    g_client.ps.perks = 0;
+    // cppcheck-suppress y2038-unsafe-call (fixture writes zero server time; no libc time call)
+    level.time = 0;
+    g_scrIntArgs[2] = 10;
+    g_scrIntArgs[3] = 4;
+    g_scrTypes[0] = g_scrTypes[1] = g_scrTypes[6] = g_scrTypes[7] = 0;
+
+    scr_entref_t entref;
+    entref.entnum = 4;
+    entref.classnum = 0;
+    PlayerCmd_finishPlayerDamage(entref);
+    CHECK(self->health == 0);
+}
+
+#elif GAME_MP_HAZARD_SUBJECT == 5
+static void RunClientCommand(const char *arg0, const char *arg1 = nullptr, const char *arg2 = nullptr)
+{
+    g_cmdArgs[0] = arg0;
+    g_cmdArgs[1] = arg1;
+    g_cmdArgs[2] = arg2;
+    g_cmdArgc = arg1 ? (arg2 ? 3 : 2) : 1;
+    ClientCommand(0);
+}
+
+static void ResetCommandFixture()
+{
+    g_commandTrace = CommandTrace();
+    g_allowVoteDvar.current.enabled = true;
+    g_oldVotingDvar.current.enabled = true;
+    g_cheatsDvar.current.enabled = true;
+    g_deadChatDvar.current.enabled = true;
+    g_dedicatedDvar.current.integer = 0;
+    g_gametypeDvar.current.string = "dm";
+    g_useFastFileDvar.current.enabled = false;
+
+    level.clients = g_levelClients;
+    level.maxclients = 1;
+    level.numConnectedClients = 2;
+    // cppcheck-suppress y2038-unsafe-call (fixture writes zero server time; no libc time call)
+    level.time = 0;
+    level.voteTime = 0;
+    level.voteExecuteTime = 0;
+    level.voteYes = 0;
+    level.voteNo = 0;
+
+    g_entities[0] = gentity_s();
+    g_levelClients[0] = gclient_s();
+    gentity_s *const ent = Ent(0);
+    ent->client = &g_levelClients[0];
+    ent->client->sess.connected = CON_CONNECTED;
+    ent->client->sess.sessionState = static_cast<sessionState_t>(0);
+    ent->client->sess.cs.team = TEAM_ALLIES;
+    ent->client->ps.pm_type = PM_NORMAL;
+    std::snprintf(ent->client->sess.cs.name, sizeof(ent->client->sess.cs.name), "Player");
+}
+
+static const char *ConfigValue(int index)
+{
+    for (int i = 0; i < g_commandTrace.configCount && i < 8; ++i)
+    {
+        if (g_commandTrace.configIndex[i] == index)
+            return g_commandTrace.configValue[i];
+    }
+    return nullptr;
+}
+
+// ClientCommand say -> Cmd_Say_f -> ConcatArgs -> G_Say -> G_SayTo: exact server-command bytes and 150-byte chat copy boundary.
+static void ClientCommandSaysBoundedBytes()
+{
+    ResetCommandFixture();
+    RunClientCommand("say", "hello");
+    CHECK(g_commandTrace.count == 1);
+    CHECK(g_commandTrace.clients[0] == 0);
+    CHECK(!std::strcmp(g_commandTrace.text[0], "h \"\x15\x15^8Player^7: ^7hello\""));
+
+    char longChat[600];
+    std::memset(longChat, 'A', sizeof(longChat) - 1);
+    longChat[sizeof(longChat) - 1] = 0;
+    ResetCommandFixture();
+    RunClientCommand("say", longChat);
+    CHECK(g_commandTrace.count == 1);
+    CHECK(g_commandTrace.text[0][0] == 'h' && g_commandTrace.text[0][1] == ' '
+          && g_commandTrace.text[0][2] == '"');
+    const size_t textLen = strnlen(g_commandTrace.text[0], sizeof(g_commandTrace.text[0]));
+    CHECK(textLen > 0 && g_commandTrace.text[0][textLen - 1] == '"');
+    CHECK(textLen + 1 < sizeof(g_commandTrace.text[0]));
+}
+
+// ClientCommand callvote -> Cmd_CallVote_f: fixed vote command/display strings/configstrings, then a 300-byte map against the 256/1024 bounds.
+static void CallVoteBuildsBoundedBytes()
+{
+    ResetCommandFixture();
+    RunClientCommand("callvote", "map_restart");
+    CHECK(!std::strcmp(level.voteString, "fast_restart"));
+    CHECK(!std::strcmp(level.voteDisplayString, "GAME_VOTE_MAPRESTART"));
+    CHECK(level.voteTime == 30000 && level.voteYes == 1 && level.voteNo == 0);
+    CHECK(g_commandTrace.count == 1 && g_commandTrace.clients[0] == -1);
+    CHECK(!std::strcmp(g_commandTrace.text[0], "e \"GAME_CALLEDAVOTE\x15Player\""));
+    CHECK(ConfigValue(13) && !std::strcmp(ConfigValue(13), "30000 0"));
+    CHECK(ConfigValue(14) && !std::strcmp(ConfigValue(14), "GAME_VOTE_MAPRESTART"));
+    CHECK(ConfigValue(15) && !std::strcmp(ConfigValue(15), "1"));
+    CHECK(ConfigValue(16) && !std::strcmp(ConfigValue(16), "0"));
+
+    char longMap[301];
+    std::memset(longMap, 'm', sizeof(longMap) - 1);
+    longMap[sizeof(longMap) - 1] = 0;
+    ResetCommandFixture();
+    RunClientCommand("callvote", "map", longMap);
+    CHECK(!std::strncmp(level.voteString, "map ", 4));
+    const size_t voteLen = strnlen(level.voteString, sizeof(level.voteString));
+    CHECK(voteLen == 4 + 255);
+    CHECK(voteLen < sizeof(level.voteString));
+}
+
+// ClientCommand vote -> Cmd_Vote_f: the 64-byte token selects yes/no; the counter goes to configstring 15 or 16.
+static void VoteUpdatesConfigstringBytes()
+{
+    ResetCommandFixture();
+    level.voteTime = 30000;
+    level.voteYes = 1;
+    g_levelClients[0].ps.eFlags = 0;
+    RunClientCommand("vote", "yes");
+    CHECK(level.voteYes == 2);
+    CHECK(ConfigValue(15) && !std::strcmp(ConfigValue(15), "2"));
+    CHECK(g_commandTrace.count == 1 && g_commandTrace.clients[0] == 0);
+    CHECK(!std::strcmp(g_commandTrace.text[0], "e \"GAME_VOTECAST\""));
+
+    ResetCommandFixture();
+    level.voteTime = 30000;
+    level.voteNo = 0;
+    g_levelClients[0].ps.eFlags = 0;
+    RunClientCommand("vote", "no");
+    CHECK(level.voteNo == 1);
+    CHECK(ConfigValue(16) && !std::strcmp(ConfigValue(16), "1"));
+    CHECK(g_commandTrace.count == 1 && g_commandTrace.clients[0] == 0);
+    CHECK(!std::strcmp(g_commandTrace.text[0], "e \"GAME_VOTECAST\""));
+}
+
 #endif
 
 int main()
@@ -627,6 +921,12 @@ int main()
     VehicleTableRejectsThe33rdType();
 #elif GAME_MP_HAZARD_SUBJECT == 2
     TriggersDispatchTheirOwnHandler();
+#elif GAME_MP_HAZARD_SUBJECT == 4
+    FinishPlayerDamageClampsLethalHealth();
+#elif GAME_MP_HAZARD_SUBJECT == 5
+    ClientCommandSaysBoundedBytes();
+    CallVoteBuildsBoundedBytes();
+    VoteUpdatesConfigstringBytes();
 #elif GAME_MP_HAZARD_SUBJECT == 3
     GameDataStridesMatchTheStructs();
     XAnimAllocatorHasItsCallersType();

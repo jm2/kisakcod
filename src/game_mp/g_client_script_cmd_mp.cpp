@@ -1443,7 +1443,7 @@ void __cdecl PlayerCmd_finishPlayerDamage(scr_entref_t entref)
                 }
                 if (tempBulletHitEntity)
                     tempBulletHitEntity->s.un1.scale |= 2u;
-                if (pSelf->health <= 0xFFFFFC18)
+                if (pSelf->health < -999)
                     pSelf->health = -999;
                 die = entityHandlers[pSelf->handler].die;
                 if (die)
