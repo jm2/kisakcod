@@ -691,7 +691,10 @@ void __cdecl Voice_Playback()
             mixerSetRecordLevel((char*)"Mic", (int)winvoice_mic_reclevel->current.value);
         }
         for (client = 0; client < 64; ++client)
-            Sound_SampleFrame(s_clientSamples[client]);
+        {
+            if (s_clientSamples[client])
+                Sound_SampleFrame(s_clientSamples[client]);
+        }
         Sound_Frame();
     }
 }
@@ -751,7 +754,9 @@ void __cdecl Voice_IncomingVoiceData(unsigned __int8 talker, unsigned __int8 *da
         else
             v3 = g_frame_size;
         data_len = Decode_Sample((char *)&data[v5], v3, out, g_frame_size);
-        if ((int)data_len > 0)
+        // With no capture device, Sound_NewSample returns NULL for every
+        // talker: there is nothing to play this voice into.
+        if ((int)data_len > 0 && s_clientSamples[talker])
             Sound_UpdateSample(s_clientSamples[talker], (char *)out, data_len);
         v5 += v3;
     }
