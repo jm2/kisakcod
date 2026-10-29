@@ -762,6 +762,8 @@ set(PLATFORM_WIN32
     "${SRC_DIR}/win32/win_benchmark.h"
     "${SRC_DIR}/win32/win_configure.cpp"
     "${SRC_DIR}/win32/win_configure.h"
+    "${SRC_DIR}/win32/win_dpi.cpp"
+    "${SRC_DIR}/win32/win_dpi.h"
     "${SRC_DIR}/win32/win_input.cpp"
     "${SRC_DIR}/win32/win_input.h"
     "${SRC_DIR}/win32/win_local.h"

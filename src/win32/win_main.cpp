@@ -2,6 +2,7 @@
 
 //#include "../client/client.h
 #include "win_configure.h"
+#include "win_dpi.h"
 #include "win_local.h"
 #include "win_localize.h"
 #include "win_net.h"
@@ -643,6 +644,9 @@ void __cdecl Sys_Init()
 	Com_Printf(16, "Total CPU performance is estimated as %.2lf GHz\n", sys_info.configureGHz);
 	Com_Printf(16, "System memory is %i MB (capped at 1 GB)\n", sys_info.sysMB);
 	Com_Printf(16, "Video card is \"%s\"\n", sys_info.gpuDescription);
+#ifndef KISAK_DEDICATED
+	Com_Printf(16, "DPI awareness is %s\n", Sys_DpiAwarenessName());
+#endif
 	if (sys_info.SSE)
 		Com_Printf(16, "Streaming SIMD Extensions (SSE) %ssupported\n", "");
 	else
