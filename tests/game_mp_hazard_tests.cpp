@@ -601,21 +601,26 @@ static void VehicleTableRejectsThe33rdType()
     CHECK(s_numVehicleInfos == 32);
 }
 
-// #214: G_LoadVehicle copies the requested name into vehicle_info_t::name
-// (64 bytes). A longer name, from a map's vehicletype key or a
-// spawnHelicopter argument, is cut at 63 characters instead of running into
-// the type field and the rest of the entry.
+// #214: G_LoadVehicle stores the requested name in vehicle_info_t::name (64
+// bytes). A longer name, from a map's vehicletype key or a spawnHelicopter
+// argument, fails the load (the caller then uses defaultvehicle_mp) instead of
+// running into the type field and the rest of the entry. A 63-character name
+// still loads whole.
 static void VehicleNameIsBoundedToItsField()
 {
     s_numVehicleInfos = 0;
+    std::memset(&s_vehicleInfos[0], 0, sizeof(s_vehicleInfos[0]));
     char name[200];
     std::memset(name, 'x', sizeof(name) - 1);
     name[sizeof(name) - 1] = '\0';
+    CHECK(G_LoadVehicle(name) == -1);
+    CHECK(s_numVehicleInfos == 0);
+    CHECK(s_vehicleInfos[0].type == 0);
+    CHECK(s_vehicleInfos[0].steerWheels == 0);
+
+    name[sizeof(s_vehicleInfos[0].name) - 1] = '\0';
     CHECK(G_LoadVehicle(name) == 0);
-    const vehicle_info_t &info = s_vehicleInfos[0];
-    CHECK(strnlen(info.name, sizeof(info.name)) == sizeof(info.name) - 1);
-    CHECK(info.type == 0);
-    CHECK(info.steerWheels == 0);
+    CHECK(!std::strcmp(s_vehicleInfos[0].name, name));
 }
 
 #elif GAME_MP_HAZARD_SUBJECT == 2

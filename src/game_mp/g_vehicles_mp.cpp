@@ -649,6 +649,11 @@ int32_t __cdecl G_LoadVehicle(const char *name)
 
     if (!name)
         MyAssertHandler(".\\game_mp\\g_vehicles_mp.cpp", 434, 0, "%s", "name");
+    // vehicle_info_t::name holds 63 characters. A longer name could never match
+    // VEH_GetVehicleInfoFromName's lookup again, so fail the load and let the
+    // caller fall back to defaultvehicle_mp.
+    if (strlen(name) >= sizeof(s_vehicleInfos[0].name))
+        return -1;
     snprintf(string, ARRAYSIZE(string), "vehicles/%s", name);
     pszBuffer = Com_LoadInfoString(string, "vehicle file", "VEHICLEFILE", loadBuffer);
     if (s_numVehicleInfos >= static_cast<int32_t>(ARRAY_COUNT(s_vehicleInfos)))
@@ -659,7 +664,7 @@ int32_t __cdecl G_LoadVehicle(const char *name)
     v11 = s_numVehicleInfos;
     dst = (uint8_t *)&s_vehicleInfos[s_numVehicleInfos];
     memset(dst, 0, 0x270u);
-    // Retail 1.8 copies the name unbounded (0x004DECE0); vehicle_info_t::name is 64 bytes.
+    // Retail 1.8 copies the name unbounded (0x004DECE0); the length check above keeps it in the field.
     I_strncpyz(reinterpret_cast<char *>(dst), name, sizeof(s_vehicleInfos[0].name));
     if (!ParseConfigStringToStruct(
         dst,
