@@ -37,6 +37,7 @@ Names are `kisakcod-<version>-<os>-<arch>[-setup].<ext>`. The release adds
 **Contents.** Packages hold only binaries we build, a README, our license,
 and every bundled component's license text in `THIRD-PARTY-NOTICES` (#263).
 They contain no retail data, no Steamworks, and no Miles or Bink binaries.
+
 - Linux bundles dxvk-native in the game folder's `lib/`, found through
   `$ORIGIN` rpath. Distro packages depend on the distro's SDL3, OpenAL Soft
   and FFmpeg. The portable archive bundles those too.
@@ -46,6 +47,7 @@ They contain no retail data, no Steamworks, and no Miles or Bink binaries.
 points at it. The player's Steam 1.8 data (`main/`, `zone/` and the rest) can
 live there, or in the per-user path below. The file system searches both, the
 per-user path first, so a read-only install never needs data copied into it.
+
 - **Windows:** the installer defaults to the Steam CoD4 folder it finds in
   the registry, so it installs beside `iw3mp.exe`. Otherwise it uses
   `{autopf}\KisakCOD`.
@@ -63,6 +65,7 @@ at the owner's choice on 2026-10-29. On macOS it is
 `%APPDATA%\KisakCOD`. On every platform the client's `fs_homepath`
 defaults to it, and user configs and settings always go there, even when the
 game folder is writable. The owner chose this on 2026-10-29.
+
 - Profiles move from `fs_basepath/players` to `fs_homepath/players`.
 - A profile already in the game folder is still read.
 - The dedicated server keeps retail's game-folder default, so `server.cfg`
