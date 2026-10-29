@@ -1,0 +1,6 @@
+The Windows packages ship the Microsoft Visual C++ runtime DLLs that the
+bundled OpenAL Soft and FFmpeg DLLs import (vcruntime140.dll,
+vcruntime140_1.dll and msvcp140.dll). They are Visual C++ Redistributable
+files, Copyright (c) Microsoft Corporation, which the Visual Studio license
+lets applications ship beside their executables. KisakCOD's own executables
+link the C runtime statically.
