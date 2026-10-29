@@ -15,7 +15,7 @@ The only network reference is the original Steam release `1.8.13620`. The releas
 | Authorize / master | The `SV_AuthorizeRequest` call in the challenge path and `SV_MasterHeartbeat` are commented out. `masterServerName` still defaults to `cod4master.activision.com` | `sv_client_mp.cpp`, `sv_main_pc_mp.cpp`, `common.cpp` |
 | PunkBuster | Every `Pb*` hook is commented out and stays dead ([ADR-0002](../decisions/0002-punkbuster-out.md)). `getinfo` still sends a `pb` key from `sv_punkbuster` | `sv_main_mp.cpp` and others |
 
-**Result:** under `steam18` the server and client speak the community-sourced 1.8 identity, and a stock 1.8 client has joined the x86 server and stayed through two map changes (NOW row 36, #182). The owner's captures (§5) are still needed to confirm the values.
+**Result:** under `steam18` the server and client speak the community-sourced 1.8 identity, and G4a's exit evidence is complete (NOW row 36, #182, 2026-10-29). On the x86 server, a stock 1.8 client found the server in the LAN browser, joined, spawned and fired, stayed through a map change, and reconnected. The server's replies carry `protocol 7`, `gamename Call of Duty 4` and `shortversion 1.8`. The owner's two-sided captures (§5) are no longer a G4a blocker; they only feed the §6 diff report.
 
 ## 2. Stock handshake (1.0 and 1.7)
 
@@ -149,8 +149,8 @@ Replay the captured usercmds through the fork's `Pmove` (`bg_pmove.cpp`), and co
 | G4a | An unmodified Steam 1.8 client discovers, connects, plays, changes map and reconnects on the fork's **x86** server |
 | G4b | The G4a matrix against every native server that passed G3 |
 
-- **Work:** the `steam18` profile is done (#531, #532). The capture decoder and diff report (§6) wait on the captures. The G4a run is under way on yoga (NOW row 36, #182).
-- **Effort:** 6–12 weeks, or 12–20 if in-band formats changed. All of it can be built and tested on the x86 build, and it starts when the captures arrive.
+- **Work:** the `steam18` profile is done (#531, #532). G4a passed on yoga on 2026-10-29 (NOW row 36, #182). The capture decoder and diff report (§6) are optional follow-ups that wait on the owner's captures.
+- **Effort:** 6–12 weeks, or 12–20 if in-band formats changed. All of it can be built and tested on the x86 build. The G4a part is spent; what is left (§6) starts only if the owner's captures arrive.
 - **Evidence rules:** fork-peer evidence never counts for G4, and x86 evidence never counts for G4b ([CHARTER](../CHARTER.md), [ROADMAP](../ROADMAP.md)).
 
 ## 12. 1.8 executable changes (#692)
