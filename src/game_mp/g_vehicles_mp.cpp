@@ -652,7 +652,7 @@ int32_t __cdecl G_LoadVehicle(const char *name)
     // vehicle_info_t::name holds 63 characters. A longer name could never match
     // VEH_GetVehicleInfoFromName's lookup again, so fail the load and let the
     // caller fall back to defaultvehicle_mp.
-    if (strlen(name) >= sizeof(s_vehicleInfos[0].name))
+    if (strnlen(name, sizeof(s_vehicleInfos[0].name)) == sizeof(s_vehicleInfos[0].name))
         return -1;
     snprintf(string, ARRAYSIZE(string), "vehicles/%s", name);
     pszBuffer = Com_LoadInfoString(string, "vehicle file", "VEHICLEFILE", loadBuffer);
