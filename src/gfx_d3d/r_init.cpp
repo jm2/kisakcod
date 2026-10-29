@@ -3037,6 +3037,8 @@ void R_InitGraphicsApi()
             R_SetWndParms(&wndParms);
             if (R_CreateGameWindow(&wndParms))
                 break;
+            // Retry at the reduced r_mode, not the desktop size that failed.
+            R_SetFullscreenAtDesktop(false);
             if (!R_ReduceWindowSettings())
                 R_FatalInitError("Couldn't initialize renderer");
         }
@@ -4115,6 +4117,13 @@ int __cdecl R_ClosestRefreshRateForMode(uint32_t width, uint32_t height, int ref
     return R_FindDisplayModeRefreshRate(dx.displayModes, dx.displayModeCount, width, height, refreshRate);
 }
 
+static bool s_fullscreenAtDesktop;
+
+void R_SetFullscreenAtDesktop(bool atDesktop)
+{
+    s_fullscreenAtDesktop = atDesktop;
+}
+
 void __cdecl R_SetWndParms(GfxWindowParms *wndParms)
 {
     const char *resolutionString; // [esp+0h] [ebp-Ch]
@@ -4126,6 +4135,21 @@ void __cdecl R_SetWndParms(GfxWindowParms *wndParms)
     {
         resolutionString = Dvar_EnumToString(r_mode);
         sscanf(resolutionString, "%ix%i", &wndParms->displayWidth, &wndParms->displayHeight);
+    }
+    // A windowed restart ends Alt+Enter's desktop fullscreen, so fullscreen
+    // from the options menu or the console keeps r_mode, as in retail.
+    if (!wndParms->fullscreen)
+        s_fullscreenAtDesktop = false;
+    _D3DDISPLAYMODE desktop{};
+    if (wndParms->fullscreen && dx.d3d9->GetAdapterDisplayMode(dx.adapterIndex, &desktop) >= 0)
+    {
+        R_ChooseFullscreenSize(
+            dx.displayModes,
+            dx.displayModeCount,
+            s_fullscreenAtDesktop,
+            desktop,
+            &wndParms->displayWidth,
+            &wndParms->displayHeight);
     }
     wndParms->sceneWidth = wndParms->displayWidth;
     wndParms->sceneHeight = wndParms->displayHeight;

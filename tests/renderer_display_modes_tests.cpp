@@ -4,7 +4,8 @@
 // negative indexes into the pointer table that follows dx.displayModes. That
 // only worked while pointers were 4 bytes, and it crashed the Win64 client in
 // R_EnumDisplayModes. The modes here are sorted as R_CompareDisplayModes sorts
-// them.
+// them. R_ChooseFullscreenSize, which R_SetWndParms calls, picks the desktop
+// mode for fullscreen entered with Alt+Enter.
 
 #include <cstdio>
 
@@ -61,6 +62,21 @@ int main()
 
     Expect(R_FindDisplayModeRefreshRate(modes, count, 1280, 720, 60), 60, "unlisted resolution keeps the request");
     Expect(g_asserts, 1, "an unlisted resolution asserts once");
+
+    // R_ChooseFullscreenSize: R_SetWndParms starts from r_mode's size (here
+    // 800x600) and passes the adapter's current desktop mode (#917).
+    const auto Fullscreen = [&](bool atDesktop, UINT desktopWidth, UINT desktopHeight, int wantWidth, int wantHeight,
+                                const char *what) {
+        int width = 800;
+        int height = 600;
+        R_ChooseFullscreenSize(modes, count, atDesktop, Mode(desktopWidth, desktopHeight, 60), &width, &height);
+        Expect(width, wantWidth, what);
+        Expect(height, wantHeight, what);
+    };
+    Fullscreen(true, 1920, 1080, 1920, 1080, "Alt+Enter takes the desktop mode");
+    Fullscreen(false, 1920, 1080, 800, 600, "menu fullscreen keeps r_mode's size");
+    Fullscreen(true, 1280, 720, 800, 600, "an unlisted desktop mode keeps r_mode's size");
+    Fullscreen(true, 0, 0, 800, 600, "an empty desktop mode keeps r_mode's size");
 
     if (g_failures)
         return 1;

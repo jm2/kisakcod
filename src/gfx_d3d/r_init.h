@@ -394,6 +394,8 @@ char __cdecl R_CreateDevice(const GfxWindowParms *wndParms);
 void __cdecl R_SetupAntiAliasing(const GfxWindowParms *wndParms);
 int __cdecl R_GetDeviceType();
 void __cdecl R_SetWndParms(GfxWindowParms *wndParms);
+// Alt+Enter (#917): the next fullscreen window takes the desktop resolution.
+void R_SetFullscreenAtDesktop(bool atDesktop);
 #if defined(_WIN32) || defined(KISAK_DXVK_NATIVE)
 void __cdecl R_GetDirect3DCaps(uint32_t adapterIndex, _D3DCAPS9 *caps);
 void __cdecl R_SetD3DPresentParameters(_D3DPRESENT_PARAMETERS_ *d3dpp, const GfxWindowParms *wndParms);

@@ -56,3 +56,24 @@ int R_FindDisplayModeRefreshRate(
         modeCount);
     return refreshRate;
 }
+
+void R_ChooseFullscreenSize(
+    const _D3DDISPLAYMODE *modes,
+    uint32_t modeCount,
+    bool atDesktop,
+    const _D3DDISPLAYMODE &desktop,
+    int *width,
+    int *height)
+{
+    if (!atDesktop)
+        return;
+    for (uint32_t modeIndex = 0; modeIndex < modeCount; ++modeIndex)
+    {
+        if (modes[modeIndex].Width == desktop.Width && modes[modeIndex].Height == desktop.Height)
+        {
+            *width = (int)desktop.Width;
+            *height = (int)desktop.Height;
+            return;
+        }
+    }
+}

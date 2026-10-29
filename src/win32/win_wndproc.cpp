@@ -13,6 +13,7 @@
 #include <sound/snd_public.h>
 
 #include <gfx_d3d/r_dvars.h>
+#include <gfx_d3d/r_init.h>
 #include <qcommon/cmd.h>
 
 const dvar_t *vid_xpos;
@@ -392,9 +393,12 @@ LRESULT WINAPI MainWndProc(
 			}
 			else
 			{
-				if (r_fullscreen && Dvar_GetInt("developer"))
+				// Bit 30 marks auto-repeat: a held Alt+Enter toggles once.
+				if (r_fullscreen && !(lParam & (1 << 30)))
 				{
-					Dvar_SetBool(r_fullscreen, !r_fullscreen->current.enabled);
+					const bool fullscreen = !r_fullscreen->current.enabled;
+					Dvar_SetBool(r_fullscreen, fullscreen);
+					R_SetFullscreenAtDesktop(fullscreen);
 					Cbuf_AddText(0, "vid_restart\n");
 				}
 				return 0;
