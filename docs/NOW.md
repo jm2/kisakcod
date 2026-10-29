@@ -1,7 +1,7 @@
 # NOW
 
 Last reviewed: 2026-10-29 by the coordinator
-Gates: G3 (row 65); G5 evidence complete; G4a waits on owner; G0-G2 done
+Gates: G3 and G4a evidence complete (owner closes); G0-G2 and G5 done
 WIP limit: 6 (bug lane first, then gates)
 
 ## KPIs
@@ -34,28 +34,28 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 
 | # | Bead | Gate | Moves | Done-test | Size | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| 65 | G3 on the macOS arm64 headless server, as row 47 | G3 | K6 | the round's console text on both ends | M | server up on mbp16 :28973; macOS firewall drops UDP to the ad-hoc-signed dedi (owner allows it); client from yoga |
-| 36 | G4a evidence: a stock Steam 1.8 client joins the windows-x86 server | G4a | gate | a retail client connects under `steam18`; capture confirms protocol 7, gamename, shortversion (#531) | M | yoga: discovery, connect, 2 map changes pass; left: browser, spawn, fire, reconnect (#182) |
+| 67 | PunkBuster neither required nor blocked: `sv_punkbuster` defaults to 0, no client PB screen (#916) | G6 | K6 | a server with no `sv_punkbuster` line replies `pb\0`; a stock client joins from the LAN browser | S | not started |
+| 68 | Windows clients declare PerMonitorV2 DPI awareness (#918) | G6 | K6 | at 225% scaling the fork client fits the screen and the cursor reaches every button | S | owner OK pending for the HIGHDPIAWARE confirmation run (yoga) |
+| 69 | Alt+Enter toggles fullscreen at the desktop resolution on every fork client (#917; after 68) | G6 | K6 | windowed to fullscreen at desktop size and back, outside developer mode, on each OS | S | not started |
 | 66 | G6: the macOS `.app` bundles its runtime ([ADR-0011](decisions/0011-macos-client-bundles-its-runtime.md)) | G6 | K6 | a clean account without Homebrew plays a LAN round; `otool -L` shows no `/opt/homebrew` | L | licenses #907, OpenAL URL #906; clean-account round left |
 
-Done 2026-10-29 (evidence on #181/#184): G3 rows 61, 63, 64; G5 rows 58
-(0 UBSan/ASan), 60 (Windows ARM64 client via D3D9On12). Every G5 exit item
-now has evidence (rows 55-60); closing G5 is the owner's call.
+Done 2026-10-29: G3 rows 61, 63, 64, 65 (#181; every G3 target now has
+evidence); G4a row 36 (#182: the owner joined a stock client from the LAN
+browser, spawned, fired, reconnected); G5 closed (#184).
 
-**Resume here:** row 65 once mbp16's firewall allows the dedi. Host: #804.
+**Resume here:** row 67, then 68 and 69. Host: #804.
 
 ## Blocked on owner
 
 | Action | Unblocks |
 | --- | --- |
-| Allow `KisakCOD-dedi` in mbp16's firewall | 65 |
-| Steam 1.8 captures ([NET_STEAM18](design/NET_STEAM18.md)); G4a steps at yoga's screen | 36 |
+| Close G3 (#181) and G4a (#182): all exit evidence is in | G3, G4a |
+| #214 item 5: keep retail or fix (`script_vehicle_mp` riders) | #214 |
 | Steamworks legal decision; release packaging (#263, #290) | WS-8, G6, K6 |
 | CoD4x census ([ADR-0005](decisions/0005-cod4x-compatibility.md)); approve CHARTER/ADRs | all |
 | Private vulnerability reporting (#293) | SECURITY.md |
 | GPU runner; Apple Developer ID | G5; G6 |
 | An unlocked Mac (clean account) | 66 |
-| Close G5 (#184): all exit evidence is in | G5 |
 
 ## Decided by the owner
 
