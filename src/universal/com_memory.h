@@ -69,10 +69,16 @@ struct HunkUser // x86 retail layout was sizeof=0x24; runtime pointers widen on 
     // padding byte
     // padding byte
     int type;
+#if KISAK_ARCH_64BIT
+    // Hunk_UserCreate requires the first allocation to be 32-byte aligned. On
+    // x86 buf already sits at offset 32; the wider 64-bit header ends at 56.
+    alignas(32) uint8_t buf[1];
+#else
     uint8_t buf[1];
     // padding byte
     // padding byte
     // padding byte
+#endif
 };
 
 // KISAKTODO: Move to proper spot?
