@@ -754,3 +754,14 @@ if (NOT WIN32)
         set_tests_properties(macos-bundle-licenses PROPERTIES TIMEOUT 30)
     endif()
 endif()
+
+# The Linux release packager (ADR-0012, NOW row 72): it writes a portable
+# archive and a .deb over stand-in binaries, then reopens both.
+if (KISAK_PLATFORM STREQUAL "linux")
+    find_package(Python3 COMPONENTS Interpreter)
+    if (Python3_Interpreter_FOUND)
+        add_test(NAME packaging-linux
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/packaging_linux_test.py)
+        set_tests_properties(packaging-linux PROPERTIES TIMEOUT 120)
+    endif()
+endif()
