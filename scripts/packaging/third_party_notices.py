@@ -47,26 +47,36 @@ def read_text(path):
     return text
 
 
-def collect(client, license_dirs, components):
+def engine_sections(client):
+    return [(f"{name} ({role})", [read_text(ROOT / relative)])
+            for name, role, relative, client_only in ENGINE if client or not client_only]
+
+
+def directory_sections(directory):
+    directory = Path(directory)
+    if not directory.is_dir():
+        raise Missing(f"license directory {directory} does not exist")
     sections = []
-    for name, role, relative, client_only in ENGINE:
-        if client_only and not client:
-            continue
-        sections.append((f"{name} ({role})", [read_text(ROOT / relative)]))
+    for component in sorted(p for p in directory.iterdir() if p.is_dir()):
+        files = sorted(p for p in component.rglob("*") if p.is_file())
+        if not files:
+            raise Missing(f"no license text for {component.name}")
+        sections.append((component.name, [read_text(f) for f in files]))
+    return sections
+
+
+def component_section(spec):
+    name, separator, path = spec.partition("=")
+    if not separator or not name or not path:
+        raise Missing(f"--component wants NAME=FILE, got {spec!r}")
+    return (name, [read_text(path)])
+
+
+def collect(client, license_dirs, components):
+    sections = engine_sections(client)
     for directory in license_dirs:
-        directory = Path(directory)
-        if not directory.is_dir():
-            raise Missing(f"license directory {directory} does not exist")
-        for component in sorted(p for p in directory.iterdir() if p.is_dir()):
-            files = sorted(p for p in component.rglob("*") if p.is_file())
-            if not files:
-                raise Missing(f"no license text for {component.name}")
-            sections.append((component.name, [read_text(f) for f in files]))
-    for spec in components:
-        name, separator, path = spec.partition("=")
-        if not separator or not name or not path:
-            raise Missing(f"--component wants NAME=FILE, got {spec!r}")
-        sections.append((name, [read_text(path)]))
+        sections += directory_sections(directory)
+    sections += [component_section(spec) for spec in components]
     return sections
 
 
@@ -79,7 +89,7 @@ def render(sections):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description="Write THIRD-PARTY-NOTICES for a release package.")
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--client", action="store_true")
     parser.add_argument("--licenses", action="append", default=[])
