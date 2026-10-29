@@ -124,6 +124,18 @@ class MatrixTest(unittest.TestCase):
                           for leg in legs], [("kisakcod-1.2.3-macos-arm64-headless-preview", "macos-headless",
                                               "macos-26", "tar.xz", "", "arm64")])
 
+    def test_linux_client_legs_ship_every_format(self):
+        legs, missing = rm.build_matrix(manifest_with({("linux-amd64", "mp-client"): "fork_peer",
+                                                       ("linux-arm64", "mp-client"): "fork_peer"}), "1.2.3")
+        self.assertEqual(missing, [])
+        self.assertEqual([(leg["stem"], leg["recipe"], leg["runner"], leg["binary"], leg["pkg_arch"], leg["also"])
+                          for leg in legs], [
+            ("kisakcod-1.2.3-linux-arm64-client-beta", "linux-client", "ubuntu-24.04-arm", "KisakCOD-mp", "arm64",
+             ["deb", "rpm", "pkg.tar.zst"]),
+            ("kisakcod-1.2.3-linux-x64-client-beta", "linux-client", "ubuntu-24.04", "KisakCOD-mp", "amd64",
+             ["deb", "rpm", "pkg.tar.zst"]),
+        ])
+
     def test_levels_pick_legs_tiers_and_names(self):
         legs, missing = rm.build_matrix(manifest_with({
             ("linux-amd64", "headless-server"): "fork_peer",
@@ -352,6 +364,14 @@ class NotesTest(unittest.TestCase):
         for text in ("# KisakCOD 0.2.0", "`kisakcod-0.2.0-linux-x64-headless-preview.tar.xz` | linux-amd64",
                      "kisakcod-0.2.0-source.tar.gz", "no Call of Duty 4 content", self.commit):
             self.assertIn(text, run.stdout)
+
+    def test_a_leg_lists_every_package_format(self):
+        self.legs, _ = rm.build_matrix(manifest_with({("linux-amd64", "mp-client"): "fork_peer"}), "0.2.0")
+        run = self.notes("v0.2.0")
+        self.assertEqual(run.returncode, 0, run.stderr)
+        stem = "kisakcod-0.2.0-linux-x64-client-beta"
+        self.assertIn(f"| `{stem}.tar.xz`, `{stem}.deb`, `{stem}.rpm`, `{stem}.pkg.tar.zst` | linux-amd64 | mp-client |",
+                      run.stdout)
 
     def test_first_release_lists_the_history(self):
         self.git("tag", "-d", "v0.1.0")

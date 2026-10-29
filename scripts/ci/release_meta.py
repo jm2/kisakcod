@@ -61,15 +61,22 @@ DRY_RUN_DEFAULT = "v0.0.0-dryrun"
 SHA_RE = re.compile(r"[0-9a-f]{40}", re.ASCII)
 
 # (target, role) -> how release.yml builds the leg. A new row needs its steps
-# in release.yml; `recipe` selects them. `archive` is the package format and
-# `exe` the executable suffix.
+# in release.yml; `recipe` selects them. `archive` is the package format,
+# `also` lists the leg's other package formats and `exe` is the executable
+# suffix.
 LINUX = {"recipe": "linux-headless", "archive": "tar.xz", "exe": ""}
+# ADR-0012: the client and the server in one package, in every Linux format.
+LINUX_CLIENT = {"recipe": "linux-client", "archive": "tar.xz", "also": ["deb", "rpm", "pkg.tar.zst"], "exe": ""}
 WINDOWS = {"recipe": "windows-headless", "archive": "zip", "exe": ".exe"}
 RECIPES = {
     ("linux-amd64", "headless-server"): {**LINUX, "runner": "ubuntu-24.04", "platform": "linux-x64",
                                          "file_arch": "x86-64"},
     ("linux-arm64", "headless-server"): {**LINUX, "runner": "ubuntu-24.04-arm", "platform": "linux-arm64",
                                          "file_arch": "aarch64"},
+    ("linux-amd64", "mp-client"): {**LINUX_CLIENT, "runner": "ubuntu-24.04", "platform": "linux-x64",
+                                   "file_arch": "x86-64", "pkg_arch": "amd64"},
+    ("linux-arm64", "mp-client"): {**LINUX_CLIENT, "runner": "ubuntu-24.04-arm", "platform": "linux-arm64",
+                                   "file_arch": "aarch64", "pkg_arch": "arm64"},
     # file_arch is both the Visual Studio platform and the PE machine name.
     ("windows-amd64", "headless-server"): {**WINDOWS, "runner": "windows-2025", "platform": "windows-x64",
                                            "file_arch": "x64"},
@@ -195,8 +202,8 @@ def notes(legs: list[dict], tag: str, commit: str, run_url: str, repo: Path, lim
     out = [f"# KisakCOD {version}", "",
            f"Built from [`{commit[:12]}`]({REPO_URL}/commit/{commit}) by [this workflow run]({run_url}).", "",
            "## Packages", "", "| Package | Target | Role | Tier | Level |", "| --- | --- | --- | --- | --- |"]
-    out += [f"| `{leg['stem']}.{leg['archive']}` | {leg['target']} | {leg['role']} | {leg['tier']} | `{leg['level']}` |"
-            for leg in legs]
+    out += ["| " + ", ".join(f"`{leg['stem']}.{ext}`" for ext in [leg["archive"], *leg.get("also", [])])
+            + f" | {leg['target']} | {leg['role']} | {leg['tier']} | `{leg['level']}` |" for leg in legs]
     out += ["", "Each package has a `-debugsymbols` companion in the same format (extract it into the same "
             + "directory) and a "
             + f"`-provenance.json`. `kisakcod-{version}-source.tar.gz` is the commit's source without the vendor "
