@@ -18,17 +18,23 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 
-# (name, what it is, license file relative to the repository, client only)
+# (name, what it is, license files relative to the repository, client only)
 ENGINE = (
     ("Open Dynamics Engine", "physics, used under its BSD license option",
-     "src/physics/ode/LICENSE-BSD.TXT", False),
-    ("zlib", "compression", "deps/zlib/LICENSE", False),
-    ("Speex", "voice chat codec", "src/groupvoice/speex/COPYING", True),
+     ("src/physics/ode/LICENSE-BSD.TXT",), False),
+    ("zlib 1.3.1", "compression", ("deps/zlib/LICENSE",), False),
+    ("unzip 0.15 by Gilles Vollant", "zip archive reading, src/qcommon/unzip.cpp",
+     ("src/qcommon/unzip-LICENSE.txt",), False),
+    ("Speex 1.1.9", "voice chat codec",
+     ("src/groupvoice/speex/COPYING", "src/groupvoice/speex/NOTICE"), True),
 )
 
 HEADER = """\
 KisakCOD bundles or is built from the third-party components below. KisakCOD
 itself is licensed under the GNU General Public License version 3 (LICENSE).
+Portions of the engine derive from the Quake III Arena source code, Copyright
+(C) 1999-2005 Id Software, Inc., under the GNU General Public License version
+2 or (at your option) any later version, and are used here under version 3.
 Each component's own license text follows its heading.
 """
 
@@ -48,8 +54,8 @@ def read_text(path):
 
 
 def engine_sections(client):
-    return [(f"{name} ({role})", [read_text(ROOT / relative)])
-            for name, role, relative, client_only in ENGINE if client or not client_only]
+    return [(f"{name} ({role})", [read_text(ROOT / relative) for relative in files])
+            for name, role, files, client_only in ENGINE if client or not client_only]
 
 
 def directory_sections(directory):

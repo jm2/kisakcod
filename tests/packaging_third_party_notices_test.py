@@ -34,6 +34,8 @@ class Notices(unittest.TestCase):
         self.assertIn("Open Dynamics Engine (physics", text)
         self.assertIn("Russell L. Smith", text)
         self.assertIn("Jean-loup Gailly and Mark Adler", text)
+        self.assertIn("Copyright (C) 1998 Gilles Vollant", text)
+        self.assertIn("Quake III Arena", text)
         self.assertNotIn("Speex", text)  # the dedicated server has no voice codec
 
     def test_client_package_adds_speex_and_each_bundled_component(self):
@@ -41,7 +43,8 @@ class Notices(unittest.TestCase):
         self.assertEqual(self.run_tool("--client", "--licenses", licenses,
                                        "--component", f"extra={self.out.parent / 'licenses/dxvk/LICENSE'}"), 0)
         text = self.out.read_text(encoding="utf-8")
-        for expected in ("Speex (voice chat codec)", "Xiph.org Foundation",
+        for expected in ("Speex 1.1.9 (voice chat codec)", "Xiph.org Foundation",
+                         "THE OggVorbis SOURCE CODE", "Technische Universitaet Berlin",
                          "\nopenal-soft\n", "LGPL text", "\ndxvk\n", "\nextra\n"):
             self.assertIn(expected, text)
         self.assertNotIn("SOURCES.txt", text)
@@ -62,8 +65,9 @@ class Notices(unittest.TestCase):
         self.assertEqual(self.run_tool("--component", "no-path"), 1)
 
     def test_engine_license_files_exist_in_the_tree(self):
-        for _, _, relative, _ in notices.ENGINE:
-            self.assertTrue(notices.read_text(notices.ROOT / relative))
+        for _, _, files, _ in notices.ENGINE:
+            for relative in files:
+                self.assertTrue(notices.read_text(notices.ROOT / relative))
 
 
 if __name__ == "__main__":

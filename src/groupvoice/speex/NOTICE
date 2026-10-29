@@ -1,0 +1,27 @@
+Speex 1.1.9 carries code from two other projects, with these notices.
+
+smallft.c (here) and speex_types.h (deps/speex) come from the OggVorbis
+codec, under the BSD-style license in COPYING:
+
+THE OggVorbis SOURCE CODE IS (C) COPYRIGHT 1994-2001
+by the XIPHOPHORUS Company http://www.xiph.org/
+(speex_types.h: (C) COPYRIGHT 1994-2002 by the Xiph.Org Foundation)
+
+lpc.c comes from the GSM 06.10 codec of the Technische Universitaet Berlin:
+
+Copyright 1992, 1993, 1994 by Jutta Degener and Carsten Bormann,
+Technische Universitaet Berlin
+
+Any use of this software is permitted provided that this notice is not
+removed and that neither the authors nor the Technische Universitaet Berlin
+are deemed to have made any representations as to the suitability of this
+software for any purpose nor are held responsible for any defects of
+this software.  THERE IS ABSOLUTELY NO WARRANTY FOR THIS SOFTWARE.
+
+As a matter of courtesy, the authors request to be informed about uses
+this software has found, about bugs in this software, and about any
+improvements that may be of general interest.
+
+Berlin, 28.11.1994
+Jutta Degener
+Carsten Bormann
