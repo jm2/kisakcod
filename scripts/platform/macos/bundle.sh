@@ -10,10 +10,13 @@
 # Usage:
 #   bundle.sh --app <out.app> --client <KisakCOD-mp> --runtime-prefix <dir>
 #             --mesa-prefix <dir> --dxvk-lib <libdxvk_d3d9.0.dylib>
-#             [--licenses <dir>] [--version <short version>]
+#             [--licenses <dir>] [--dxvk-license <file>] [--version <short version>]
+#
+# --licenses defaults to <runtime-prefix>/share/licenses (one directory per
+# component, from the runtime project); --dxvk-license is dxvk's LICENSE.
 set -euo pipefail
 
-APP="" CLIENT="" RUNTIME="" MESA="" DXVK="" LICENSES="" VERSION="0.1.0"
+APP="" CLIENT="" RUNTIME="" MESA="" DXVK="" LICENSES="" DXVK_LICENSE="" VERSION="0.1.0"
 while [ $# -gt 0 ]; do
     case "$1" in
         --app) APP="$2"; shift 2 ;;
@@ -22,6 +25,7 @@ while [ $# -gt 0 ]; do
         --mesa-prefix) MESA="$2"; shift 2 ;;
         --dxvk-lib) DXVK="$2"; shift 2 ;;
         --licenses) LICENSES="$2"; shift 2 ;;
+        --dxvk-license) DXVK_LICENSE="$2"; shift 2 ;;
         --version) VERSION="$2"; shift 2 ;;
         *) echo "bundle: unknown argument $1" >&2; exit 2 ;;
     esac
@@ -224,8 +228,13 @@ cat > "$CONTENTS/Info.plist" <<PLIST
 PLIST
 mkdir -p "$MACOS" && printf 'APPL????' > "$CONTENTS/PkgInfo"
 
-if [ -n "$LICENSES" ] && [ -d "$LICENSES" ]; then
-    cp -f "$LICENSES"/* "$RESOURCES/licenses/" 2>/dev/null || true
+LICENSES="${LICENSES:-$RUNTIME/share/licenses}"
+if [ -d "$LICENSES" ]; then
+    cp -R "$LICENSES"/. "$RESOURCES/licenses/"
+fi
+if [ -n "$DXVK_LICENSE" ]; then
+    mkdir -p "$RESOURCES/licenses/dxvk"
+    cp -f "$DXVK_LICENSE" "$RESOURCES/licenses/dxvk/LICENSE"
 fi
 cat > "$RESOURCES/licenses/SOURCES.txt" <<SOURCES
 KisakCOD-mp.app bundles its runtime, built from source at these pins
@@ -244,6 +253,10 @@ KisakCOD-mp.app bundles its runtime, built from source at these pins
 
 Device access is through Mesa's Metal driver; no GPU driver is bundled.
 SOURCES
+
+# Every framework must ship its component's license text.
+bash "$(dirname "$0")/check_licenses.sh" "$APP" || {
+    echo "bundle: FAILED license check" >&2; exit 1; }
 
 # Ad-hoc sign inside out; the app's signature covers the Frameworks.
 for lib in "$FRAMEWORKS"/*.dylib; do

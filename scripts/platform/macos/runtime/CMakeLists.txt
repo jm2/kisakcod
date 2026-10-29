@@ -79,8 +79,41 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/../../../extern/macos_runtime_ffmpeg.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/../../../extern/macos_runtime_zstd.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/../../../extern/macos_runtime_mesa.cmake)
 
+# Each bundled component's own license texts, into
+# <prefix>/share/licenses/<component>/, where bundle.sh picks them up.
+set(_kisak_license_dir "${KISAK_RUNTIME_PREFIX}/share/licenses")
+set(_kisak_license_commands "")
+foreach (_kisak_pair
+        "vulkan-loader|kisak_runtime_vulkan_loader|LICENSE.txt"
+        "spirv-tools|kisak_runtime_spirv_tools|LICENSE"
+        "SDL3|kisak_runtime_sdl3|LICENSE.txt"
+        "openal-soft|kisak_runtime_openal|COPYING"
+        "ffmpeg|kisak_runtime_ffmpeg|LICENSE.md;COPYING.LGPLv2.1"
+        "zstd|kisak_runtime_zstd|LICENSE"
+        "mesa|kisak_runtime_mesa|docs/license.rst;licenses/MIT")
+    string(REPLACE "|" ";" _kisak_fields "${_kisak_pair}")
+    list(GET _kisak_fields 0 _kisak_component)
+    list(GET _kisak_fields 1 _kisak_project)
+    list(SUBLIST _kisak_fields 2 -1 _kisak_files)
+    ExternalProject_Get_Property(${_kisak_project} SOURCE_DIR)
+    list(APPEND _kisak_license_commands
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${_kisak_license_dir}/${_kisak_component}")
+    foreach (_kisak_file IN LISTS _kisak_files)
+        list(APPEND _kisak_license_commands
+            COMMAND ${CMAKE_COMMAND} -E copy "${SOURCE_DIR}/${_kisak_file}"
+                "${_kisak_license_dir}/${_kisak_component}/")
+    endforeach()
+endforeach()
+add_custom_target(runtime_licenses
+    ${_kisak_license_commands}
+    DEPENDS kisak_runtime_vulkan_loader kisak_runtime_spirv_tools
+            kisak_runtime_sdl3 kisak_runtime_openal kisak_runtime_ffmpeg
+            kisak_runtime_zstd kisak_runtime_mesa
+    COMMENT "license texts: ${_kisak_license_dir}"
+    VERBATIM)
+
 add_custom_target(runtime ALL
     DEPENDS kisak_runtime_vulkan_loader kisak_runtime_spirv_tools
             kisak_runtime_sdl3 kisak_runtime_openal kisak_runtime_ffmpeg
-            kisak_runtime_mesa
+            kisak_runtime_mesa runtime_licenses
     COMMENT "macOS runtime prefix: ${KISAK_RUNTIME_PREFIX}, mesa: ${KISAK_MESA_PREFIX}")

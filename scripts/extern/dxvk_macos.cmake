@@ -41,3 +41,7 @@ set_target_properties(kisak_dxvk_d3d9 PROPERTIES
     IMPORTED_LOCATION ${KISAK_DXVK_MACOS_PREFIX}/lib/libdxvk_d3d9.dylib
     INTERFACE_INCLUDE_DIRECTORIES ${KISAK_DXVK_MACOS_PREFIX}/include/dxvk)
 add_dependencies(kisak_dxvk_d3d9 kisak_dxvk_macos)
+
+# dxvk's license text, for the macOS bundle (ADR-0011).
+ExternalProject_Get_Property(kisak_dxvk_macos SOURCE_DIR)
+set_property(GLOBAL PROPERTY KISAK_DXVK_MACOS_LICENSE "${SOURCE_DIR}/LICENSE")
