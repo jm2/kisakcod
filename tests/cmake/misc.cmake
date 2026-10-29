@@ -2042,3 +2042,13 @@ add_test(
     NAME cg-autojoin-menu-rules
     COMMAND kisakcod-cg-autojoin-tests
 )
+
+# THIRD-PARTY-NOTICES for the release packages (ADR-0012, #263).
+find_program(KISAK_TEST_PYTHON3 python3)
+if (KISAK_TEST_PYTHON3)
+    add_test(
+        NAME release-third-party-notices
+        COMMAND "${KISAK_TEST_PYTHON3}" "${CMAKE_SOURCE_DIR}/tests/release_third_party_notices_test.py"
+    )
+    set_tests_properties(release-third-party-notices PROPERTIES TIMEOUT 30)
+endif()

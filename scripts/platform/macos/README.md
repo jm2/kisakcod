@@ -1,7 +1,7 @@
 # macOS app bundle runtime
 
 Row 66 (ADR-0011, gate G6). The macOS client ships its graphics and media
-stack inside `KisakCOD-mp.app` so a clean machine with no Homebrew can play:
+stack inside `KisakCOD.app` so a clean machine with no Homebrew can play:
 `otool -L` on every image in the bundle must show no `/opt/homebrew` or
 `/usr/local` reference.
 
@@ -150,7 +150,7 @@ Then:
 
 ```
 scripts/platform/macos/bundle.sh \
-  --app dist/KisakCOD-mp.app --client build-macos-bundle26/bin/KisakCOD-mp \
+  --app dist/KisakCOD.app --client build-macos-bundle26/bin/KisakCOD-mp \
   --runtime-prefix <runtime-prefix> --mesa-prefix <mesa-prefix> \
   --dxvk-lib <dxvk>/lib/libdxvk_d3d9.0.dylib --licenses <dir>
 ```
@@ -183,6 +183,10 @@ On macOS 26.0 arm64, bundle of 35 MB with nine frameworks:
   It needs a display and has not been run.
 
 ## Licensing
+
+`bundle.sh` writes `Contents/Resources/THIRD-PARTY-NOTICES` with
+`scripts/release/third_party_notices.py`: the engine's ODE, zlib and Speex
+texts plus every component directory under `Contents/Resources/licenses/`.
 
 FFmpeg is LGPL 2.1+ and dynamically linked; its license text and a sources note
 are written into `Contents/Resources/licenses/` (`SOURCES.txt` lists every pin).

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# check_licenses.sh (ADR-0011): a KisakCOD-mp.app passes only when every
+# check_licenses.sh (ADR-0011): a KisakCOD.app passes only when every
 # bundled framework ships its component's license text. Builds fake .app trees
 # (empty files named as the real frameworks), so it runs on any POSIX host.
 set -euo pipefail

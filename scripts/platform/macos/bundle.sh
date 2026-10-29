@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Assemble KisakCOD-mp.app with its runtime (docs/decisions/0011).
+# Assemble KisakCOD.app with its runtime (docs/decisions/0011).
 #
 # Every non-system dependency of the client is copied into Contents/Frameworks,
 # its install names are rewritten to @rpath, the bundled Vulkan loader is
@@ -76,7 +76,7 @@ echo "  ninja:   $(tool_version ninja --version)"
 APP_DEST="$APP"
 mkdir -p "$(dirname "$APP_DEST")"
 STAGE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/kisakcod-bundle.XXXXXX")"
-APP="$STAGE_ROOT/KisakCOD-mp.app"
+APP="$STAGE_ROOT/KisakCOD.app"
 CONTENTS="$APP/Contents"
 FRAMEWORKS="$CONTENTS/Frameworks"
 MACOS="$CONTENTS/MacOS"
@@ -237,7 +237,7 @@ if [ -n "$DXVK_LICENSE" ]; then
     cp -f "$DXVK_LICENSE" "$RESOURCES/licenses/dxvk/LICENSE"
 fi
 cat > "$RESOURCES/licenses/SOURCES.txt" <<SOURCES
-KisakCOD-mp.app bundles its runtime, built from source at these pins
+KisakCOD.app bundles its runtime, built from source at these pins
 (docs/decisions/0011-macos-client-bundles-its-runtime.md):
 
   Mesa (KosmicKrisp Vulkan driver)   26.2.4
@@ -257,6 +257,10 @@ SOURCES
 # Every framework must ship its component's license text.
 bash "$(dirname "$0")/check_licenses.sh" "$APP" || {
     echo "bundle: FAILED license check" >&2; exit 1; }
+# One file with the engine's third-party code and every bundled component.
+python3 "$(dirname "$0")/../../release/third_party_notices.py" --client \
+    --licenses "$RESOURCES/licenses" --out "$RESOURCES/THIRD-PARTY-NOTICES" || {
+    echo "bundle: FAILED third-party notices" >&2; exit 1; }
 
 # Ad-hoc sign inside out; the app's signature covers the Frameworks.
 for lib in "$FRAMEWORKS"/*.dylib; do

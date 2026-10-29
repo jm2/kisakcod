@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Check that every framework in a KisakCOD-mp.app ships its component's
+# Check that every framework in a KisakCOD.app ships its component's
 # license text (docs/decisions/0011): each Contents/Frameworks/*.dylib maps to
 # a component, and Contents/Resources/licenses/<component>/ must hold at least
 # one non-empty file. A framework with no mapping is an error too, so a new
 # dependency can't ship without one.
 #
-# Usage: check_licenses.sh <KisakCOD-mp.app>
+# Usage: check_licenses.sh <KisakCOD.app>
 set -euo pipefail
 
-APP="${1:?usage: check_licenses.sh <KisakCOD-mp.app>}"
+APP="${1:?usage: check_licenses.sh <KisakCOD.app>}"
 FRAMEWORKS="$APP/Contents/Frameworks"
 LICENSES="$APP/Contents/Resources/licenses"
 [ -d "$FRAMEWORKS" ] || { echo "licenses: no $FRAMEWORKS" >&2; exit 1; }
