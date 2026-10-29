@@ -1508,7 +1508,9 @@ void FS_RegisterDvars()
         "Game data directory. Must be \"\" or a sub directory of 'mods/'.");
     Dvar_SetDomainFunc((dvar_s *)fs_gameDirVar, FS_GameDirDomainFunc);
     fs_ignoreLocalized = Dvar_RegisterBool("fs_ignoreLocalized", 0, DVAR_LATCH | DVAR_CHEAT, "Ignore localized files");
-    homePath = (char *)RETURN_ZERO32();
+    // ADR-0012: the client keeps user state in the per-user path; retail left
+    // this empty, so fs_homepath fell back to fs_basepath.
+    homePath = (char *)Sys_DefaultHomePath();
     if (!homePath || !*homePath)
         homePath = (char *)fs_basepath->reset.string;
     fs_homepath = Dvar_RegisterString("fs_homepath", homePath, DVAR_INIT | DVAR_AUTOEXEC, "Game home path");
@@ -2299,6 +2301,8 @@ void __cdecl FS_Startup(char *gameName)
         FS_AddLocalizedGameDirectory((char *)fs_homepath->current.string, (char*)"devraw");
         FS_AddLocalizedGameDirectory((char *)fs_homepath->current.string, (char*)"raw_shared");
         FS_AddLocalizedGameDirectory((char *)fs_homepath->current.string, (char*)"raw"); }
+        // ADR-0012: profiles are written under fs_homepath/players.
+        FS_AddLocalizedGameDirectory((char *)fs_homepath->current.string, (char*)"players");
     }
     if (*(const unsigned char *)fs_cdpath->current.string && I_stricmp(fs_basepath->current.string, fs_cdpath->current.string))
     {
@@ -3391,10 +3395,33 @@ bool FS_SkipUnofficialIwd(const char *path, const char *pszGameFolder, const cha
 #endif
 }
 
+#ifdef KISAK_MP
+// ADR-0012: the player's Steam 1.8 IWDs may sit in fs_homepath/main instead
+// of the game folder's main.
+static bool FS_HomePathHasMainIwds()
+{
+    if (!*fs_homepath->current.string || !I_stricmp(fs_homepath->current.string, fs_basepath->current.string))
+        return false;
+    char mainPath[256];
+    FS_BuildOSPath((char *)fs_homepath->current.string, (char *)"main", (char *)"", mainPath);
+    const size_t mainLength = strnlen(mainPath, sizeof(mainPath));
+    if (mainLength)
+        mainPath[mainLength - 1] = 0; // as FS_AddGameDirectory: no trailing separator
+    int count = 0;
+    char **iwds = Sys_ListFiles(mainPath, "iwd", 0, &count, 0);
+    bool found = false;
+    for (int i = 0; iwds && i < count && !found; ++i)
+        found = !I_strnicmp(iwds[i], "iw_", 3);
+    if (iwds)
+        FS_FreeFileList((const char **)iwds);
+    return found;
+}
+#endif
+
 void FS_RequireMainIwds(const char *path, const char *pszGameFolder)
 {
 #ifdef KISAK_MP
-    if (!I_stricmp(pszGameFolder, "main") && !I_stricmp(path, fs_basepath->current.string))
+    if (!I_stricmp(pszGameFolder, "main") && !I_stricmp(path, fs_basepath->current.string) && !FS_HomePathHasMainIwds())
         Com_Error(ERR_FATAL, "No IWD files found in /main");
 #endif
 }

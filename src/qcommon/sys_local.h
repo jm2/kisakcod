@@ -7,6 +7,8 @@
 // includes) stay in win32/win_local.h.
 #pragma once
 
+#include <string>
+
 #include <universal/q_shared.h>
 #include <qcommon/qcommon.h>
 #include <qcommon/sys_sync.h>
@@ -139,6 +141,12 @@ char **__cdecl Sys_ListFiles(
 char *__cdecl Sys_Cwd();
 const char *__cdecl Sys_DefaultCDPath();
 char *__cdecl Sys_DefaultInstallPath();
+// ADR-0012: the per-user path under a base folder: %APPDATA% on Windows, the
+// home directory on macOS and Linux. Empty when the base is unusable.
+std::string Sys_PerUserPathUnder(const char *base);
+// The client's default fs_homepath: Sys_PerUserPathUnder over this user's
+// folder. Empty on the dedicated server, which keeps retail's game folder.
+const char *__cdecl Sys_DefaultHomePath();
 void __cdecl Sys_QuitAndStartProcess(const char *exeName, const char *parameters);
 
 

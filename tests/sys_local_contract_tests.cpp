@@ -32,6 +32,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <string>
 #include <type_traits>
 #include <vector>
 
@@ -151,6 +152,30 @@ bool CheckEventQueueConstants()
 
 bool CheckEnginePathSurface()
 {
+    // ADR-0012: the per-user path under this platform's base folder.
+#if defined(_WIN32)
+    if (!(Sys_PerUserPathUnder("C:\\Users\\p\\AppData\\Roaming") == "C:\\Users\\p\\AppData\\Roaming\\KisakCOD"))
+        return false;
+#elif defined(__APPLE__)
+    if (!(Sys_PerUserPathUnder("/Users/p") == "/Users/p/Library/Application Support/KisakCOD"))
+        return false;
+    if (!(Sys_PerUserPathUnder("relative").empty()))
+        return false;
+#else
+    if (!(Sys_PerUserPathUnder("/home/p") == "/home/p/.config/kisakcod"))
+        return false;
+    if (!(Sys_PerUserPathUnder("relative").empty()))
+        return false;
+#endif
+    if (!(Sys_PerUserPathUnder("").empty()))
+        return false;
+    if (!(Sys_PerUserPathUnder(nullptr).empty()))
+        return false;
+    // The client defaults fs_homepath to it; this object is built without
+    // KISAK_DEDICATED, so it is the client's path for this user.
+    if (!(*Sys_DefaultHomePath() != '\0'))
+        return false;
+
     // Sys_DefaultCDPath is the engine's empty optical-drive path.
     const char *const cdPath = Sys_DefaultCDPath();
     if (!cdPath || cdPath[0] != '\0')
