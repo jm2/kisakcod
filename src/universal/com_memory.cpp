@@ -1189,10 +1189,8 @@ void* Z_Malloc(int32_t size, const char* name, int32_t type)
     uint32_t* buf; // [esp+0h] [ebp-4h]
 
     buf = Z_TryMalloc(size, name, type);
-
-    //if (!buf)
-    //    Z_MallocFailed(size + 32);
-
+    if (!buf)
+        Z_MallocFailed(size);
     return buf;
 }
 
@@ -1212,8 +1210,8 @@ char *__cdecl Z_MallocGarbage(int32_t size, const char *name, int32_t type)
     char *buf; // [esp+0h] [ebp-4h]
 
     buf = Z_TryMallocGarbage(size, name, type);
-    //if (!buf)
-    //    Z_MallocFailed(size + 32);
+    if (!buf)
+        Z_MallocFailed(size);
     return buf;
 }
 
