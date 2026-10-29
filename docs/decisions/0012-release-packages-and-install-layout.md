@@ -60,10 +60,16 @@ player puts it there, plus profiles, `config_mp.cfg`, logs and downloads.
 It is `$XDG_CONFIG_HOME/kisakcod` (default `~/.config/kisakcod`) on Linux,
 at the owner's choice on 2026-10-29. On macOS it is
 `~/Library/Application Support/KisakCOD`, and on Windows
-`%APPDATA%\KisakCOD` (the owner's choice on 2026-10-29). `fs_homepath` defaults to it in
-packaged builds, and profiles move from `fs_basepath/players` to
-`fs_homepath/players`. That is a deliberate exception to ADR-0009, at the
-owner's request: retail's layout can't run from a read-only game folder.
+`%APPDATA%\KisakCOD`. On every platform the client's `fs_homepath`
+defaults to it, and user configs and settings always go there, even when the
+game folder is writable. The owner chose this on 2026-10-29.
+- Profiles move from `fs_basepath/players` to `fs_homepath/players`.
+- A profile already in the game folder is still read.
+- The dedicated server keeps retail's game-folder default, so `server.cfg`
+  and its logs stay where operators expect them.
+
+This deviates from retail on purpose, at the owner's request (an exception to
+ADR-0009): retail's layout can't run from a read-only game folder.
 An explicit `+set fs_homepath` still wins.
 The file system already searches `fs_homepath/main`. Fast files under `zone/`
 load only from `fs_basepath` today (`DB_GetFastFileBasePath`), so the zone
