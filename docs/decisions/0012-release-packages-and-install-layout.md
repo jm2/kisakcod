@@ -38,9 +38,13 @@ Names are `kisakcod-<version>-<os>-<arch>[-setup].<ext>`. The release adds
 and every bundled component's license text in `THIRD-PARTY-NOTICES` (#263).
 They contain no retail data, no Steamworks, and no Miles or Bink binaries.
 
-- Linux bundles dxvk-native in the game folder's `lib/`, found through
-  `$ORIGIN` rpath. Distro packages depend on the distro's SDL3, OpenAL Soft
-  and FFmpeg. The portable archive bundles those too.
+- Linux builds its runtime from pinned sources, as macOS does (ADR-0011):
+  SDL3, OpenAL Soft, a Bink-only LGPL FFmpeg and dxvk-native, from
+  `scripts/platform/linux/runtime`. Every Linux format carries the runtime in
+  the game folder's `lib/`, found through the client's `$ORIGIN/lib` runpath.
+  A package then depends only on glibc, libstdc++ and the Vulkan loader, one
+  build serves `.deb`, `.rpm`, Arch and the portable archive, and the notices
+  cover everything shipped.
 - Windows bundles OpenAL Soft and FFmpeg beside the executables.
 
 **Game folder.** The install folder is the game folder, and `fs_basepath`
@@ -52,7 +56,9 @@ per-user path first, so a read-only install never needs data copied into it.
   the registry, so it installs beside `iw3mp.exe`. Otherwise it uses
   `{autopf}\KisakCOD`.
 - **Linux:** `/opt/kisakcod`. `/usr/bin/kisakcod` and `/usr/bin/kisakcod-dedi`
-  are launchers that set the paths. A desktop entry and an icon are
+  are launchers that set the paths. `/opt` is read-only, so the server
+  launcher also points the server's `fs_homepath` at the per-user path, which
+  holds its `server.cfg` and logs. A desktop entry and an icon are
   included.
 - **macOS:** the signed `.app` stays read-only, so the data goes in the
   per-user path.
