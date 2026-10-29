@@ -24,7 +24,7 @@ the fix and a `Retail check:` line (ADR-0009); new crash and memory bugs
 join by rank.
 
 Drained 2026-10-29 via #905 and #908-#913: closed #206 #208 #209 #220 and
-issues #243 #274 #287; #214 stays open for item 5 (owner) and the name loop.
+issues #243 #274 #287, and #214 (#920; item 5 kept as retail by the owner).
 Left: SP-only items in #195 #204 (iw3sp.exe unreadable); #270 parked until FASTFILE_LOADER; #278 playerstate and client
 deltas; #914 (17 dxvk-gated tests never run in CI).
 
