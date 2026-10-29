@@ -3337,6 +3337,20 @@ void __cdecl DB_BuildOSPath(const char *zoneName, uint32_t size, char *filename)
     char *Language; // [esp-8h] [ebp-8h]
 
     Language = Win_GetLanguage();
+    // ADR-0012: the player's Steam 1.8 data may live in the per-user path
+    // instead of the game folder; a fast file there wins.
+    if (fs_homepath && *fs_homepath->current.string && fs_basepath
+        && I_stricmp(fs_homepath->current.string, fs_basepath->current.string))
+    {
+        Com_sprintf(filename, size, "%s" DB_PATH_SEP "zone" DB_PATH_SEP "%s" DB_PATH_SEP "%s.ff",
+            fs_homepath->current.string, Language, zoneName);
+        SysFileHandle zoneFile = Sys_FileOpenRead(filename);
+        if (zoneFile)
+        {
+            Sys_FileClose(&zoneFile);
+            return;
+        }
+    }
     Com_sprintf(filename, size, "%s" DB_PATH_SEP "zone" DB_PATH_SEP "%s" DB_PATH_SEP "%s.ff", DB_GetFastFileBasePath(), Language, zoneName);
 }
 

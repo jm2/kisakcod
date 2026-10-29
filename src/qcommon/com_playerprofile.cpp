@@ -178,8 +178,17 @@ char __cdecl Com_DeletePlayerProfile(const char *profileName)
     if (!Com_IsValidPlayerProfileDir(profileName))
         return 0;
     Com_BuildPlayerProfilePathForPlayer(profilePath, 64, profileName, "");
-    FS_BuildOSPath((char *)fs_basepath->current.string, (char*)"players", profilePath, osPath);
-    if (!Sys_RemoveDirTree(osPath))
+    // ADR-0012: a profile lives in fs_homepath, or in the game folder from
+    // before the per-user path; remove whichever copies exist.
+    bool removed = false;
+    for (const dvar_s *const root : { fs_homepath, fs_basepath })
+    {
+        FS_BuildOSPath((char *)root->current.string, (char*)"players", profilePath, osPath);
+        removed = Sys_RemoveDirTree(osPath) || removed;
+        if (!I_stricmp(fs_homepath->current.string, fs_basepath->current.string))
+            break;
+    }
+    if (!removed)
         return 0;
     if (!I_stricmp(profileName, com_playerProfile->current.string))
         Dvar_SetString((dvar_s *)com_playerProfile, (char *)"");
@@ -217,7 +226,7 @@ char __cdecl Com_NewPlayerProfile(const char *profileName)
     else
     {
         Com_BuildPlayerProfilePathForPlayer(profilePath, 64, profileName, "");
-        FS_BuildOSPath((char *)fs_basepath->current.string, (char*)"players", profilePath, osPath);
+        FS_BuildOSPath((char *)fs_homepath->current.string, (char*)"players", profilePath, osPath);
         if (FS_CreatePath(osPath))
         {
             Com_Printf(16, "Unable to create new profile path: %s\n", osPath);

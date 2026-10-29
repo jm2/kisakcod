@@ -122,6 +122,7 @@ va_info_t g_vaInfo; // value 1: the one thread's va() buffers
 WEAK void *__cdecl Sys_GetValue(int valueIndex) { return valueIndex == 1 ? &g_vaInfo : nullptr; }
 WEAK char *__cdecl Sys_Cwd() { return const_cast<char *>("/kisak-test/cwd"); }
 WEAK const char *__cdecl Sys_DefaultCDPath() { return ""; }
+WEAK const char *__cdecl Sys_DefaultHomePath() { return ""; } // retail: fs_homepath falls back to fs_basepath
 WEAK bool KISAK_CDECL Sys_FileSystemTrustRoot(const char *) { return true; }
 // What the roots' main directories hold: by default fs_basepath/main holds
 // a stock IWD; Mixed adds a localized pack and a custom one to every root's
@@ -131,6 +132,7 @@ enum class Iwds
     Stock,
     Mixed,
     None,
+    HomeOnly, // ADR-0012: the stock IWDs only in fs_homepath/main
 };
 Iwds g_iwds = Iwds::Stock;
 std::vector<std::string> g_opened; // the IWDs FS_LoadZipFile tried to open
@@ -143,7 +145,7 @@ WEAK char **__cdecl Sys_ListFiles(const char *directory, const char *, const cha
     const std::string dir = directory;
     const bool baseMain = dir == "/kisak-test/base/main";
     if (g_iwds == Iwds::None || dir.size() < 5 || dir.compare(dir.size() - 5, 5, "/main") != 0
-        || (g_iwds == Iwds::Stock && !baseMain))
+        || (g_iwds == Iwds::Stock && !baseMain) || (g_iwds == Iwds::HomeOnly && dir != "/kisak-test/home/main"))
     {
         *numfiles = 0;
         return nullptr;
@@ -152,7 +154,7 @@ WEAK char **__cdecl Sys_ListFiles(const char *directory, const char *, const cha
     std::snprintf(names[1], sizeof(names[1]), "localized_english_iw00.iwd");
     std::snprintf(names[2], sizeof(names[2]), "zz_custom.iwd");
     list[0] = nullptr; // the hunk FS_FreeFileList releases
-    *numfiles = g_iwds == Iwds::Stock ? 1 : 3;
+    *numfiles = g_iwds == Iwds::Stock || g_iwds == Iwds::HomeOnly ? 1 : 3;
     for (int i = 0; i < *numfiles; ++i)
         list[i + 1] = names[i];
     return &list[1];
@@ -216,6 +218,16 @@ int main()
     CHECK(Has(dirs, "players"));
     CHECK(Has(dirs, "main"));
     CHECK(Dvar_GetBool("fs_usedevdir") == false);
+    // ADR-0012: profiles are written under fs_homepath/players, so that
+    // directory is searched too, ahead of the game folder's.
+    std::vector<std::string> players;
+    for (const searchpath_s *search = fs_searchpaths; search; search = search->next)
+    {
+        if (search->dir && !search->bLocalized && !std::strcmp(search->dir->gamedir, "players"))
+            players.emplace_back(search->dir->path);
+    }
+    CHECK(players.size() == 2);
+    CHECK(players.size() == 2 && players[0] == "/kisak-test/home" && players[1] == "/kisak-test/base");
     ClearSearchPaths();
 
     // With fs_usedevdir set at startup, they are searched again.
@@ -259,6 +271,23 @@ int main()
         fatal = error.message;
     }
     CHECK(fatal == "No IWD files found in /main");
+    ClearSearchPaths();
+
+    // ADR-0012: the player's Steam 1.8 IWDs may live only in the per-user
+    // path; then startup goes on and loads them from there.
+    g_iwds = Iwds::HomeOnly;
+    g_opened.clear();
+    fatal.clear();
+    try
+    {
+        FS_Startup(gameName);
+    }
+    catch (const FatalError &error)
+    {
+        fatal = error.message;
+    }
+    CHECK(fatal.empty());
+    CHECK(opened("/kisak-test/home/main/iw_00.iwd"));
     ClearSearchPaths();
 
     if (g_failures == 0)

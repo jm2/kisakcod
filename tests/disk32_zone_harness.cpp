@@ -291,6 +291,7 @@ int Com_sprintf(char *dest, unsigned int size, const char *fmt, ...)
     return written;
 }
 const dvar_s *fs_basepath = &g_basePath;
+const dvar_s *fs_homepath = nullptr; // no per-user path: zones come from fs_basepath
 const dvar_s *fs_gameDirVar = &g_emptyDvar;
 const dvar_t *com_sv_running = nullptr;
 const dvar_t *loc_warnings = nullptr;

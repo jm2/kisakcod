@@ -5,8 +5,17 @@
 #define NOMINMAX
 #endif
 #include <Windows.h>
+#include <ShlObj.h>
+#if defined(_MSC_VER)
+#pragma comment(lib, "shell32.lib") // SHGetKnownFolderPath
+#pragma comment(lib, "ole32.lib") // CoTaskMemFree
+#endif
 #include <direct.h>
 #include <io.h>
+#endif
+#if !defined(_WIN32)
+#include <pwd.h>
+#include <unistd.h>
 #endif
 #include <cstdint>
 #include <cstdio>
@@ -436,6 +445,63 @@ char *__cdecl Sys_Cwd()
 const char *__cdecl Sys_DefaultCDPath()
 {
     return "";
+}
+
+std::string Sys_PerUserPathUnder(const char *base)
+{
+#if defined(_WIN32)
+    if (base && *base)
+        return std::string(base) + "\\KisakCOD";
+#elif defined(__APPLE__)
+    if (base && *base == '/')
+        return std::string(base) + "/Library/Application Support/KisakCOD";
+#else
+    if (base && *base == '/')
+        return std::string(base) + "/.config/kisakcod";
+#endif
+    return {};
+}
+
+#if !defined(KISAK_DEDICATED)
+// This user's base folder for Sys_PerUserPathUnder, read from the system
+// rather than the environment.
+static std::string Sys_UserBaseFolder()
+{
+#if defined(_WIN32)
+    PWSTR wide = nullptr;
+    std::string folder;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, KF_FLAG_DEFAULT, nullptr, &wide)))
+    {
+        const int length = WideCharToMultiByte(CP_ACP, 0, wide, -1, nullptr, 0, nullptr, nullptr);
+        if (length > 1)
+        {
+            folder.resize(static_cast<std::size_t>(length));
+            WideCharToMultiByte(CP_ACP, 0, wide, -1, folder.data(), length, nullptr, nullptr);
+            folder.resize(static_cast<std::size_t>(length - 1));
+        }
+    }
+    CoTaskMemFree(wide);
+    return folder;
+#else
+    long size = sysconf(_SC_GETPW_R_SIZE_MAX);
+    std::vector<char> buffer(size > 0 ? static_cast<std::size_t>(size) : 16384);
+    passwd entry{};
+    passwd *result = nullptr;
+    if (getpwuid_r(getuid(), &entry, buffer.data(), buffer.size(), &result) != 0 || !result || !result->pw_dir)
+        return {};
+    return result->pw_dir;
+#endif
+}
+#endif
+
+const char *__cdecl Sys_DefaultHomePath()
+{
+#if defined(KISAK_DEDICATED)
+    return "";
+#else
+    static const std::string path = Sys_PerUserPathUnder(Sys_UserBaseFolder().c_str());
+    return path.c_str();
+#endif
 }
 
 char *__cdecl Sys_DefaultInstallPath()
