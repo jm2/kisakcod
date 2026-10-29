@@ -1,7 +1,7 @@
 # NOW
 
 Last reviewed: 2026-10-29 by the coordinator
-Gates: G6 (0.1.0 packaging, rows 71-74); G0-G5 and G4a done
+Gates: G6 (0.1.0 packaging, rows 71-74); G0-G3, G4a and G5 done; G4b open (#183)
 WIP limit: 6 (bug lane first, then gates)
 
 ## KPIs
