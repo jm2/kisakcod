@@ -3404,7 +3404,9 @@ static bool FS_HomePathHasMainIwds()
         return false;
     char mainPath[256];
     FS_BuildOSPath((char *)fs_homepath->current.string, (char *)"main", (char *)"", mainPath);
-    mainPath[strlen(mainPath) - 1] = 0; // as FS_AddGameDirectory: no trailing separator
+    const size_t mainLength = strnlen(mainPath, sizeof(mainPath));
+    if (mainLength)
+        mainPath[mainLength - 1] = 0; // as FS_AddGameDirectory: no trailing separator
     int count = 0;
     char **iwds = Sys_ListFiles(mainPath, "iwd", 0, &count, 0);
     bool found = false;
