@@ -57,6 +57,7 @@ def member_text(tar: tarfile.TarFile, name: str) -> str:
 
 def make_inputs(work: Path) -> list[str]:
     """Stand-in binaries, runtime prefix and notices; the packager's arguments."""
+    arch = str(ARCH)  # main() returns before this when the machine has no package arch
     # Any ELF of this machine stands in for the client and the server.
     exe = Path(shutil.which("true") or "/bin/true").resolve()
     prefix = work / "prefix"
@@ -67,7 +68,7 @@ def make_inputs(work: Path) -> list[str]:
     notices = work / "notices.txt"
     notices.write_text("stand-in notices\n")
     return ["--client", str(exe), "--dedi", str(exe), "--runtime-prefix", str(prefix),
-            "--notices", str(notices), "--version", "0.1.0", "--arch", ARCH,
+            "--notices", str(notices), "--version", "0.1.0", "--arch", arch,
             "--out", str(work / "out"), "--formats", "tarxz,deb", "--epoch", "1700000000"]
 
 

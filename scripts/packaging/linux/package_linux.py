@@ -6,8 +6,8 @@ Stages the game folder that installs as /opt/kisakcod, then writes any of:
 
   tarxz  kisakcod-<v>-linux-<arch>.tar.xz   portable; unpack anywhere
   deb    kisakcod_<v>_<debarch>.deb         built here, no dpkg-deb needed
-  rpm    kisakcod-<v>-1.<rpmarch>.rpm       rpmbuild over the staged tree
-  arch   kisakcod-<v>-1-<pkgarch>.pkg.tar.zst  makepkg over the staged tree
+  rpm    rpm/kisakcod.spec + staged tree    build_native.sh runs rpmbuild
+  arch   arch/PKGBUILD + staged tree        build_native.sh runs makepkg
 
 The game folder holds the client, the headless dedicated server, lib/ with
 the pinned runtime (SDL3, OpenAL Soft, a Bink-only FFmpeg and dxvk-native from
@@ -25,7 +25,6 @@ import argparse
 import io
 import os
 import shutil
-import subprocess  # nosec B404 -- runs the fixed packaging tools below
 import sys
 import tarfile
 import tempfile
@@ -79,14 +78,6 @@ Icon=kisakcod
 Terminal=false
 Categories=Game;ActionGame;
 """
-
-
-def tool(name: str) -> str:
-    """The absolute path of a packaging tool on PATH."""
-    path = shutil.which(name)
-    if not path:
-        fail(f"{name} is not installed")
-    return path
 
 
 def fail(message: str) -> None:
@@ -244,8 +235,10 @@ def file_list(tree: Path) -> list[str]:
 
 
 def make_rpm(args: argparse.Namespace, work: Path) -> Path:
+    """A staged tree and spec in <out>/rpm; build_native.sh runs rpmbuild on it."""
+    del work
     rpmarch = ARCHES[args.arch][1]
-    top = work / "rpm"
+    top = args.out / "rpm"
     tree = top / "tree"
     system_tree(args, tree)
     files = "\n".join(f'"{f}"' for f in file_list(tree))
@@ -272,21 +265,14 @@ cp -a {tree}/. %{{buildroot}}/
 {files}
 """
     (top / "kisakcod.spec").write_text(spec)
-    # The arguments are this script's own paths and fixed options.
-    subprocess.run([tool("rpmbuild"), "-bb", "--target", rpmarch, "--define", f"_topdir {top}",  # nosec B603
-                    "--define", "source_date_epoch_from_changelog 0", str(top / "kisakcod.spec")],
-                   check=True, env=dict(os.environ, SOURCE_DATE_EPOCH=str(args.epoch)))
-    built = list((top / "RPMS" / rpmarch).glob("*.rpm"))
-    if len(built) != 1:
-        fail(f"rpmbuild made {len(built)} packages")
-    out = args.out / built[0].name
-    shutil.move(built[0], out)
-    return out
+    return top / "kisakcod.spec"
 
 
 def make_arch(args: argparse.Namespace, work: Path) -> Path:
+    """A staged tree and PKGBUILD in <out>/arch; build_native.sh runs makepkg on it."""
+    del work
     pkgarch = ARCHES[args.arch][2]
-    top = work / "arch"
+    top = args.out / "arch"
     tree = top / "tree"
     system_tree(args, tree)
     depends = " ".join(f"'{d}'" for d in ARCH_DEPENDS)
@@ -304,14 +290,7 @@ package() {{
   cp -a '{tree}'/. "$pkgdir"/
 }}
 """)
-    env = dict(os.environ, PKGDEST=str(args.out), SOURCE_DATE_EPOCH=str(args.epoch), CARCH=pkgarch,
-               PKGEXT=".pkg.tar.zst")
-    subprocess.run([tool("makepkg"), "--force", "--nodeps", "--noconfirm"],  # nosec B603
-                   cwd=top, check=True, env=env)
-    built = list(args.out.glob(f"{NAME}-{pkgver}-1-{pkgarch}.pkg.tar.*"))
-    if len(built) != 1:
-        fail(f"makepkg made {len(built)} packages")
-    return built[0]
+    return top / "PKGBUILD"
 
 
 def main(argv: list[str] | None = None) -> int:
