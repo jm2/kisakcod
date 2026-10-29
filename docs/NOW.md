@@ -23,10 +23,8 @@ Owner, 2026-10-27: bugs first. Rule-4 PRs with a test that fails without
 the fix and a `Retail check:` line (ADR-0009); new crash and memory bugs
 join by rank.
 
-Drained 2026-10-29 via #905 and #908-#913: closed #206 #208 #209 #220 and
-issues #243 #274 #287, and #214 (#920; item 5 kept as retail by the owner).
-Left: SP-only items in #195 #204 (iw3sp.exe unreadable); #270 parked until FASTFILE_LOADER; #278 playerstate and client
-deltas; #914 (17 dxvk-gated tests never run in CI).
+Drained 2026-10-29. Left: SP-only #195 #204; #270 (parked); #278 deltas;
+#914 (dxvk-gated tests not in CI).
 
 ## Queue
 
@@ -34,17 +32,15 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 
 | # | Bead | Gate | Moves | Done-test | Size | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| 69 | Alt+Enter toggles fullscreen at the desktop resolution on every fork client (#917) | G6 | K6 | windowed to fullscreen at desktop size and back, outside developer mode, on each OS | S | #923: Windows x86/ARM64 and Linux pass; macOS waits on an unlocked mbp16 |
-| 70 | Packaging paths ([ADR-0012](decisions/0012-release-packages-and-install-layout.md)): a writable per-user path (`~/.config/kisakcod` on Linux) is the default `fs_homepath` in packaged builds; profiles and zones are found there as well as in the game folder | G6 | K6 | a read-only game folder: the client keeps its profile and config in the per-user path, and loads zones placed only there | M | coordinator |
-| 71 | Windows amd64/arm64: Inno Setup installer and portable `.zip`, client plus dedi (ADR-0012) | G6 | K6 | install, data beside it, play LAN as a normal user, uninstall; the same from the unpacked zip | M | kisakcod-win |
-| 72 | Linux amd64/arm64: `.deb`, `.rpm`, Arch package into `/opt/kisakcod`, and a portable `.tar.xz` (ADR-0012) | G6 | K6 | install, data in `~/.config/kisakcod`, `kisakcod` launcher plays LAN; uninstall leaves user state | M | coordinator |
-| 73 | macOS arm64: `.dmg` with `KisakCOD.app` and the dedi (ADR-0011, ADR-0012; extends 66) | G6 | K6 | as 66, from the mounted `.dmg` | L | kisakcod-mac |
-| 74 | `release.yml` builds the client legs and every row 71-73 artifact, with `SHA256SUMS` and notes (ADR-0012) | G6 | K6 | a dry-run release produces all 5 targets' artifacts | M | after 70-73 |
-| 66 | G6: the macOS `.app` bundles its runtime ([ADR-0011](decisions/0011-macos-client-bundles-its-runtime.md)) | G6 | K6 | a clean account without Homebrew plays a LAN round; `otool -L` shows no `/opt/homebrew` | L | licenses #907, OpenAL URL #906; clean-account round left |
+| 69 | Alt+Enter fullscreen at desktop size (#917) | G6 | K6 | window, fullscreen, window on each OS | S | #923 merged; macOS check waits on an unlocked mbp16 |
+| 70 | Per-user `fs_homepath` ([ADR-0012](decisions/0012-release-packages-and-install-layout.md)); profiles, zones, IWDs found there | G6 | K6 | read-only game folder: state and data only in the per-user path, client reaches the menu | M | #927 |
+| 71 | Windows amd64/arm64 installer and `.zip` (ADR-0012) | G6 | K6 | the ADR-0012 done-test | M | kisakcod-win |
+| 72 | Linux amd64/arm64 `.deb`, `.rpm`, Arch, `.tar.xz` (ADR-0012) | G6 | K6 | the ADR-0012 done-test | M | #929, #930 |
+| 73 | macOS arm64 `.dmg` (ADR-0011, ADR-0012; extends 66) | G6 | K6 | as 66, from the `.dmg` | L | #925, #926 |
+| 74 | `release.yml` builds rows 71-73's artifacts and `SHA256SUMS` | G6 | K6 | a dry run yields all 5 targets' artifacts | M | after 70-73 |
+| 66 | G6: the macOS `.app` bundles its runtime ([ADR-0011](decisions/0011-macos-client-bundles-its-runtime.md)) | G6 | K6 | a clean account without Homebrew plays a LAN round; `otool -L` shows no `/opt/homebrew` | L | clean-account round left |
 
-Done 2026-10-29: rows 67 (#921), 68 (#922); G3 rows 61, 63, 64, 65 (#181; every G3 target now has
-evidence); G4a row 36 (#182: the owner joined a stock client from the LAN
-browser, spawned, fired, reconnected); G5 closed (#184).
+Done 2026-10-29: rows 67 (#921), 68 (#922); G3 (#181), G4a (#182), G5 (#184).
 
 **Resume here:** rows 70-74 (0.1.0 packaging, ADR-0012); 69 merges with #923. Host: #804.
 
