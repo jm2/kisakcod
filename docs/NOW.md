@@ -1,7 +1,7 @@
 # NOW
 
 Last reviewed: 2026-10-29 by the coordinator
-Gates: G6 (0.1.0 packaging, rows 70-74); G0-G5 and G4a done
+Gates: G6 (0.1.0 packaging, rows 71-74); G0-G5 and G4a done
 WIP limit: 6 (bug lane first, then gates)
 
 ## KPIs
@@ -15,7 +15,7 @@ From the master census; live values in the latest [master CI run](https://github
 | K3 | Upstream engine TUs in the Linux test build | 82/475 | rising | census |
 | K4 | Server asset families loading Steam 1.8 `.ff` at 64-bit under ASan, with `db::graph_hash` parity | 25/25 (`db_graphhash`, 3 legs) | 25/25 (G2) | this file |
 | K5 | Headless TUs reaching `<d3d9.h>` on Linux | 0 on lin64 and a64 | 0 (G1 Linux) | census |
-| K6 | Target x role cells at `links` or above | 5/10, all headless: Win64 at `fork_peer`, Linux amd64 at `boots_map` | 10 at `packaged` (G6) | manifest |
+| K6 | Target x role cells at `links` or above | 5/10, all headless at `fork_peer` (G3); clients rise with their row 74 legs | 10 at `packaged` (G6) | manifest |
 
 ## Bug lane (before the gate rows)
 
@@ -33,16 +33,14 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 | # | Bead | Gate | Moves | Done-test | Size | Status |
 | --- | --- | --- | --- | --- | --- | --- |
 | 69 | Alt+Enter fullscreen at desktop size (#917) | G6 | K6 | window, fullscreen, window on each OS | S | #923 merged; macOS check waits on an unlocked mbp16 |
-| 70 | Per-user `fs_homepath` ([ADR-0012](decisions/0012-release-packages-and-install-layout.md)); profiles, zones, IWDs found there | G6 | K6 | read-only game folder: state and data only in the per-user path, client reaches the menu | M | #927 |
-| 71 | Windows amd64/arm64 installer and `.zip` (ADR-0012) | G6 | K6 | the ADR-0012 done-test | M | kisakcod-win |
-| 72 | Linux amd64/arm64 `.deb`, `.rpm`, Arch, `.tar.xz` (ADR-0012) | G6 | K6 | the ADR-0012 done-test | M | #929, #930 |
-| 73 | macOS arm64 `.dmg` (ADR-0011, ADR-0012; extends 66) | G6 | K6 | as 66, from the `.dmg` | L | #925, #926 |
-| 74 | `release.yml` builds rows 71-73's artifacts and `SHA256SUMS` | G6 | K6 | a dry run yields all 5 targets' artifacts | M | after 70-73 |
+| 71 | Windows amd64/arm64 installer and `.zip` (ADR-0012) | G6 | K6 | the ADR-0012 done-test | M | #931 merged; console checks wait on tscon |
+| 73 | macOS arm64 `.dmg` (ADR-0011, ADR-0012; extends 66) | G6 | K6 | as 66, from the `.dmg` | L | #925, #926 merged; `.dmg` PR next (kisakcod-mac) |
+| 74 | `release.yml` builds rows 71-73's artifacts and `SHA256SUMS` | G6 | K6 | a dry run yields all 5 targets' artifacts | M | Linux legs: antec; Windows: kisakcod-win; macOS: after 73 |
 | 66 | G6: the macOS `.app` bundles its runtime ([ADR-0011](decisions/0011-macos-client-bundles-its-runtime.md)) | G6 | K6 | a clean account without Homebrew plays a LAN round; `otool -L` shows no `/opt/homebrew` | L | clean-account round left |
 
-Done 2026-10-29: rows 67 (#921), 68 (#922); G3 (#181), G4a (#182), G5 (#184).
+Done 2026-10-29: rows 67 (#921), 68 (#922), 70 (#927), 72 (#929, #930); G3 (#181), G4a (#182), G5 (#184).
 
-**Resume here:** rows 70-74 (0.1.0 packaging, ADR-0012); 69 merges with #923. Host: #804.
+**Resume here:** rows 71-74 (0.1.0 packaging, ADR-0012); 69 waits on the macOS check. Host: #804.
 
 ## Blocked on owner
 
