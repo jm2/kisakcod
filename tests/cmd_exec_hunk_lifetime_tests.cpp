@@ -219,6 +219,16 @@ int main()
 
     (void)Sys_VirtualMemoryRelease(s_hunkData);
 
+    // Hunk_UserCreate asserts the first allocation is 32-byte aligned; at
+    // 64-bit the header used to end at 56, so this asserted (exit 3).
+    HunkUser *const user = Hunk_UserCreate(0x10000, "align-check", false, false, 0);
+    Check(user != nullptr, "Hunk_UserCreate returns a user");
+    if (user)
+    {
+        Check((user->pos & 31) == 0, "a hunk user's first allocation is 32-byte aligned");
+        Hunk_UserDestroy(user);
+    }
+
     if (g_failures)
     {
         std::fprintf(stderr, "cmd exec hunk lifetime: FAILED\n");
