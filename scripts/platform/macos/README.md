@@ -5,7 +5,10 @@ stack inside `KisakCOD.app` so a clean machine with no Homebrew can play:
 `otool -L` on every image in the bundle must show no `/opt/homebrew` or
 `/usr/local` reference.
 
-`bundle.sh` does the assembly and the verification. This file records what the
+`bundle.sh` does the assembly and the verification. The closure check is
+`native_closure.py` (from jm2/balun): it reads every Mach-O's load commands
+and fails the bundle on an import or run path that leaves the app, an
+unresolved `@rpath` name, or a slice newer than `LSMinimumSystemVersion`. This file records what the
 runtime prefix it consumes must contain and how those pieces are built, because
 the build is not yet automated in CMake (see "Open work").
 

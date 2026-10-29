@@ -173,7 +173,14 @@ done
 
 # Rewrite install names: ids to @rpath, references to @rpath/<name>.
 rewrite_refs() {
-    local file="$1" dep name
+    local file="$1" dep name rpath
+    # Drop build-host run paths (CMake's build RPATH to the runtime prefix):
+    # the bundle resolves only inside itself.
+    while read -r rpath; do
+        case "$rpath" in
+            /*) install_name_tool -delete_rpath "$rpath" "$file" ;;
+        esac
+    done < <(python3 "$(dirname "$0")/native_closure.py" rpaths "$file")
     install_name_tool -add_rpath "@loader_path" "$file" 2>/dev/null || true
     while read -r dep; do
         [ -n "$dep" ] || continue
@@ -269,20 +276,11 @@ done
 codesign --force --sign - "$MACOS/KisakCOD-mp" >/dev/null 2>&1
 codesign --force --sign - "$APP" >/dev/null 2>&1
 
-# Verification: no absolute path outside the app and the system libraries.
-bad=0
-for file in "$MACOS/KisakCOD-mp" "$FRAMEWORKS"/*.dylib; do
-    while read -r dep; do
-        case "$dep" in
-            @rpath/*|@loader_path/*|/usr/lib/*|/System/*) ;;
-            *) echo "bundle: $file still references $dep" >&2; bad=1 ;;
-        esac
-    done < <(otool -L "$file" | tail -n +2 | awk '{print $1}')
-done
-if [ $bad -ne 0 ]; then
-    echo "bundle: FAILED verification" >&2
-    exit 1
-fi
+# Verification: every Mach-O in the app resolves only to bundled files or the
+# OS, through its own run-path stack, and none needs a newer macOS than
+# Info.plist declares (native_closure.py reads the load commands directly).
+python3 "$(dirname "$0")/native_closure.py" bundle "$APP" || {
+    echo "bundle: FAILED verification" >&2; exit 1; }
 codesign --verify --deep --strict "$APP" >/dev/null 2>&1 || {
     echo "bundle: signature verification failed" >&2; exit 1; }
 if [ -e "$APP_DEST" ]; then
