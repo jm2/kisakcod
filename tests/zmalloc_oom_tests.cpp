@@ -30,7 +30,8 @@ int g_failures = 0;
 
 std::jmp_buf g_outOfMem;
 int g_outOfMemCalls = 0;
-char g_printed[256];
+const char *g_printedFormat = nullptr;
+int g_printedSize = 0;
 } // namespace
 
 // Engine boundary.
@@ -43,7 +44,8 @@ WEAK void Com_PrintError(int, const char *fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
-    std::vsnprintf(g_printed, sizeof(g_printed), fmt, args);
+    g_printedFormat = fmt;
+    g_printedSize = va_arg(args, int);
     va_end(args);
 }
 WEAK void Com_Memset(void *dest, int value, size_t count) { std::memset(dest, value, count); }
@@ -59,7 +61,8 @@ namespace
 template <typename Alloc> bool ReachesOutOfMem(Alloc alloc)
 {
     g_outOfMemCalls = 0;
-    g_printed[0] = 0;
+    g_printedFormat = nullptr;
+    g_printedSize = 0;
     if (setjmp(g_outOfMem) == 0)
     {
         void *volatile buf = alloc();
@@ -73,7 +76,8 @@ template <typename Alloc> bool ReachesOutOfMem(Alloc alloc)
 int main()
 {
     CHECK(ReachesOutOfMem([] { return Z_Malloc(-64, "test", 0); }));
-    CHECK(std::strcmp(g_printed, "Failed to Z_Malloc -64 bytes\n") == 0);
+    CHECK(g_printedFormat && std::strcmp(g_printedFormat, "Failed to Z_Malloc %i bytes\n") == 0);
+    CHECK(g_printedSize == -64);
     CHECK(ReachesOutOfMem([] { return static_cast<void *>(Z_MallocGarbage(-64, "test", 0)); }));
 
     // A normal allocation still succeeds, zeroed for Z_Malloc.
