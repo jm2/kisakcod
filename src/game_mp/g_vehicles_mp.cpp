@@ -777,7 +777,7 @@ char __cdecl VEH_DObjHasRequiredTags(gentity_s *ent, int32_t infoIdx)
         numWheels = info->type != 0 ? 6 : 4;
         for (i = 0; i < numWheels; ++i)
         {
-            if (SV_DObjGetBoneIndex(ent, *s_wheelTags[i]) < 0)
+            if (SV_DObjGetBoneIndex(ent, *(i < 4 ? s_wheelTags[i] : s_flashTags[i - 4])) < 0) // KISAK: retail 1.8 reads wheel tags 4-5 from s_flashTags, the next table (0x71cef4, 0x71cf04)
                 return 0;
         }
     }

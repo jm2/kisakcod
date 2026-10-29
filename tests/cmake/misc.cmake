@@ -816,6 +816,25 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
         ${SRC_DIR}/game_mp/g_cmds_mp.cpp)
 endif()
 
+# VEH_DObjHasRequiredTags (game_mp/g_vehicles_mp.cpp): a tank's tags 5-6 come
+# from s_flashTags, as in retail 1.8, not from past the 4-entry wheel table.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-veh-required-tags-tests veh_required_tags_tests.cpp ${SRC_DIR}/game_mp/g_vehicles_mp.cpp)
+    target_include_directories(kisakcod-veh-required-tags-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-veh-required-tags-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-veh-required-tags-tests PRIVATE
+        KISAK_MP KISAK_DEDICATED DEDICATED KISAK_DEDI_HEADLESS UNIX)
+    target_compile_options(kisakcod-veh-required-tags-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-veh-required-tags-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-veh-required-tags-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-veh-required-tags-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-veh-required-tags-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME veh-required-tags-contracts COMMAND kisakcod-veh-required-tags-tests)
+endif()
+
 # The game module's dvars (game_mp/g_main_mp.cpp G_RegisterDvars) carry the
 # Steam 1.8 executable's flags. Linux, clang and 64-bit only, as above.
 if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
