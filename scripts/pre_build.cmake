@@ -158,6 +158,14 @@ else()
             target_link_libraries(${PROJECT_NAME} PUBLIC PkgConfig::KISAK_DXVK_D3D9)
         endif()
         target_compile_definitions(${PROJECT_NAME} PUBLIC KISAK_DXVK_NATIVE)
+        # ADR-0012: a packaged Linux client finds dxvk-native (and, in the
+        # portable archive, its other runtime libraries) in lib/ beside it,
+        # with no build-tree path in its runpath.
+        if (KISAK_LINUX_PACKAGE AND NOT APPLE)
+            set_target_properties(${PROJECT_NAME} PROPERTIES
+                BUILD_WITH_INSTALL_RPATH ON
+                INSTALL_RPATH "$ORIGIN/lib")
+        endif()
         # The client compiles against the Miles and Bink headers
         # (sound/snd_msstypes.h); client_media.cmake links what answers them.
         target_compile_definitions(${PROJECT_NAME} PUBLIC KISAK_POSIX_CLIENT_MEDIA)
