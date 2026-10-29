@@ -60,7 +60,7 @@ player puts it there, plus profiles, `config_mp.cfg`, logs and downloads.
 It is `$XDG_CONFIG_HOME/kisakcod` (default `~/.config/kisakcod`) on Linux,
 at the owner's choice on 2026-10-29. On macOS it is
 `~/Library/Application Support/KisakCOD`, and on Windows
-`%LOCALAPPDATA%\KisakCOD`. `fs_homepath` defaults to it in
+`%APPDATA%\KisakCOD` (the owner's choice on 2026-10-29). `fs_homepath` defaults to it in
 packaged builds, and profiles move from `fs_basepath/players` to
 `fs_homepath/players`. That is a deliberate exception to ADR-0009, at the
 owner's request: retail's layout can't run from a read-only game folder.
