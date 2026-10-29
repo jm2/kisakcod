@@ -1619,6 +1619,25 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_tests_properties(ui-string-alloc-contracts PROPERTIES TIMEOUT 20)
 endif()
 
+# Z_Malloc and Z_MallocGarbage (universal/com_memory.cpp) end in the
+# out-of-memory fatal on failure, as retail does (#208). Linux and clang only.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-zmalloc-oom-tests zmalloc_oom_tests.cpp ${SRC_DIR}/universal/com_memory.cpp)
+    target_include_directories(kisakcod-zmalloc-oom-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-zmalloc-oom-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-zmalloc-oom-tests PRIVATE KISAK_MP UNIX)
+    target_compile_options(kisakcod-zmalloc-oom-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-zmalloc-oom-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-zmalloc-oom-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-zmalloc-oom-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-zmalloc-oom-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME zmalloc-oom COMMAND kisakcod-zmalloc-oom-tests)
+    set_tests_properties(zmalloc-oom PROPERTIES TIMEOUT 20)
+endif()
+
 # Beam vertex generation (EffectsCore/fx_beam.cpp): a beam with no segments
 # must not cast its NaN colour lerp to int. The renderer headers need d3d9.h:
 # Linux clang builds where pkg-config finds dxvk-d3d9, as the browser filter test.
