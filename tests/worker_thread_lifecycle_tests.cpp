@@ -94,8 +94,19 @@ bool WaitForWorkerProgress(std::atomic<std::uint32_t> &counter, std::uint32_t ta
     return counter.load(std::memory_order_acquire) >= target;
 }
 
+// Each spawn starts from zero: a count or latch left by an earlier worker in
+// slot 0 must not satisfy this worker's checks (#287). Only a worker that
+// really runs its loop advances the counter; a never-started entry, run by
+// Sys_ShutdownWorkerThread under the pre-latched gate, exits before it.
+void ResetWorkerSlot0Observations()
+{
+    g_workerProcessedCommands[0].store(0, std::memory_order_release);
+    g_workerObservedLatch[0].store(false, std::memory_order_release);
+}
+
 bool SpawnActivateAndDrainWorker(std::uint32_t processedTarget, const char *label)
 {
+    ResetWorkerSlot0Observations();
     if (!Sys_SpawnWorkerThread(TestWorkerThreadEntry, 0))
     {
         std::fputs("worker slot 0 spawn failed\n", stderr);
@@ -170,8 +181,7 @@ bool TestActiveWorkerShutdownAndRespawn()
 
     // Safe reinitialization: the emptied slot must accept a fresh spawn,
     // activate, and drain through the same lifecycle again.
-    g_workerObservedLatch[0].store(false, std::memory_order_release);
-    if (!SpawnActivateAndDrainWorker(2u, "respawned worker"))
+    if (!SpawnActivateAndDrainWorker(1u, "respawned worker"))
         return false;
     return ShutdownWorkerSlotAndVerifyLatch("respawned worker slot 0");
 }
@@ -181,6 +191,7 @@ bool TestParkedWorkerShutdown()
     // Activate, then park the worker through a pause request so its native
     // thread blocks inside the gate's resume wait. The shutdown must release
     // the parked worker without any controller-side activation.
+    ResetWorkerSlot0Observations();
     if (!Sys_SpawnWorkerThread(TestWorkerThreadEntry, 0))
     {
         std::fputs("worker slot 0 spawn failed\n", stderr);
