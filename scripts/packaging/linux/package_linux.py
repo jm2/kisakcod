@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Linux release packages for KisakCOD (ADR-0012, NOW row 72).
+"""
+Linux release packages for KisakCOD (ADR-0012, NOW row 72).
 
 Stages the game folder that installs as /opt/kisakcod, then writes any of:
 
@@ -24,7 +25,7 @@ import argparse
 import io
 import os
 import shutil
-import subprocess
+import subprocess  # nosec B404 -- runs the fixed packaging tools below
 import sys
 import tarfile
 import tempfile
@@ -78,6 +79,14 @@ Icon=kisakcod
 Terminal=false
 Categories=Game;ActionGame;
 """
+
+
+def tool(name: str) -> str:
+    """The absolute path of a packaging tool on PATH."""
+    path = shutil.which(name)
+    if not path:
+        fail(f"{name} is not installed")
+    return path
 
 
 def fail(message: str) -> None:
@@ -263,9 +272,9 @@ cp -a {tree}/. %{{buildroot}}/
 {files}
 """
     (top / "kisakcod.spec").write_text(spec)
-    subprocess.run(["rpmbuild", "-bb", "--target", rpmarch, "--define", f"_topdir {top}",
-                    "--define", f"source_date_epoch_from_changelog 0",
-                    str(top / "kisakcod.spec")],
+    # The arguments are this script's own paths and fixed options.
+    subprocess.run([tool("rpmbuild"), "-bb", "--target", rpmarch, "--define", f"_topdir {top}",  # nosec B603
+                    "--define", "source_date_epoch_from_changelog 0", str(top / "kisakcod.spec")],
                    check=True, env=dict(os.environ, SOURCE_DATE_EPOCH=str(args.epoch)))
     built = list((top / "RPMS" / rpmarch).glob("*.rpm"))
     if len(built) != 1:
@@ -297,7 +306,8 @@ package() {{
 """)
     env = dict(os.environ, PKGDEST=str(args.out), SOURCE_DATE_EPOCH=str(args.epoch), CARCH=pkgarch,
                PKGEXT=".pkg.tar.zst")
-    subprocess.run(["makepkg", "--force", "--nodeps", "--noconfirm"], cwd=top, check=True, env=env)
+    subprocess.run([tool("makepkg"), "--force", "--nodeps", "--noconfirm"],  # nosec B603
+                   cwd=top, check=True, env=env)
     built = list(args.out.glob(f"{NAME}-{pkgver}-1-{pkgarch}.pkg.tar.*"))
     if len(built) != 1:
         fail(f"makepkg made {len(built)} packages")
@@ -323,8 +333,8 @@ def main(argv: list[str] | None = None) -> int:
     if unknown:
         fail(f"unknown formats: {', '.join(unknown)}")
     args.out.mkdir(parents=True, exist_ok=True)
-    # Large scratch: honour $TMPDIR, else /var/tmp rather than a RAM /tmp.
-    with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR") or "/var/tmp") as work:
+    # Scratch beside the output, on the same disk, never a RAM-backed temp.
+    with tempfile.TemporaryDirectory(dir=args.out, prefix=".work-") as work:
         for fmt in formats:
             print(makers[fmt](args, Path(work)))
     return 0
