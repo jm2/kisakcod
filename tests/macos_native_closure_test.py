@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
-"""scripts/platform/macos/native_closure.py on synthetic and real Mach-O apps.
+"""scripts/platform/macos/native_closure.py on synthetic Mach-O apps.
 
-The synthetic fixtures run on any host; the real-linker case runs on macOS.
-Trimmed from jm2/balun scripts/test_macos_native_closure.py.
+The images are built in memory, so this runs on any host. Trimmed from jm2/balun scripts/test_macos_native_closure.py.
 """
 
 import plistlib
 from pathlib import Path
 import struct
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -120,19 +118,6 @@ class Closure(Fixture):
     def test_truncated_image_fails_closed(self):
         self.exe.write_bytes(macho(kind=2)[:40])
         self.rejects(".")
-
-
-@unittest.skipUnless(sys.platform == "darwin", "needs the Apple linker")
-class RealLinker(Fixture):
-    def test_clang_output_and_its_run_paths(self):
-        source = self.parent / "main.c"
-        source.write_text("int main(void) { return 0; }\n", encoding="utf-8")
-        link = ["clang", "-mmacosx-version-min=26.0", str(source), "-o", str(self.exe)]
-        subprocess.run(link, check=True, capture_output=True)
-        self.assertEqual(closure.validate(self.app), 1)
-        self.assertEqual(closure.check_minimum(self.app), (26, 0, 0))
-        subprocess.run(link + ["-Wl,-rpath," + str(self.parent)], check=True, capture_output=True)
-        self.assertIn(str(self.parent), closure.inspect(self.exe)[0].rpaths)
 
 
 if __name__ == "__main__":

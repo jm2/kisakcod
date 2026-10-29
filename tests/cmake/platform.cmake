@@ -753,8 +753,7 @@ if (NOT WIN32)
         )
         set_tests_properties(macos-bundle-licenses PROPERTIES TIMEOUT 30)
     endif()
-    # The macOS bundle's Mach-O closure check (ADR-0011): synthetic images on
-    # any host, plus a clang-linked one on macOS.
+    # The macOS bundle's Mach-O closure check (ADR-0011), on synthetic images.
     find_program(KISAK_TEST_PYTHON3 python3)
     if (KISAK_TEST_PYTHON3)
         add_test(

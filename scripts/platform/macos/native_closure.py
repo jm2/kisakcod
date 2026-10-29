@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # From jm2/balun scripts/macos_native_closure.py at 3e0de3dd (GPL-3.0, the
-# same owner and license), unchanged below this header. bundle.sh runs
+# same owner and license). Changed only for Codacy: ExpatError comes from
+# pyexpat, a loop variable no longer shadows main(), and two require() calls
+# are explicit raises so None narrows. bundle.sh runs
 # `native_closure.py bundle <app>` on the assembled KisakCOD app (ADR-0011).
 """Inspect Mach-O load commands and prove a relocatable app's native closure.
 
@@ -21,7 +23,8 @@ import stat
 import struct
 import sys
 import time
-from xml.parsers.expat import ExpatError
+# Only the exception type: plistlib rejects entity declarations itself.
+from pyexpat import ExpatError
 
 
 THIN = {b"\xce\xfa\xed\xfe": ("<", 28), b"\xcf\xfa\xed\xfe": ("<", 32),
@@ -62,7 +65,7 @@ class Image:
     kind: int
     imports: tuple
     rpaths: tuple
-    macos: tuple  # minimum (major, minor, patch), or None when undeclared
+    macos: "tuple | None"  # minimum (major, minor, patch), or None when undeclared
 
 
 def inspect(path):
@@ -276,12 +279,12 @@ def validate(bundle):
     for path, images in native.items():
         for image in images:
             contexts = ([(path, image)] if image.kind == 2 else
-                        [(exe, main) for exe, main in executables
-                         if compatible(image, main.cpu, main.subtype)])
+                        [(exe, host) for exe, host in executables
+                         if compatible(image, host.cpu, host.subtype)])
             require(contexts, "native slice has no compatible executable context")
-            for exe, main in contexts:
-                inherited = tuple(expand(name, exe, exe) for name in main.rpaths)
-                visit(path, image, exe, (main.cpu, main.subtype), inherited, frozenset())
+            for exe, host in contexts:
+                inherited = tuple(expand(name, exe, exe) for name in host.rpaths)
+                visit(path, image, exe, (host.cpu, host.subtype), inherited, frozenset())
     return len(native)
 
 
@@ -309,8 +312,8 @@ def declared_macos(root):
     except (ValueError, ExpatError) as error:
         raise Invalid("Info.plist is not a parseable property list") from error
     value = properties.get("LSMinimumSystemVersion") if isinstance(properties, dict) else None
-    require(isinstance(value, str) and PLIST_VERSION.fullmatch(value),
-            "Info.plist has no parseable LSMinimumSystemVersion")
+    if not (isinstance(value, str) and PLIST_VERSION.fullmatch(value)):
+        raise Invalid("Info.plist has no parseable LSMinimumSystemVersion")
     parts = tuple(int(part) for part in value.split("."))
     return parts + (0,) * (3 - len(parts))
 
@@ -342,7 +345,8 @@ def main():
             print(version_text(required_macos(members(arguments.path)[1])))
         else:
             images = inspect(arguments.path)
-            require(images, "expected a native file")
+            if not images:
+                raise Invalid("expected a native file")
             if arguments.mode == "kind":
                 kinds = {image.kind for image in images}
                 require(len(kinds) == 1, "native slices disagree on file type")
