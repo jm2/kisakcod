@@ -288,6 +288,10 @@ STUB_CONTROLLER(G_PlayerController)
 STUB_PAIN(Pain_trigger_damage) STUB_PAIN(Helicopter_Pain)
 STUB_DIE(Die_trigger_damage) STUB_DIE(G_VehEntHandler_Die) STUB_DIE(Helicopter_Die) STUB_DIE(player_die)
 
+#if GAME_MP_HAZARD_SUBJECT == 1
+WEAK void I_strncpyz(char *dest, const char *src, int size) { std::snprintf(dest, size, "%s", src); }
+#endif
+
 #if GAME_MP_HAZARD_SUBJECT == 5
 // g_cmds_mp.cpp engine boundary: the command token stream, server replies,
 // configstrings and the few game helpers reached by the command switch.
@@ -595,6 +599,23 @@ static void VehicleTableRejectsThe33rdType()
     g_allowComErrorReturn = false;
     CHECK(g_comErrors == 1);
     CHECK(s_numVehicleInfos == 32);
+}
+
+// #214: G_LoadVehicle copies the requested name into vehicle_info_t::name
+// (64 bytes). A longer name, from a map's vehicletype key or a
+// spawnHelicopter argument, is cut at 63 characters instead of running into
+// the type field and the rest of the entry.
+static void VehicleNameIsBoundedToItsField()
+{
+    s_numVehicleInfos = 0;
+    char name[200];
+    std::memset(name, 'x', sizeof(name) - 1);
+    name[sizeof(name) - 1] = '\0';
+    CHECK(G_LoadVehicle(name) == 0);
+    const vehicle_info_t &info = s_vehicleInfos[0];
+    CHECK(strnlen(info.name, sizeof(info.name)) == sizeof(info.name) - 1);
+    CHECK(info.type == 0);
+    CHECK(info.steerWheels == 0);
 }
 
 #elif GAME_MP_HAZARD_SUBJECT == 2
@@ -919,6 +940,7 @@ int main()
     GetEntWithAClientFieldFindsNothing();
     HintTableIncludesFriendly();
     VehicleTableRejectsThe33rdType();
+    VehicleNameIsBoundedToItsField();
 #elif GAME_MP_HAZARD_SUBJECT == 2
     TriggersDispatchTheirOwnHandler();
 #elif GAME_MP_HAZARD_SUBJECT == 4
