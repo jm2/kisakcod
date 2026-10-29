@@ -3037,6 +3037,8 @@ void R_InitGraphicsApi()
             R_SetWndParms(&wndParms);
             if (R_CreateGameWindow(&wndParms))
                 break;
+            // Retry at the reduced r_mode, not the desktop size that failed.
+            R_SetFullscreenAtDesktop(false);
             if (!R_ReduceWindowSettings())
                 R_FatalInitError("Couldn't initialize renderer");
         }

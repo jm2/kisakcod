@@ -83,7 +83,7 @@ void KeyEvent(const SDL_KeyboardEvent &key)
 {
     const uint32_t eventTime = EventTime(key.timestamp);
     // MainWndProc's WM_SYSKEYDOWN: Alt+Enter toggles fullscreen (#917).
-    if (key.down && key.scancode == SDL_SCANCODE_RETURN && (key.mod & SDL_KMOD_ALT))
+    if (key.down && !key.repeat && key.scancode == SDL_SCANCODE_RETURN && (key.mod & SDL_KMOD_ALT))
     {
         if (client_state != 7 && r_fullscreen)
         {

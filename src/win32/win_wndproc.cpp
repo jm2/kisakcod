@@ -393,7 +393,8 @@ LRESULT WINAPI MainWndProc(
 			}
 			else
 			{
-				if (r_fullscreen)
+				// Bit 30 marks auto-repeat: a held Alt+Enter toggles once.
+				if (r_fullscreen && !(lParam & (1 << 30)))
 				{
 					const bool fullscreen = !r_fullscreen->current.enabled;
 					Dvar_SetBool(r_fullscreen, fullscreen);
