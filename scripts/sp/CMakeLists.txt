@@ -58,6 +58,11 @@ add_executable(${PROJECT_NAME}
 )
 
 target_compile_definitions(${PROJECT_NAME} PUBLIC KISAK_SP CINEMA USE_SEPARATE_BLIT_TEXTURE)
+
+# Render in physical pixels on high-DPI displays (#918), as the MP client does.
+if (WIN32)
+    target_sources(${PROJECT_NAME} PRIVATE "${SCRIPTS_DIR}/platform/win32/dpi_aware.manifest")
+endif()
 set(KISAK_TARGET_NEEDS_CLIENT_MEDIA ON)
 
 # We need all of the pre/post-build commands

@@ -722,6 +722,21 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_tests_properties(live-storage-stats-file-contracts PROPERTIES TIMEOUT 20)
 endif()
 
+# The Windows clients' DPI-awareness manifest (#918), embedded in this test the
+# same way, read back through the engine's Sys_DpiAwarenessName.
+if (WIN32 AND MSVC)
+    add_executable(kisakcod-win-dpi-awareness-tests win_dpi_awareness_tests.cpp
+        ${SRC_DIR}/win32/win_dpi.cpp
+        ${CMAKE_SOURCE_DIR}/scripts/platform/win32/dpi_aware.manifest)
+    target_include_directories(kisakcod-win-dpi-awareness-tests PRIVATE ${SRC_DIR})
+    target_compile_features(kisakcod-win-dpi-awareness-tests PRIVATE cxx_std_20)
+    target_link_libraries(kisakcod-win-dpi-awareness-tests PRIVATE user32)
+    kisakcod_test_warnings(kisakcod-win-dpi-awareness-tests)
+    set_target_properties(kisakcod-win-dpi-awareness-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME win-dpi-awareness-manifest COMMAND kisakcod-win-dpi-awareness-tests)
+    set_tests_properties(win-dpi-awareness-manifest PROPERTIES TIMEOUT 20)
+endif()
+
 # build.sh picks a CMakePresets.json preset per host (dry runs only).
 if (NOT WIN32)
     find_program(KISAK_TEST_BASH bash)

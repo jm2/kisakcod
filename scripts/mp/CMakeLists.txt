@@ -85,6 +85,12 @@ endif()
 # Add multiplayer flag
 target_compile_definitions(${PROJECT_NAME} PUBLIC KISAK_MP CINEMA USE_SEPARATE_BLIT_TEXTURE)
 
+# Render in physical pixels on high-DPI displays (#918). Retail declares no DPI
+# awareness; the client deviates at the owner's request. The dedi stays out.
+if (WIN32)
+    target_sources(${PROJECT_NAME} PRIVATE "${SCRIPTS_DIR}/platform/win32/dpi_aware.manifest")
+endif()
+
 # The macOS client renders on KosmicKrisp, which needs macOS 26+, so the
 # client targets 26.0; the server keeps the global CMAKE_OSX_DEPLOYMENT_TARGET
 # (13.0). The later -mmacosx-version-min wins on clang's command line.
