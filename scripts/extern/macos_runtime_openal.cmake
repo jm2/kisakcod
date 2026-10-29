@@ -3,7 +3,9 @@
 # (alc/backends/coreaudio.cpp). Downgrade the flag: the warning still shows, the
 # build proceeds. Revisit when the toolchain stops making that call.
 ExternalProject_Add(kisak_runtime_openal
-    URL https://github.com/kcat/openal-soft/releases/download/1.25.2/openal-soft-1.25.2.tar.bz2
+    # The GitHub release asset now 404s; openal-soft.org serves the same bytes.
+    URL https://openal-soft.org/openal-releases/openal-soft-1.25.2.tar.bz2
+        https://github.com/kcat/openal-soft/releases/download/1.25.2/openal-soft-1.25.2.tar.bz2
     URL_HASH SHA256=1dbaac44e7579d5bc8847ca8db4b2e8b9fd3961041f35ee20def4958301e1089
     DOWNLOAD_DIR ${KISAK_SOURCE_CACHE}
     DOWNLOAD_NO_PROGRESS ON
