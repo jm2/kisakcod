@@ -110,6 +110,12 @@ int main()
     buf_cursor::Deactivate();
 
     const bool notetracksOk = parts.notifyCount == 255 && g_allocBytes == 255 * sizeof(XAnimNotifyInfo);
+    // Each track sits on frame 1 of 2: time 0.5, as retail's float divide gives
+    // (1.8 0x5850be-0x5850ca); the end marker is 1.
+    [[maybe_unused]] const auto [firstName, firstAt] = parts.notify[0];
+    [[maybe_unused]] const auto [lastName, lastAt] = parts.notify[253];
+    [[maybe_unused]] const auto [endName, endAt] = parts.notify[254];
+    const bool timesOk = firstAt == 0.5f && lastAt == 0.5f && endAt == 1.0f;
 
     // version 1, one piece, "missing_piece", then three offsets.
     g_piecesFile = {1, 0, 1, 0};
@@ -127,6 +133,11 @@ int main()
     if (!notetracksOk)
     {
         std::fprintf(stderr, "FAIL 255 notetracks: notifyCount %u, %zu bytes\n", parts.notifyCount, g_allocBytes);
+        return 1;
+    }
+    if (!timesOk)
+    {
+        std::fputs("FAIL notetrack times are not frame / numframes in float\n", stderr);
         return 1;
     }
     if (!piecesOk)

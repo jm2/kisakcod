@@ -955,7 +955,7 @@ void __cdecl ReadNoteTracks(const char *name, unsigned char **pos, XAnimParts *p
         v6 = Buf_Read<unsigned short>(pos);
 
         if (parts->numframes)
-            v5 = v6 / parts->numframes;
+            v5 = (double)v6 / parts->numframes; // KISAK: retail divides in float (fild/fild/fdivp, 1.8 0x5850be-0x5850ca)
         else
             v5 = 0.0;
         notify->time = v5;
