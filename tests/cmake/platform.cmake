@@ -762,6 +762,15 @@ if (NOT WIN32)
         )
         set_tests_properties(macos-bundle-native-closure PROPERTIES TIMEOUT 30)
     endif()
+    # The release dmg (ADR-0012): a clang-built app and server packaged and
+    # checked on the mounted image. Needs codesign and hdiutil.
+    if (APPLE AND KISAK_TEST_BASH AND KISAK_TEST_PYTHON3)
+        add_test(
+            NAME macos-package-dmg
+            COMMAND "${KISAK_TEST_BASH}" "${CMAKE_SOURCE_DIR}/tests/macos_package_dmg_test.sh"
+        )
+        set_tests_properties(macos-package-dmg PROPERTIES TIMEOUT 120)
+    endif()
 endif()
 
 # The Linux release packager (ADR-0012, NOW row 72): it writes a portable
