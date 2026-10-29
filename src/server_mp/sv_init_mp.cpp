@@ -722,7 +722,9 @@ void __cdecl SV_Init()
         1,
         DVAR_SYSTEMINFO,
         "If true, clients will synthesize tracers and bullet impacts");
-    sv_punkbuster = Dvar_RegisterBool("sv_punkbuster", 1, 0x15u, "Enable PunkBuster on this server");
+    // KISAK: the fork has no PunkBuster, so it neither requires nor blocks it (#916).
+    // Retail's default of 1 advertises pb\1, and stock clients without PunkBuster refuse to join.
+    sv_punkbuster = Dvar_RegisterBool("sv_punkbuster", 0, 0x15u, "Enable PunkBuster on this server");
     // Preserve authenticated identity by default whenever this target has Steam support.
     // Headless/ARM targets compile without KISAK_STEAM and accept the cl_guid fallback.
 #ifdef KISAK_STEAM

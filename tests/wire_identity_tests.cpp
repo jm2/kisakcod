@@ -348,6 +348,18 @@ int main(int argc, char **argv)
     Dvar_SetBoolByName("sv_pure", true);
     CHECK(!Dvar_GetBool("sv_cheats")); // and starts with cheats off
 
+    // PunkBuster is neither required nor blocked (#916): with no sv_punkbuster
+    // line the server advertises pb 0, so a stock client without PunkBuster
+    // joins. Retail's default of 1 advertised pb 1. An operator who sets it
+    // still gets pb 1.
+    CHECK(!Dvar_GetBool("sv_punkbuster"));
+    CHECK(Value(Body(g_reply), "pb") == "0");
+    Dvar_SetBoolByName("sv_punkbuster", true);
+    g_reply.clear();
+    SVC_Info(Remote());
+    CHECK(Value(Body(g_reply), "pb") == "1");
+    Dvar_SetBoolByName("sv_punkbuster", false);
+
     // A 1.8 server also advertises hardcore and oldschool once the game
     // scripts set them, the keys a 1.8 browser's filters read.
     CHECK(Value(Body(g_reply), "hc").empty());
