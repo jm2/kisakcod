@@ -731,5 +731,11 @@ if (NOT WIN32)
             COMMAND "${KISAK_TEST_BASH}" "${CMAKE_SOURCE_DIR}/tests/build_sh_routing_test.sh"
         )
         set_tests_properties(build-sh-routing PROPERTIES TIMEOUT 60)
+        # The macOS bundle ships each framework's license text (ADR-0011).
+        add_test(
+            NAME macos-bundle-licenses
+            COMMAND "${KISAK_TEST_BASH}" "${CMAKE_SOURCE_DIR}/tests/macos_bundle_licenses_test.sh"
+        )
+        set_tests_properties(macos-bundle-licenses PROPERTIES TIMEOUT 30)
     endif()
 endif()

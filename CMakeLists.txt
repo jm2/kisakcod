@@ -224,6 +224,10 @@ if (KISAK_MACOS_BUNDLE AND APPLE)
         endif()
     endforeach()
     set(_kisak_bundle_app "${CMAKE_BINARY_DIR}/dist/KisakCOD-mp.app")
+    get_property(_kisak_dxvk_license GLOBAL PROPERTY KISAK_DXVK_MACOS_LICENSE)
+    if (NOT _kisak_dxvk_license)
+        message(FATAL_ERROR "KISAK_MACOS_BUNDLE=ON needs the pinned dxvk (KISAK_DXVK_MACOS) for its license text")
+    endif()
     add_custom_target(bundle
         COMMAND ${CMAKE_COMMAND} -E env
             bash ${CMAKE_SOURCE_DIR}/scripts/platform/macos/bundle.sh
@@ -232,6 +236,7 @@ if (KISAK_MACOS_BUNDLE AND APPLE)
             --runtime-prefix ${KISAK_BUNDLE_RUNTIME_PREFIX}
             --mesa-prefix ${KISAK_BUNDLE_MESA_PREFIX}
             --dxvk-lib ${KISAK_BUNDLE_DXVK_LIB}
+            --dxvk-license ${_kisak_dxvk_license}
         DEPENDS KisakCOD-mp
         COMMENT "Bundling ${_kisak_bundle_app}"
         VERBATIM)
