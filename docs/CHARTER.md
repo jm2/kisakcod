@@ -127,6 +127,7 @@ The CI `native64-census` and `KPI summary` jobs render the current values.
 | [0009](decisions/0009-retail-1-8-behaviour-reference.md) | Retail Steam 1.8 is the behaviour reference | accepted |
 | [0010](decisions/0010-interim-renderers-ship-in-0-1-0.md) | 0.1.0 ships the interim renderers; Vulkan after | accepted |
 | [0011](decisions/0011-macos-client-bundles-its-runtime.md) | The macOS client bundles its runtime | accepted |
+| [0012](decisions/0012-release-packages-and-install-layout.md) | 0.1.0 release packages and install layout | accepted |
 
 ## Doc map
 

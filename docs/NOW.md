@@ -1,7 +1,7 @@
 # NOW
 
 Last reviewed: 2026-10-29 by the coordinator
-Gates: G3 and G4a evidence complete (owner closes); G0-G2 and G5 done
+Gates: G6 (0.1.0 packaging, rows 70-74); G0-G5 and G4a done
 WIP limit: 6 (bug lane first, then gates)
 
 ## KPIs
@@ -34,26 +34,26 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 
 | # | Bead | Gate | Moves | Done-test | Size | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| 67 | PunkBuster neither required nor blocked: `sv_punkbuster` defaults to 0, no client PB screen (#916) | G6 | K6 | a server with no `sv_punkbuster` line replies `pb\0`; a stock client joins from the LAN browser | S | not started |
-| 68 | Windows clients declare PerMonitorV2 DPI awareness (#918) | G6 | K6 | at 225% scaling the fork client fits the screen and the cursor reaches every button | S | owner OK pending for the HIGHDPIAWARE confirmation run (yoga) |
-| 69 | Alt+Enter toggles fullscreen at the desktop resolution on every fork client (#917; after 68) | G6 | K6 | windowed to fullscreen at desktop size and back, outside developer mode, on each OS | S | not started |
+| 69 | Alt+Enter toggles fullscreen at the desktop resolution on every fork client (#917) | G6 | K6 | windowed to fullscreen at desktop size and back, outside developer mode, on each OS | S | #923: Windows x86/ARM64 and Linux pass; macOS waits on an unlocked mbp16 |
+| 70 | Packaging paths ([ADR-0012](decisions/0012-release-packages-and-install-layout.md)): a writable per-user path (`~/.config/kisakcod` on Linux) is the default `fs_homepath` in packaged builds; profiles and zones are found there as well as in the game folder | G6 | K6 | a read-only game folder: the client keeps its profile and config in the per-user path, and loads zones placed only there | M | coordinator |
+| 71 | Windows amd64/arm64: Inno Setup installer and portable `.zip`, client plus dedi (ADR-0012) | G6 | K6 | install, data beside it, play LAN as a normal user, uninstall; the same from the unpacked zip | M | kisakcod-win |
+| 72 | Linux amd64/arm64: `.deb`, `.rpm`, Arch package into `/opt/kisakcod`, and a portable `.tar.xz` (ADR-0012) | G6 | K6 | install, data in `~/.config/kisakcod`, `kisakcod` launcher plays LAN; uninstall leaves user state | M | coordinator |
+| 73 | macOS arm64: `.dmg` with `KisakCOD.app` and the dedi (ADR-0011, ADR-0012; extends 66) | G6 | K6 | as 66, from the mounted `.dmg` | L | kisakcod-mac |
+| 74 | `release.yml` builds the client legs and every row 71-73 artifact, with `SHA256SUMS` and notes (ADR-0012) | G6 | K6 | a dry-run release produces all 5 targets' artifacts | M | after 70-73 |
 | 66 | G6: the macOS `.app` bundles its runtime ([ADR-0011](decisions/0011-macos-client-bundles-its-runtime.md)) | G6 | K6 | a clean account without Homebrew plays a LAN round; `otool -L` shows no `/opt/homebrew` | L | licenses #907, OpenAL URL #906; clean-account round left |
 
-Done 2026-10-29: G3 rows 61, 63, 64, 65 (#181; every G3 target now has
+Done 2026-10-29: rows 67 (#921), 68 (#922); G3 rows 61, 63, 64, 65 (#181; every G3 target now has
 evidence); G4a row 36 (#182: the owner joined a stock client from the LAN
 browser, spawned, fired, reconnected); G5 closed (#184).
 
-**Resume here:** row 67, then 68 and 69. Host: #804.
+**Resume here:** rows 70-74 (0.1.0 packaging, ADR-0012); 69 merges with #923. Host: #804.
 
 ## Blocked on owner
 
 | Action | Unblocks |
 | --- | --- |
-| Close G3 (#181) and G4a (#182): all exit evidence is in | G3, G4a |
-| #214 item 5: keep retail or fix (`script_vehicle_mp` riders) | #214 |
 | Steamworks legal decision; release packaging (#263, #290) | WS-8, G6, K6 |
 | CoD4x census ([ADR-0005](decisions/0005-cod4x-compatibility.md)); approve CHARTER/ADRs | all |
-| Private vulnerability reporting (#293) | SECURITY.md |
 | GPU runner; Apple Developer ID | G5; G6 |
 | An unlocked Mac (clean account) | 66 |
 
