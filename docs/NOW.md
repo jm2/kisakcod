@@ -23,9 +23,9 @@ Owner, 2026-10-27: bugs first. Rule-4 PRs with a test that fails without
 the fix and a `Retail check:` line (ADR-0009); new crash and memory bugs
 join by rank.
 
-Drained 2026-10-29 via #905 and #908-#913: closed #206 #208 #209 #220
-#243 #274 #287; #214 open only for item 5 (owner) and the name loop. Left:
-SP-only items in #195 #204 (iw3sp.exe unreadable); #270 parked until FASTFILE_LOADER; #278 playerstate and client
+Drained 2026-10-29 via #905 and #908-#913: closed #206 #208 #209 #220 and
+issues #243 #274 #287; #214 stays open for item 5 (owner) and the name loop.
+Left: SP-only items in #195 #204 (iw3sp.exe unreadable); #270 parked until FASTFILE_LOADER; #278 playerstate and client
 deltas; #914 (17 dxvk-gated tests never run in CI).
 
 ## Queue
