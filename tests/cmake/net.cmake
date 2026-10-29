@@ -447,3 +447,33 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8)
     add_test(NAME issue209-netvoice-bounds COMMAND kisakcod-issue209-netvoice-tests)
     set_tests_properties(issue209-netvoice-bounds PROPERTIES TIMEOUT 20)
 endif()
+
+# The MP snapshot entity delta codec, production both ways: MSG_WriteEntity-
+# DeltaForEType (qcommon/sv_msg_write_mp.cpp) and MSG_ReadDeltaEntity
+# (qcommon/msg_mp.cpp), compiled as the headless server compiles them (#278).
+# Linux and clang only; --gc-sections drops what the checks never reach.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-msg-snapshot-delta-tests msg_snapshot_delta_tests.cpp
+        ${SRC_DIR}/qcommon/msg_mp.cpp
+        ${SRC_DIR}/qcommon/sv_msg_write_mp.cpp
+        ${SRC_DIR}/qcommon/msg_bits_mp.cpp
+        ${SRC_DIR}/qcommon/msg_bits_write_mp.cpp
+        ${SRC_DIR}/qcommon/msg_bits_read_mp.cpp
+        ${SRC_DIR}/qcommon/msg_bits_usercmd_mp.cpp
+        ${SRC_DIR}/qcommon/huffman.cpp
+        ${SRC_DIR}/server_mp/sv_snapshot_profile_mp.cpp
+        ${SRC_DIR}/universal/q_shared.cpp)
+    target_include_directories(kisakcod-msg-snapshot-delta-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-msg-snapshot-delta-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-msg-snapshot-delta-tests PRIVATE
+        KISAK_MP KISAK_DEDICATED DEDICATED KISAK_DEDI_HEADLESS UNIX)
+    target_compile_options(kisakcod-msg-snapshot-delta-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-msg-snapshot-delta-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-msg-snapshot-delta-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-msg-snapshot-delta-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-msg-snapshot-delta-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME msg-snapshot-entity-delta-contracts COMMAND kisakcod-msg-snapshot-delta-tests)
+endif()
