@@ -85,7 +85,8 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
 endif()
 
 # The window setup's refresh-rate lookup over the sorted D3D9 display modes
-# (gfx_d3d/r_display_modes.cpp), which R_ClosestRefreshRateForMode calls.
+# (gfx_d3d/r_display_modes.cpp), which R_ClosestRefreshRateForMode calls, and
+# the fullscreen size that R_SetWndParms picks (#917).
 # The decompiled lookup indexed past dx.displayModes into a pointer table and
 # crashed the Win64 client in R_EnumDisplayModes. _D3DDISPLAYMODE comes from
 # the Windows SDK.
