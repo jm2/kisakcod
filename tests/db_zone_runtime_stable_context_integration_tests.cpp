@@ -860,8 +860,56 @@ char *KISAK_CDECL va(const char *, ...)
     return empty;
 }
 
+// #274: in the engine (macro-off) build a generation whose callbacks were
+// never bound has no way out of script-string ownership, so the table's own
+// begin entry point must refuse it before taking the serializer.
+[[nodiscard]] bool TestPristineBindingBeginRejected() noexcept
+{
+    constexpr std::uint32_t kPristineSlot = 7;
+    if (pmem_runtime::TryInitialize() != pmem_runtime::InitializationStatus::Success
+        || ZoneRuntimeFacade::TryBeginAccess() != ZoneRuntimeFacadeStatus::Success)
+    {
+        std::fputs("FAIL pristine-binding setup: physical memory or facade access\n", stderr);
+        return false;
+    }
+    const ZoneRuntimeTableStatus init = ZoneRuntimeFacade::TryInitializeRuntimeTable();
+    ZoneLoadContextKey key{};
+    const ZoneRuntimeTableStatus claim = init == ZoneRuntimeTableStatus::Success
+        ? ZoneRuntimeFacade::TryClaimGeneration(kPristineSlot, &key)
+        : init;
+    if (claim != ZoneRuntimeTableStatus::Success)
+    {
+        std::fprintf(stderr, "FAIL pristine-binding setup: init %d, claim %d\n",
+            static_cast<int>(init), static_cast<int>(claim));
+        return false;
+    }
+    static db::script_string_journal::ScriptStringJournal journal{};
+    const ZoneRuntimeTableStatus begin =
+        db::zone_runtime::TryBeginZoneRuntimeScriptStringOwnership(
+            &ProductionZoneRuntimeTable(),
+            kPristineSlot,
+            key,
+            &journal,
+            nullptr,
+            0,
+            0);
+    const bool serializerFree =
+        g_criticalSectionDepth[CRITSECT_DB_SCRIPT_STRING_TRANSACTION] == 0;
+    if (begin != ZoneRuntimeTableStatus::InvalidPhase || !serializerFree)
+    {
+        std::fprintf(stderr,
+            "FAIL pristine-binding begin: status %d, serializer %s\n",
+            static_cast<int>(begin),
+            serializerFree ? "free" : "held");
+        return false;
+    }
+    return true;
+}
+
 int main(const int argc, char **const argv)
 {
+    if (argc == 2 && std::strcmp(argv[1], "--pristine-begin") == 0)
+        return TestPristineBindingBeginRejected() ? 0 : 1;
     if (argc == 1)
         return TestStableCallbackRetryChain() ? 0 : 1;
     if (argc == 2 && std::strcmp(argv[1], "--omit-finish") == 0)
