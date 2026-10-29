@@ -5539,6 +5539,12 @@ ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringOwnership(
     }
 
     const bool composite = !entry->generationBindingPristine();
+#ifndef KISAK_DB_ZONE_RUNTIME_TABLE_TESTING
+    // The engine build compiles out every exit from passive ownership, so a
+    // pristine binding must not take the script-string serializer (#274).
+    if (!composite)
+        return ZoneRuntimeTableStatus::InvalidPhase;
+#endif
     if (composite)
     {
         if (entry->executionMode() != ZoneRuntimeExecutionMode::Loading

@@ -473,9 +473,14 @@ add_test(
     NAME database-zone-runtime-stable-context-forgotten-finish
     COMMAND kisakcod-db-zone-runtime-stable-context-integration-tests
             --omit-finish)
+add_test(
+    NAME database-zone-runtime-stable-context-pristine-begin
+    COMMAND kisakcod-db-zone-runtime-stable-context-integration-tests
+            --pristine-begin)
 set_tests_properties(
     database-zone-runtime-stable-context-integration
     database-zone-runtime-stable-context-forgotten-finish
+    database-zone-runtime-stable-context-pristine-begin
     PROPERTIES TIMEOUT 30)
 
 # End-to-end runtime bridge: drive the bridge against the real
