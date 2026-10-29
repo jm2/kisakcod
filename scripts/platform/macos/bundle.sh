@@ -258,7 +258,7 @@ SOURCES
 bash "$(dirname "$0")/check_licenses.sh" "$APP" || {
     echo "bundle: FAILED license check" >&2; exit 1; }
 # One file with the engine's third-party code and every bundled component.
-python3 "$(dirname "$0")/../../release/third_party_notices.py" --client \
+python3 "$(dirname "$0")/../../packaging/third_party_notices.py" --client \
     --licenses "$RESOURCES/licenses" --out "$RESOURCES/THIRD-PARTY-NOTICES" || {
     echo "bundle: FAILED third-party notices" >&2; exit 1; }
 

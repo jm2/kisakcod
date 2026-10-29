@@ -185,7 +185,7 @@ On macOS 26.0 arm64, bundle of 35 MB with nine frameworks:
 ## Licensing
 
 `bundle.sh` writes `Contents/Resources/THIRD-PARTY-NOTICES` with
-`scripts/release/third_party_notices.py`: the engine's ODE, zlib and Speex
+`scripts/packaging/third_party_notices.py`: the engine's ODE, zlib and Speex
 texts plus every component directory under `Contents/Resources/licenses/`.
 
 FFmpeg is LGPL 2.1+ and dynamically linked; its license text and a sources note

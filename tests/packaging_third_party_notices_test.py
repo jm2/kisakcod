@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""scripts/release/third_party_notices.py (ADR-0012, #263) on fake license trees."""
+"""scripts/packaging/third_party_notices.py (ADR-0012, #263) on fake license trees."""
 
 from pathlib import Path
 import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts/release"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts/packaging"))
 import third_party_notices as notices  # noqa: E402
 
 

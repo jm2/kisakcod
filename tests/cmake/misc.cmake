@@ -2047,8 +2047,8 @@ add_test(
 find_program(KISAK_TEST_PYTHON3 python3)
 if (KISAK_TEST_PYTHON3)
     add_test(
-        NAME release-third-party-notices
-        COMMAND "${KISAK_TEST_PYTHON3}" "${CMAKE_SOURCE_DIR}/tests/release_third_party_notices_test.py"
+        NAME packaging-third-party-notices
+        COMMAND "${KISAK_TEST_PYTHON3}" "${CMAKE_SOURCE_DIR}/tests/packaging_third_party_notices_test.py"
     )
-    set_tests_properties(release-third-party-notices PROPERTIES TIMEOUT 30)
+    set_tests_properties(packaging-third-party-notices PROPERTIES TIMEOUT 30)
 endif()
