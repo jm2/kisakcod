@@ -707,13 +707,16 @@ jobs:
         run: cmake --build "$RUNTIME" --target runtime
 
       # The server and the client at RelWithDebInfo; the client configure
-      # binds the runtime prefix and its build fetches and builds dxvk.
+      # binds the runtime prefix and its build fetches and builds dxvk. Both
+      # presets generate Makefiles, where a bare --parallel is an unbounded
+      # make -j that swaps the runner, so every build names the core count.
+      # dxvk builds first and alone: its ninja picks its own job count.
       - name: Build the server
         if: matrix.recipe == 'macos-client'
         timeout-minutes: 30
         run: |
           cmake --preset macos-arm64-dedi -B build-dedi -DCMAKE_BUILD_TYPE=RelWithDebInfo
-          cmake --build build-dedi --target KisakCOD-dedi --parallel
+          cmake --build build-dedi --target KisakCOD-dedi --parallel "$(sysctl -n hw.ncpu)"
 
       - name: Build the client
         if: matrix.recipe == 'macos-client'
@@ -725,7 +728,8 @@ jobs:
             -DKISAK_BUNDLE_MESA_PREFIX="${RUNTIME}/mesa-prefix" \
             -DKISAK_BUNDLE_DXVK_LIB="${PWD}/build-release/dxvk-macos/lib/libdxvk_d3d9.0.dylib" \
             -DKISAK_BUNDLE_DEDI="${PWD}/bin/KisakCOD-dedi" -DKISAK_PACKAGE_VERSION="$VERSION"
-          cmake --build build-release --target KisakCOD-mp --parallel
+          cmake --build build-release --target kisak_dxvk_macos
+          cmake --build build-release --target KisakCOD-mp --parallel "$(sysctl -n hw.ncpu)"
 
       # Each binary's DWARF goes into a dSYM before it is stripped; stripping
       # voids the ad-hoc signature, so each is signed again.
@@ -746,7 +750,7 @@ jobs:
         if: matrix.recipe == 'macos-client'
         timeout-minutes: 15
         run: |
-          cmake --build build-release --target dmg
+          cmake --build build-release --target dmg --parallel "$(sysctl -n hw.ncpu)"
           mkdir -p dist
           mv "build-release/dist/kisakcod-${VERSION}-macos-arm64.dmg" "dist/${STEM}.dmg"
 
