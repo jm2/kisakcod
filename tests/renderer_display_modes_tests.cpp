@@ -5,9 +5,11 @@
 // only worked while pointers were 4 bytes, and it crashed the Win64 client in
 // R_EnumDisplayModes. The modes here are sorted as R_CompareDisplayModes sorts
 // them. R_ChooseFullscreenSize, which R_SetWndParms calls, picks the desktop
-// mode for fullscreen entered with Alt+Enter.
+// mode for fullscreen entered with Alt+Enter. R_CanSwitchModeInPlace decides
+// whether CL_Vid_Restart_f switches the display mode in place.
 
 #include <cstdio>
+#include <initializer_list>
 
 #include <gfx_d3d/r_display_modes.h>
 
@@ -101,6 +103,21 @@ int main()
     Expect(Restart(true, 4), 0, "menu fullscreen after that keeps r_mode");
     AltEnter();
     Expect(Restart(true, 6), 1, "Alt+Enter after a windowed r_mode change takes the desktop");
+
+    // R_CanSwitchModeInPlace over the latched dvars CL_Vid_Restart_f finds
+    // (#953): display-mode changes switch in place, anything else restarts.
+    const auto InPlace = [](std::initializer_list<const char *> latched) {
+        return R_CanSwitchModeInPlace(latched.begin(), static_cast<uint32_t>(latched.size())) ? 1 : 0;
+    };
+    Expect(InPlace({"r_fullscreen"}), 1, "Alt+Enter switches in place");
+    Expect(InPlace({"r_mode", "r_fullscreen", "r_displayRefresh"}), 1, "the options menu's mode switches in place");
+    Expect(InPlace({"r_aspectRatio", "r_customMode", "r_vsync"}), 1, "aspect ratio, custom mode and vsync too");
+    Expect(InPlace({"R_MODE"}), 1, "dvar names ignore case");
+    Expect(InPlace({}), 0, "a bare vid_restart restarts");
+    Expect(InPlace({"r_picmip"}), 0, "a texture setting restarts");
+    Expect(InPlace({"r_fullscreen", "loc_language"}), 0, "a mode change with another latched dvar restarts");
+    Expect(InPlace({"r_mod"}), 0, "a prefix of a display dvar restarts");
+    Expect(InPlace({"r_modex"}), 0, "a longer name restarts");
 
     if (g_failures)
         return 1;

@@ -1,4 +1,6 @@
 #include "r_init.h"
+
+#include <vector>
 #ifdef KISAK_CLIENT_SDL3
 #include <client/cl_sdl3.h>
 #endif
@@ -4324,11 +4326,31 @@ void R_ReleaseForShutdownOrReset()
     }
 }
 
+// Resets the device, its default-pool resources already released, and creates
+// them again for wndParms. A failed Reset leaves them released.
+static HRESULT R_ResetAndCreate(const GfxWindowParms *wndParms)
+{
+    _D3DPRESENT_PARAMETERS_ d3dpp;
+
+    R_SetD3DPresentParameters(&d3dpp, wndParms);
+    const HRESULT hr = dx.device->Reset(&d3dpp);
+    if (hr < 0)
+        return hr;
+    dx.deviceLost = 0;
+    if (!R_CreateForInitOrReset())
+        R_FatalInitError("Couldn't reinitialize after a lost Direct3D device");
+    R_InitCmdBufSourceState(&gfxCmdBufSourceState, &gfxCmdBufInput, 0);
+    R_InitCmdBufState(&gfxCmdBufState);
+    RB_InitSceneViewport();
+    R_SetRenderTargetSize(&gfxCmdBufSourceState, R_RENDERTARGET_FRAME_BUFFER);
+    R_SetRenderTarget(gfxCmdBufContext, R_RENDERTARGET_FRAME_BUFFER);
+    return hr;
+}
+
 void R_ResetDevice()
 {
     const char *v0; // eax
     const char *v1; // eax
-    _D3DPRESENT_PARAMETERS_ d3dpp; // [esp+0h] [ebp-64h] BYREF
     HRESULT hr; // [esp+38h] [ebp-2Ch]
     GfxWindowParms wndParms; // [esp+3Ch] [ebp-28h] BYREF
 
@@ -4342,38 +4364,21 @@ void R_ResetDevice()
     wndParms.hz = vidConfig.displayFrequency;
     wndParms.fullscreen = vidConfig.isFullscreen != 0;
     wndParms.aaSamples = r_aaSamples->current.integer;
-    R_SetD3DPresentParameters(&d3dpp, &wndParms);
     R_ReleaseForShutdownOrReset();
-    //hr = dx.device->Reset(dx.device, &d3dpp);
-    hr = dx.device->Reset(&d3dpp);
+    hr = R_ResetAndCreate(&wndParms);
     if (hr < 0)
     {
         v0 = R_ErrorDescription(hr);
         v1 = va("Couldn't reset a lost Direct3D device - IDirect3DDevice9::Reset returned 0x%08x (%s)", hr, v0);
         R_FatalInitError(v1);
     }
-    dx.deviceLost = 0;
-    if (!R_CreateForInitOrReset())
-        R_FatalInitError("Couldn't reinitialize after a lost Direct3D device");
-    R_InitCmdBufSourceState(&gfxCmdBufSourceState, &gfxCmdBufInput, 0);
-    R_InitCmdBufState(&gfxCmdBufState);
-    RB_InitSceneViewport();
-    R_SetRenderTargetSize(&gfxCmdBufSourceState, R_RENDERTARGET_FRAME_BUFFER);
-    R_SetRenderTarget(gfxCmdBufContext, R_RENDERTARGET_FRAME_BUFFER);
 }
 
-char __cdecl R_RecoverLostDevice()
+// R_RecoverLostDevice's release and reload around R_ResetDevice, which the
+// display mode switch (#953) shares.
+static int R_BeginDeviceReset()
 {
-    int remoteScreenUpdateNesting; // [esp+0h] [ebp-4h]
-
-    iassert( dx.device );
-    iassert( dx.deviceLost );
-    iassert( gfxBuf.dynamicVertexBuffer->buffer );
-    iassert( gfxBuf.dynamicIndexBuffer->buffer );
-    if (!R_CanRecoverLostDevice())
-        return 0;
-    Com_Printf(8, "Recovering lost device...\n");
-    remoteScreenUpdateNesting = R_PopRemoteScreenUpdate();
+    const int remoteScreenUpdateNesting = R_PopRemoteScreenUpdate();
     R_SyncRenderThread();
     R_Cinematic_BeginLostDevice();
     DB_BeginRecoverLostDevice();
@@ -4381,7 +4386,11 @@ char __cdecl R_RecoverLostDevice()
     R_ReleaseLostImages();
     Material_ReleaseAll();
     R_ReleaseWorld();
-    R_ResetDevice();
+    return remoteScreenUpdateNesting;
+}
+
+static void R_EndDeviceReset(int remoteScreenUpdateNesting)
+{
     R_ReloadWorld();
     Material_ReloadAll();
     R_ReloadLostImages();
@@ -4389,8 +4398,128 @@ char __cdecl R_RecoverLostDevice()
     DB_EndRecoverLostDevice();
     R_Cinematic_EndLostDevice();
     R_PushRemoteScreenUpdate(remoteScreenUpdateNesting);
+}
+
+char __cdecl R_RecoverLostDevice()
+{
+    iassert( dx.device );
+    iassert( dx.deviceLost );
+    iassert( gfxBuf.dynamicVertexBuffer->buffer );
+    iassert( gfxBuf.dynamicIndexBuffer->buffer );
+    if (!R_CanRecoverLostDevice())
+        return 0;
+    Com_Printf(8, "Recovering lost device...\n");
+    const int remoteScreenUpdateNesting = R_BeginDeviceReset();
+    R_ResetDevice();
+    R_EndDeviceReset(remoteScreenUpdateNesting);
     Com_Printf(8, "Finished recovering lost device.\n");
     return 1;
+}
+
+static void __cdecl R_AddLatchedName(const dvar_s *dvar, void *names)
+{
+    if (Dvar_HasLatchedValue(dvar))
+        static_cast<std::vector<const char *> *>(names)->push_back(dvar->name);
+}
+
+// Gives the game window wndParms' style, size and position, as
+// R_CreateWindow would have created it.
+static void R_SetWindowForParms(const GfxWindowParms *wndParms)
+{
+#ifdef KISAK_CLIENT_SDL3
+#ifndef KISAK_PURE
+    CL_SdlSetWindowMode(wndParms, r_noborder->current.enabled);
+#else
+    CL_SdlSetWindowMode(wndParms, false);
+#endif
+#else
+    DWORD style = WS_VISIBLE | WS_CAPTION | WS_SYSMENU;
+#ifndef KISAK_PURE
+    if (r_noborder->current.enabled)
+        style = WS_VISIBLE | WS_POPUP;
+#endif
+    if (wndParms->fullscreen)
+        style = WS_VISIBLE | WS_POPUP;
+    const DWORD exStyle = wndParms->fullscreen ? WS_EX_TOPMOST : 0;
+    RECT rc{0, 0, wndParms->displayWidth, wndParms->displayHeight};
+    AdjustWindowRectEx(&rc, style, 0, exStyle);
+    SetWindowLongA(wndParms->hwnd, GWL_STYLE, style);
+    SetWindowLongA(wndParms->hwnd, GWL_EXSTYLE, exStyle);
+    SetWindowPos(wndParms->hwnd, wndParms->fullscreen ? HWND_TOPMOST : HWND_NOTOPMOST, wndParms->x, wndParms->y,
+                 rc.right - rc.left, rc.bottom - rc.top, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+#endif
+}
+
+static void R_AttachWindowParms(const GfxWindowParms *wndParms)
+{
+    dx.windows[0].width = wndParms->displayWidth;
+    dx.windows[0].height = wndParms->displayHeight;
+    _D3DDISPLAYMODE mode{};
+    if (wndParms->fullscreen && dx.d3d9->GetAdapterDisplayMode(dx.adapterIndex, &mode) >= 0)
+    {
+        dx.adapterFullscreenWidth = mode.Width;
+        dx.adapterFullscreenHeight = mode.Height;
+    }
+    R_StoreWindowSettings(wndParms);
+}
+
+bool R_SwitchDisplayModeInPlace(vidConfig_t *vidConfigOut)
+{
+    iassert(Sys_IsMainThread());
+    if (!dx.device || dx.deviceLost || dx.windowCount != 1)
+        return false;
+    std::vector<const char *> latched;
+    Dvar_ForEach(R_AddLatchedName, &latched);
+    if (!R_CanSwitchModeInPlace(latched.data(), static_cast<uint32_t>(latched.size())))
+    {
+        if (!latched.empty())
+            Com_Printf(8, "vid_restart: %s needs a full restart\n", latched[0]);
+        return false;
+    }
+    const dvar_s *const displayModeDvars[] = {r_mode, r_fullscreen, r_displayRefresh, r_aspectRatio, r_customMode, r_vsync};
+    for (const dvar_s *dvar : displayModeDvars)
+        Dvar_MakeLatchedValueCurrent(const_cast<dvar_s *>(dvar));
+
+    GfxWindowParms previous{};
+    previous.hwnd = dx.windows[0].hwnd;
+    previous.displayWidth = previous.sceneWidth = dx.windows[0].width;
+    previous.displayHeight = previous.sceneHeight = dx.windows[0].height;
+    previous.hz = vidConfig.displayFrequency;
+    previous.fullscreen = vidConfig.isFullscreen != 0;
+    previous.x = Dvar_GetInt("vid_xpos");
+    previous.y = Dvar_GetInt("vid_ypos");
+    previous.aaSamples = r_aaSamples->current.integer;
+    GfxWindowParms wndParms;
+    R_SetWndParms(&wndParms);
+    wndParms.hwnd = previous.hwnd;
+    Com_Printf(8, "Switching in place to %i x %i %s\n", wndParms.displayWidth, wndParms.displayHeight,
+               wndParms.fullscreen ? "fullscreen" : "window");
+
+    const int remoteScreenUpdateNesting = R_BeginDeviceReset();
+    R_ReleaseForShutdownOrReset();
+    if (wndParms.fullscreen)
+        R_SetWindowForParms(&wndParms);
+    R_AttachWindowParms(&wndParms);
+    HRESULT hr = R_ResetAndCreate(&wndParms);
+    const bool switched = hr >= 0;
+    if (!switched)
+    {
+        Com_Printf(8, "Reset to the new mode failed (0x%08x); restarting\n", hr);
+        R_SetWindowForParms(&previous);
+        R_AttachWindowParms(&previous);
+        hr = R_ResetAndCreate(&previous);
+        if (hr < 0)
+            R_FatalInitError(va("Couldn't reset the Direct3D device - IDirect3DDevice9::Reset returned 0x%08x (%s)", hr,
+                                R_ErrorDescription(hr)));
+    }
+    else if (!wndParms.fullscreen)
+    {
+        R_SetWindowForParms(&wndParms);
+    }
+    R_EndDeviceReset(remoteScreenUpdateNesting);
+    R_InitGamma();
+    memcpy(vidConfigOut, &vidConfig, sizeof(vidConfig_t));
+    return switched;
 }
 
 bool R_CheckLostDevice()
