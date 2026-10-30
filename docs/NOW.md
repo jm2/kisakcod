@@ -15,7 +15,7 @@ From the master census; live values in the latest [master CI run](https://github
 | K3 | Upstream engine TUs in the Linux test build | 82/475 | rising | census |
 | K4 | Server asset families loading Steam 1.8 `.ff` at 64-bit under ASan, with `db::graph_hash` parity | 25/25 (`db_graphhash`, 3 legs) | 25/25 (G2) | this file |
 | K5 | Headless TUs reaching `<d3d9.h>` on Linux | 0 on lin64 and a64 | 0 (G1 Linux) | census |
-| K6 | Target x role cells at `links` or above | 5/10, all headless at `fork_peer` (G3); clients rise with their row 74 legs | 10 at `packaged` (G6) | manifest |
+| K6 | Target x role cells at `links` or above | 7/10 at `fork_peer`: all headless (G3), Linux clients (G5); the rest rise with their row 74 legs | 10 at `packaged` (G6) | manifest |
 
 ## Bug lane (before the gate rows)
 
@@ -34,8 +34,8 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 | --- | --- | --- | --- | --- | --- | --- |
 | 69 | Alt+Enter fullscreen at desktop size (#917) | G6 | K6 | window, fullscreen, window on each OS | S | #923 merged; macOS check waits on an unlocked mbp16 |
 | 71 | Windows amd64/arm64 installer and `.zip` (ADR-0012) | G6 | K6 | the ADR-0012 done-test | M | #931 merged; console checks wait on tscon |
-| 73 | macOS arm64 `.dmg` (ADR-0011, ADR-0012; extends 66) | G6 | K6 | as 66, from the `.dmg` | L | #925, #926 merged; `.dmg` PR next (kisakcod-mac) |
-| 74 | `release.yml` builds rows 71-73's artifacts and `SHA256SUMS` | G6 | K6 | a dry run yields all 5 targets' artifacts | M | Linux legs: antec; Windows: kisakcod-win; macOS: after 73 |
+| 73 | macOS arm64 `.dmg` (ADR-0011, ADR-0012; extends 66) | G6 | K6 | as 66, from the `.dmg` | L | #925, #926, #933 merged; clean-account check waits on mbp16 |
+| 74 | `release.yml` builds rows 71-73's artifacts and `SHA256SUMS` | G6 | K6 | a dry run yields all 5 targets' artifacts | M | Linux legs: this PR; Windows: kisakcod-win; macOS: next (#933 `dmg` target) |
 | 66 | G6: the macOS `.app` bundles its runtime ([ADR-0011](decisions/0011-macos-client-bundles-its-runtime.md)) | G6 | K6 | a clean account without Homebrew plays a LAN round; `otool -L` shows no `/opt/homebrew` | L | clean-account round left |
 
 Done 2026-10-29: rows 67 (#921), 68 (#922), 70 (#927), 72 (#929, #930); G3 (#181), G4a (#182), G5 (#184).

@@ -9,7 +9,9 @@
 #              runtime binaries (Steamworks)
 #   build      per leg: build, split and check the debug symbols, package
 #              (tar.xz on Linux and macOS, zip on Windows), then smoke-run
-#              the binary unpacked from the package
+#              the binary unpacked from the package. A Linux client leg
+#              (ADR-0012) ships the client and the server with their pinned
+#              runtime as .tar.xz, .deb, .rpm and Arch packages
 #   checksums  SHA256SUMS over every packaged file
 #   notes      release notes: packages, tiers, changes since the last release
 #   publish    the only job with contents: write and it checks nothing out:
@@ -161,7 +163,7 @@ jobs:
     name: Build / ${{ matrix.label }}
     needs: metadata
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.metadata.outputs.matrix) }}
@@ -172,6 +174,7 @@ jobs:
       STEM: ${{ matrix.stem }}
       BINARY: ${{ matrix.binary }}
       FILE_ARCH: ${{ matrix.file_arch }}
+      PKG_ARCH: ${{ matrix.pkg_arch }}
       LEG: ${{ toJSON(matrix) }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -228,6 +231,7 @@ jobs:
 
       # --config picks the Visual Studio configuration; Ninja ignores it.
       - name: Build
+        if: matrix.recipe != 'linux-client'
         run: cmake --build build-release --config RelWithDebInfo --target "$BINARY" --parallel
 
       - name: Split the debug symbols and check both halves
@@ -413,6 +417,80 @@ jobs:
           tar -xJf "dist/${STEM}.tar.xz" -C "$unpacked"
           codesign --verify --strict "${unpacked}/${STEM}/${BINARY}"
           python3 scripts/ci/headless_smoke.py "${unpacked}/${STEM}/${BINARY}"
+
+      # SDL3 and OpenAL Soft dlopen() the host's video and audio backends, so
+      # their headers are build-time only. rpm, and makepkg with pacman, build
+      # the .rpm and Arch packages on Ubuntu.
+      - name: Install the client build and packaging tools
+        if: matrix.recipe == 'linux-client'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            clang lld ninja-build meson pkg-config glslang-tools \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxfixes-dev libxtst-dev \
+            libwayland-dev libxkbcommon-dev wayland-protocols libdecor-0-dev libegl-dev libgles-dev libdrm-dev \
+            libgbm-dev libpipewire-0.3-dev libpulse-dev libasound2-dev libdbus-1-dev libudev-dev \
+            rpm makepkg pacman-package-manager fakeroot libarchive-tools zstd
+
+      - name: Build and package the client and the server
+        if: matrix.recipe == 'linux-client'
+        run: |
+          epoch="$(git log -1 --format=%ct)"
+          echo "EPOCH=$epoch" >> "$GITHUB_ENV"
+          scripts/packaging/linux/build_release.sh "$VERSION" "$PKG_ARCH" "${RUNNER_TEMP}/build" pkg "$epoch"
+          for bin in pkg/symbols/*.debug; do
+            id() { readelf -n "$1" 2>/dev/null | awk '/Build ID/ {print $3}'; }
+            exe="${RUNNER_TEMP}/build/bin/$(basename "$bin" .debug)"
+            if [ -z "$(id "$exe")" ] || [ "$(id "$exe")" != "$(id "$bin")" ]; then
+              echo "::error::$(basename "$exe") and its symbol file have different build IDs" >&2
+              exit 1
+            fi
+            scripts/ci/verify-artifact-arch.sh "$FILE_ARCH" "$exe"
+          done
+          mkdir -p dist "symbols/${STEM}"
+          mv "pkg/kisakcod-${VERSION}-linux-${PKG_ARCH}.tar.xz" "dist/${STEM}.tar.xz"
+          mv pkg/*.deb "dist/${STEM}.deb"
+          mv pkg/*.rpm "dist/${STEM}.rpm"
+          mv pkg/*.pkg.tar.zst "dist/${STEM}.pkg.tar.zst"
+          mv pkg/symbols/* "symbols/${STEM}/"
+          python3 scripts/ci/release_meta.py tarxz --root symbols --stem "$STEM" --epoch "$epoch" \
+            --out "dist/${STEM}-debugsymbols.tar.xz"
+          jq -n --arg tag "$TAG" --arg commit "$COMMIT" --argjson leg "$LEG" \
+            --arg compiler "$(clang --version | sed -n 1p)" --arg cmake "$(cmake --version | sed -n 1p)" \
+            --arg image "${ImageOS:-}-${ImageVersion:-}" --arg run "$GITHUB_RUN_ID" \
+            '{tag: $tag, commit: $commit, target: $leg.target, role: $leg.role, level: $leg.level,
+              tier: $leg.tier, config: "RelWithDebInfo", compiler: $compiler, cmake: $cmake,
+              runtime: "scripts/platform/linux/runtime", runner_image: $image,
+              requires: "glibc, libstdc++ and a Vulkan loader", workflow_run: $run}' \
+            > "dist/${STEM}-provenance.json"
+
+      # The .deb installs on the runner: every library the client needs beyond
+      # the base system must come from /opt/kisakcod/lib, and the installed
+      # server passes the assetless smoke run. The portable archive is checked
+      # the same way.
+      - name: Install the .deb and smoke-run the packages
+        if: matrix.recipe == 'linux-client'
+        run: |
+          fail() { echo "::error::$*" >&2; exit 1; }
+          bundled='libSDL3|libopenal|libavformat|libavcodec|libavutil|libdxvk_d3d9'
+          check_closure() {
+            deps="$(ldd "$1/KisakCOD-mp")"
+            if grep -q 'not found' <<<"$deps"; then fail "$1/KisakCOD-mp has unresolved libraries"; fi
+            outside="$(grep -E "$bundled" <<<"$deps" | grep -vF "=> $1/lib/" || true)"
+            [ -z "$outside" ] || fail "bundled libraries resolve outside $1/lib: $outside"
+          }
+          sudo apt-get install -y -qq "./dist/${STEM}.deb"
+          check_closure /opt/kisakcod
+          python3 scripts/ci/headless_smoke.py /opt/kisakcod/KisakCOD-dedi
+          unpacked="${RUNNER_TEMP}/unpacked"
+          mkdir -p "$unpacked"
+          tar -xJf "dist/${STEM}.tar.xz" -C "$unpacked"
+          check_closure "${unpacked}/kisakcod-${VERSION}-linux-${PKG_ARCH}"
+          # Captured, not piped into grep -q: under pipefail an early grep exit fails the producer.
+          rpm_files="$(rpm -qpl "dist/${STEM}.rpm")"
+          arch_files="$(tar --zstd -tf "dist/${STEM}.pkg.tar.zst")"
+          grep -qx /opt/kisakcod/KisakCOD-mp <<<"$rpm_files" || fail "the .rpm has no client"
+          grep -qx opt/kisakcod/KisakCOD-mp <<<"$arch_files" || fail "the Arch package has no client"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

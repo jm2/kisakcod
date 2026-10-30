@@ -11,7 +11,9 @@ need rpmbuild and makepkg; the release jobs build those on their own distros.
 from __future__ import annotations
 
 import io
+import os
 import platform
+import shlex
 import shutil
 import sys
 import tarfile
@@ -64,6 +66,8 @@ def make_inputs(work: Path) -> list[str]:
     (prefix / "lib").mkdir(parents=True)
     for name in RUNTIME:
         (prefix / "lib" / name).write_bytes(b"stand-in " + name.encode())
+    # A bundled library that needs a newer glibc than anything else sets the .deb's floor.
+    (prefix / "lib" / "libdxvk_d3d9.so.0").write_bytes(b"stand-in\0GLIBC_2.4\0GLIBC_2.99\0GLIBC_PRIVATE\0")
     (prefix / "lib" / "libSDL3.so").symlink_to("libSDL3.so.0")  # a link-time name: not shipped
     notices = work / "notices.txt"
     notices.write_text("stand-in notices\n")
@@ -96,6 +100,7 @@ def check_deb(path: Path) -> None:
     with tarfile.open(fileobj=io.BytesIO(deb["control.tar.xz"])) as tar:
         control = member_text(tar, "./control")
     check(f"Architecture: {ARCH}" in control, "the control file names the arch")
+    check("Depends: libc6 (>= 2.99), " in control, "the .deb needs the newest glibc any shipped file needs")
     check("libvulkan1" in control and "libsdl3" not in control.lower(),
           "the .deb depends on the Vulkan loader, not on distro SDL3")
     with tarfile.open(fileobj=io.BytesIO(deb["data.tar.xz"])) as tar:
@@ -116,9 +121,22 @@ def main() -> int:
         return 0
     with tempfile.TemporaryDirectory() as work_name:
         work = Path(work_name)
-        check(package_linux.main(make_inputs(work)) == 0, "the packager succeeds")
+        inputs = make_inputs(work)
+        check(package_linux.main(list(inputs)) == 0, "the packager succeeds")
         check_portable(work / "out" / f"kisakcod-0.1.0-linux-{ARCH}.tar.xz")
         check_deb(work / "out" / f"kisakcod_0.1.0_{ARCH}.deb")
+        # A relative --out (as release.yml passes) still gives the spec an absolute tree path.
+        inputs[inputs.index("--out") + 1] = "relative-out"
+        inputs[inputs.index("--formats") + 1] = "rpm"
+        here = os.getcwd()
+        os.chdir(work)
+        try:
+            check(package_linux.main(inputs) == 0, "the packager takes a relative --out")
+        finally:
+            os.chdir(here)
+        spec = (work / "relative-out" / "rpm" / "kisakcod.spec").read_text()
+        check(f"cp -a {shlex.quote(str(work.resolve() / 'relative-out' / 'rpm' / 'tree'))}/." in spec,
+              "the .rpm spec names its staged tree by an absolute path")
     if failures:
         return 1
     print("packaging-linux: all checks passed")

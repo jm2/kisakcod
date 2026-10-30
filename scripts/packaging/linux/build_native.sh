@@ -7,7 +7,7 @@
 # OUT/rpm/kisakcod.spec needs rpmbuild; OUT/arch/PKGBUILD needs makepkg. Each
 # is skipped when its recipe is absent. The packages land in OUT.
 set -eu
-out=$1
+out=$(CDPATH= cd "$1" && pwd)  # rpmbuild and makepkg change directory
 epoch=$2
 SOURCE_DATE_EPOCH=$epoch
 export SOURCE_DATE_EPOCH
