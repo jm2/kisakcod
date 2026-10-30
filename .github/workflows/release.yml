@@ -475,6 +475,16 @@ jobs:
             "VC_RUNTIME_VERSION=$((Get-Item "pkg/$env:STEM/vcruntime140.dll").VersionInfo.ProductVersion)",
             "ISCC_VERSION=$(@($inno)[0])" >> $env:GITHUB_ENV
 
+      # Every executable and DLL in the package, since a wrong vcpkg triplet
+      # or redist folder would put x64 DLLs in the ARM64 package.
+      - name: Verify binary architecture
+        if: matrix.recipe == 'windows-client'
+        shell: pwsh
+        run: |
+          $binaries = Get-ChildItem "pkg/$env:STEM" -File | Where-Object Extension -in '.exe', '.dll'
+          $binaries.Name
+          ./scripts/ci/verify-artifact-arch.ps1 -Expected $env:FILE_ARCH $binaries.FullName
+
       - name: Package the debug symbols and the provenance
         if: matrix.recipe == 'windows-client'
         run: |
