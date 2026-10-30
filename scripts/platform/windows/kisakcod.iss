@@ -51,6 +51,7 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 LicenseFile={#SourceDir}\KisakCOD-LICENSE.txt
 WizardStyle=modern
+SetupIconFile={#SourcePath}..\..\packaging\icons\kisakcod.ico
 MinVersion=10.0
 ; The Steam folder is under Program Files. /CURRENTUSER installs for one user
 ; into %LOCALAPPDATA%\Programs\KisakCOD instead.

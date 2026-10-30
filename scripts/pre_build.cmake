@@ -36,6 +36,8 @@ if (WIN32)
     endif()
 
     target_compile_definitions(${PROJECT_NAME} PUBLIC WIN32 _CONSOLE _MBCS)
+    # Icon resource 1, which the window classes load.
+    target_sources(${PROJECT_NAME} PRIVATE "${PLATFORM_DIR}/windows/kisakcod.rc")
 
     set_target_properties(${PROJECT_NAME} PROPERTIES
         VS_DEBUGGER_WORKING_DIRECTORY "${BIN_DIR}/$<CONFIG>"

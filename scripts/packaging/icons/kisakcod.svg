@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- KisakCOD icon: a stencil K in a night-vision reticle. Original artwork,
+       no retail marks. make_icons.py builds the .ico and the macOS .icns from
+       this file; it swaps #shape and #outline for Apple's grid on macOS. The outline
+       is clipped to the shape, so the edge stays exact. -->
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="48%" r="60%">
+      <stop offset="0" stop-color="#3a7d31"/><stop offset=".5" stop-color="#1a3d1c"/><stop offset="1" stop-color="#060b07"/>
+    </radialGradient>
+    <radialGradient id="tube" cx="50%" cy="50%" r="50%">
+      <stop offset=".78" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".75"/>
+    </radialGradient>
+    <linearGradient id="phos" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e4ffd6"/><stop offset=".45" stop-color="#98f574"/><stop offset="1" stop-color="#3db02a"/>
+    </linearGradient>
+    <pattern id="scan" width="8" height="8" patternUnits="userSpaceOnUse"><rect width="8" height="3" fill="#000" opacity=".26"/></pattern>
+    <filter id="grain" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="2" seed="7"/>
+      <feColorMatrix values="0 0 0 0 .55  0 0 0 0 1  0 0 0 0 .5  0 0 0 .09 0"/>
+    </filter>
+    <filter id="bloom" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur stdDeviation="18" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <clipPath id="clip"><path id="shape" d="M220 32H804A188 188 0 0 1 992 220V804A188 188 0 0 1 804 992H220A188 188 0 0 1 32 804V220A188 188 0 0 1 220 32Z"/></clipPath>
+  </defs>
+  <g clip-path="url(#clip)">
+    <g id="art">
+      <rect width="1024" height="1024" fill="url(#glow)"/>
+      <g fill="none" stroke="#86ea63" stroke-opacity=".6" stroke-width="18" stroke-linecap="square">
+        <circle cx="512" cy="512" r="396"/>
+        <path d="M512 70v136M512 818v136M70 512h136M818 512h136"/>
+      </g>
+      <g filter="url(#bloom)" fill="url(#phos)">
+        <path d="M250 236h128v250h-128z"/><path d="M250 514h128v274h-128z"/>
+        <path d="M406 470L614 236H762L510 520Z"/><path d="M432 556L510 500L774 788H626Z"/>
+      </g>
+      <rect width="1024" height="1024" fill="url(#scan)"/>
+      <!-- Transparent fill: a renderer without filters draws nothing here. -->
+      <rect width="1024" height="1024" fill="#000" fill-opacity="0" filter="url(#grain)"/>
+      <rect width="1024" height="1024" fill="url(#tube)"/>
+    </g>
+  </g>
+  <path id="outline" d="M220 32H804A188 188 0 0 1 992 220V804A188 188 0 0 1 804 992H220A188 188 0 0 1 32 804V220A188 188 0 0 1 220 32Z" fill="none" stroke="#000" stroke-opacity=".6" stroke-width="24" clip-path="url(#clip)"/>
+</svg>
