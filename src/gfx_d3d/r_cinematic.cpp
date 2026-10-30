@@ -15,6 +15,7 @@
 #include <cgame/cg_local.h>
 #include <universal/profile.h>
 #include <universal/com_files.h>
+#include "r_cinematic_paths.h"
 
 // #define CINEMA
 
@@ -735,11 +736,11 @@ bool __cdecl R_Cinematic_BinkOpen(
     uint32_t errTextSize)
 {
     char *cwd; // [esp+4h] [ebp-20Ch]
-    char filepath[2][256]; // [esp+8h] [ebp-208h] BYREF
+    char filepath[3][256];
+    int pathCount;
 
     cwd = Sys_Cwd();
     iassert( cwd );
-    filepath[1][0] = 0;
     if ((playbackFlags & 0x20) != 0)
     {
         if ((playbackFlags & 8) == 0)
@@ -751,30 +752,31 @@ bool __cdecl R_Cinematic_BinkOpen(
                 "(playbackFlags & 0x00000008)",
                 playbackFlags);
         _snprintf(filepath[0], 0x100u, "video/%s.%s", filename, "bik");
+        pathCount = 1;
     }
     else
     {
 #if defined(_WIN32)
-        _snprintf(filepath[0], 0x100u, "%s\\main\\video\\%s.%s", cwd, filename, "bik");
-        _snprintf(filepath[1], 0x100u, "%s\\raw\\video\\%s.%s", cwd, filename, "bik");
+        pathCount = R_CinematicMoviePaths(fs_homepath ? fs_homepath->current.string : "", cwd, filename, '\\', filepath);
 #else
         // POSIX clients find the install through fs_basepath, not the working
         // directory, and need '/' separators.
         const char *base = fs_basepath && *fs_basepath->current.string ? fs_basepath->current.string : cwd;
-        const int mainLength = Com_sprintf(filepath[0], sizeof(filepath[0]), "%s/main/video/%s.bik", base, filename);
-        const int rawLength = Com_sprintf(filepath[1], sizeof(filepath[1]), "%s/raw/video/%s.bik", base, filename);
-        if (mainLength < 0 || mainLength >= static_cast<int>(sizeof(filepath[0])) || rawLength < 0
-            || rawLength >= static_cast<int>(sizeof(filepath[1])))
+        pathCount = R_CinematicMoviePaths(fs_homepath ? fs_homepath->current.string : "", base, filename, '/', filepath);
+#endif
+        if (!pathCount)
         {
             if (errText)
                 Com_sprintf(errText, errTextSize, "Cinematic path too long");
             return 0;
         }
-#endif
     }
-    if (R_Cinematic_BinkOpenPath(filepath[0], playbackFlags, errText, errTextSize))
-        return 1;
-    return filepath[1][0] && R_Cinematic_BinkOpenPath(filepath[1], playbackFlags, errText, errTextSize);
+    for (int pathIndex = 0; pathIndex < pathCount; ++pathIndex)
+    {
+        if (R_Cinematic_BinkOpenPath(filepath[pathIndex], playbackFlags, errText, errTextSize))
+            return 1;
+    }
+    return 0;
 }
 
 char __cdecl R_Cinematic_BinkOpenPath(

@@ -277,3 +277,17 @@ if (WIN32)
     add_test(NAME renderer-smodel-draw-stream COMMAND kisakcod-renderer-smodel-draw-stream-tests)
     kisakcod_ilp32(kisakcod-renderer-smodel-draw-stream-tests renderer-smodel-draw-stream)
 endif()
+
+# The movie paths R_Cinematic_BinkOpen tries (gfx_d3d/r_cinematic_paths.cpp):
+# the per-user home path's main/video first (ADR-0012, row 70), then the game
+# folder's. Engine-free, so it builds on every test platform.
+add_executable(kisakcod-r-cinematic-paths-tests
+    r_cinematic_paths_tests.cpp
+    ${SRC_DIR}/gfx_d3d/r_cinematic_paths.cpp
+)
+target_include_directories(kisakcod-r-cinematic-paths-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-r-cinematic-paths-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-r-cinematic-paths-tests)
+set_target_properties(kisakcod-r-cinematic-paths-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(NAME r-cinematic-paths COMMAND kisakcod-r-cinematic-paths-tests)
+kisakcod_ilp32(kisakcod-r-cinematic-paths-tests r-cinematic-paths)

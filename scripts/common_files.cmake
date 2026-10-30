@@ -336,6 +336,8 @@ set(GFX_D3D
     "${SRC_DIR}/gfx_d3d/r_buffers.h"
     "${SRC_DIR}/gfx_d3d/r_cinematic.cpp"
     "${SRC_DIR}/gfx_d3d/r_cinematic.h"
+    "${SRC_DIR}/gfx_d3d/r_cinematic_paths.cpp"
+    "${SRC_DIR}/gfx_d3d/r_cinematic_paths.h"
     "${SRC_DIR}/gfx_d3d/r_cmdbuf.cpp"
     "${SRC_DIR}/gfx_d3d/r_cmdbuf.h"
     "${SRC_DIR}/gfx_d3d/r_cmds.cpp"
