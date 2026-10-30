@@ -766,6 +766,19 @@ jobs:
           mkdir -p "$mnt"
           hdiutil attach -quiet -readonly -nobrowse -mountpoint "$mnt" "dist/${STEM}.dmg"
           trap 'hdiutil detach -quiet "$mnt"' EXIT
+          # The image is closed: every load command path (LC_*_DYLIB names and
+          # LC_RPATH paths) resolves inside it or in the OS, never in Homebrew,
+          # /usr/local or a build tree, or it fails on a Mac without them.
+          checked=0
+          while IFS= read -r -d '' f; do
+            file -b "$f" | grep -q '^Mach-O' || continue
+            checked=$((checked + 1))
+            bad="$(otool -l "$f" | awk '$1 == "name" || $1 == "path" {print $2}' |
+                   grep -vE '^(@executable_path|@loader_path|@rpath)/|^@loader_path$|^/usr/lib/|^/System/Library/' || true)"
+            [ -z "$bad" ] || fail "${f#"${mnt}/"} loads from outside the image and the OS: ${bad//$'\n'/ }"
+          done < <(find "${mnt}/KisakCOD.app" "${mnt}/Dedicated Server" -type f -print0)
+          [ "$checked" -ge 3 ] || fail "only ${checked} Mach-O files on the image"
+          echo "::notice::the image is closed: ${checked} Mach-O files load only from the image and the OS"
           for pair in "KisakCOD.app/Contents/MacOS/KisakCOD-mp:KisakCOD-mp" \
                       "Dedicated Server/KisakCOD-dedi:KisakCOD-dedi"; do
             bin="${mnt}/${pair%%:*}" name="${pair##*:}"
