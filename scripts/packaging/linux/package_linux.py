@@ -25,6 +25,7 @@ import argparse
 import io
 import os
 import re
+import shlex
 import shutil
 import sys
 import tarfile
@@ -271,7 +272,7 @@ Requires: vulkan-loader
 %description
 {SUMMARY}. Needs the player's own Steam Call of Duty 4 1.8 data.
 %install
-cp -a {tree}/. %{{buildroot}}/
+cp -a {shlex.quote(str(tree))}/. %{{buildroot}}/
 %files
 %dir {PREFIX}
 %dir {PREFIX}/lib
@@ -300,7 +301,7 @@ license=('GPL-3.0-only')
 depends=({depends})
 options=('!strip' '!debug')
 package() {{
-  cp -a '{tree}'/. "$pkgdir"/
+  cp -a {shlex.quote(str(tree))}/. "$pkgdir"/
 }}
 """)
     return top / "PKGBUILD"

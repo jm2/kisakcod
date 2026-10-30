@@ -13,6 +13,7 @@ from __future__ import annotations
 import io
 import os
 import platform
+import shlex
 import shutil
 import sys
 import tarfile
@@ -134,7 +135,7 @@ def main() -> int:
         finally:
             os.chdir(here)
         spec = (work / "relative-out" / "rpm" / "kisakcod.spec").read_text()
-        check(f"cp -a {work.resolve() / 'relative-out' / 'rpm' / 'tree'}/." in spec,
+        check(f"cp -a {shlex.quote(str(work.resolve() / 'relative-out' / 'rpm' / 'tree'))}/." in spec,
               "the .rpm spec names its staged tree by an absolute path")
     if failures:
         return 1
