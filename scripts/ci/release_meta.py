@@ -68,6 +68,8 @@ LINUX = {"recipe": "linux-headless", "archive": "tar.xz", "exe": ""}
 # ADR-0012: the client and the server in one package, in every Linux format.
 LINUX_CLIENT = {"recipe": "linux-client", "archive": "tar.xz", "also": ["deb", "rpm", "pkg.tar.zst"], "exe": ""}
 WINDOWS = {"recipe": "windows-headless", "archive": "zip", "exe": ".exe"}
+# ADR-0012: the client and the server in one zip, and its Inno Setup installer.
+WINDOWS_CLIENT = {"recipe": "windows-client", "archive": "zip", "also": ["exe"], "exe": ".exe"}
 RECIPES = {
     ("linux-amd64", "headless-server"): {**LINUX, "runner": "ubuntu-24.04", "platform": "linux-x64",
                                          "file_arch": "x86-64"},
@@ -82,6 +84,11 @@ RECIPES = {
                                            "file_arch": "x64"},
     ("windows-arm64", "headless-server"): {**WINDOWS, "runner": "windows-11-arm", "platform": "windows-arm64",
                                            "file_arch": "ARM64"},
+    # `triplet` is the vcpkg triplet that builds the client's OpenAL Soft and FFmpeg.
+    ("windows-amd64", "mp-client"): {**WINDOWS_CLIENT, "runner": "windows-2025", "platform": "windows-x64",
+                                     "file_arch": "x64", "triplet": "x64-windows"},
+    ("windows-arm64", "mp-client"): {**WINDOWS_CLIENT, "runner": "windows-11-arm", "platform": "windows-arm64",
+                                     "file_arch": "ARM64", "triplet": "arm64-windows"},
     # file_arch is the Mach-O architecture; the symbols ship as a dSYM bundle.
     ("macos-arm64", "headless-server"): {"recipe": "macos-headless", "archive": "tar.xz", "exe": "",
                                          "runner": "macos-26", "platform": "macos-arm64", "file_arch": "arm64"},
@@ -202,7 +209,9 @@ def notes(legs: list[dict], tag: str, commit: str, run_url: str, repo: Path, lim
     out = [f"# KisakCOD {version}", "",
            f"Built from [`{commit[:12]}`]({REPO_URL}/commit/{commit}) by [this workflow run]({run_url}).", "",
            "## Packages", "", "| Package | Target | Role | Tier | Level |", "| --- | --- | --- | --- | --- |"]
-    out += ["| " + ", ".join(f"`{leg['stem']}.{ext}`" for ext in [leg["archive"], *leg.get("also", [])])
+    # An installer (`exe`) is named <stem>-setup.exe.
+    out += ["| " + ", ".join(f"`{leg['stem']}{'-setup' * (ext == 'exe')}.{ext}`"
+                             for ext in [leg["archive"], *leg.get("also", [])])
             + f" | {leg['target']} | {leg['role']} | {leg['tier']} | `{leg['level']}` |" for leg in legs]
     out += ["", "Each package row has a `-debugsymbols` archive in the row's first format, which serves every "
             + "format in the row (extract it beside the binaries), and a "

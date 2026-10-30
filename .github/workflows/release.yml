@@ -11,7 +11,9 @@
 #              (tar.xz on Linux and macOS, zip on Windows), then smoke-run
 #              the binary unpacked from the package. A Linux client leg
 #              (ADR-0012) ships the client and the server with their pinned
-#              runtime as .tar.xz, .deb, .rpm and Arch packages
+#              runtime as .tar.xz, .deb, .rpm and Arch packages; a Windows
+#              client leg ships them with their DLLs as a zip and an Inno
+#              Setup installer (scripts/ci/package-windows.ps1)
 #   checksums  SHA256SUMS over every packaged file
 #   notes      release notes: packages, tiers, changes since the last release
 #   publish    the only job with contents: write and it checks nothing out:
@@ -163,7 +165,8 @@ jobs:
     name: Build / ${{ matrix.label }}
     needs: metadata
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
+    # A Windows client leg builds two trees, and vcpkg's FFmpeg when its cache is cold.
+    timeout-minutes: ${{ matrix.recipe == 'windows-client' && 120 || 90 }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.metadata.outputs.matrix) }}
@@ -194,6 +197,29 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends clang lld ninja-build
 
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        if: matrix.recipe == 'windows-client'
+        with:
+          dotnet-version: 8.x
+
+      - uses: ./.github/actions/setup-vcpkg
+        if: matrix.recipe == 'windows-client'
+        with:
+          triplet: ${{ matrix.triplet }}
+
+      # ci.yml's windows-client-64 steps: the D3DX headers only, no library.
+      - name: Restore the DirectX SDK headers
+        if: matrix.recipe == 'windows-client'
+        shell: pwsh
+        env:
+          NUGET_PACKAGES: ${{ runner.temp }}\nuget
+          DXSDK_VERSION: 9.29.952.8
+        run: |
+          dotnet new classlib -o "$env:RUNNER_TEMP\dxsdk"
+          dotnet add "$env:RUNNER_TEMP\dxsdk" package Microsoft.DXSDK.D3DX --version $env:DXSDK_VERSION
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          "DXSDK_NATIVE=$env:NUGET_PACKAGES\microsoft.dxsdk.d3dx\$env:DXSDK_VERSION\build\native" >> $env:GITHUB_ENV
+
       # ci.yml's linux-headless configure, with debug info and a build ID.
       - name: Configure
         if: matrix.recipe == 'linux-headless'
@@ -218,6 +244,23 @@ jobs:
           -DBUILD_TESTING=OFF
           "-DCMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO=/DEBUG /INCREMENTAL:NO /OPT:REF /OPT:ICF"
 
+      # ci.yml's windows-client-64 configure, linked as the headless legs link.
+      # The package also holds the headless server (ADR-0012), configured in
+      # its own tree as the windows-headless legs configure it. Both trees
+      # write to bin/RelWithDebInfo.
+      - name: Configure
+        if: matrix.recipe == 'windows-client'
+        shell: pwsh
+        run: |
+          $link = '-DCMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO=/DEBUG /INCREMENTAL:NO /OPT:REF /OPT:ICF'
+          $common = '-DKISAK_BUILD_SP=OFF', '-DKISAK_ENABLE_STEAM=OFF', '-DKISAK_ENABLE_X86_MMX_SKINNING=OFF',
+            '-DKISAK_ALLOW_UNSUPPORTED_64BIT=ON', '-DBUILD_TESTING=OFF', $link
+          cmake -S . -B build-release -A $env:FILE_ARCH -DCICD=ON "-DDXSDK_DIR=$env:DXSDK_NATIVE" `
+            -DKISAK_BUILD_MP=ON -DKISAK_BUILD_DEDICATED=OFF @common
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake -S . -B build-dedi -A $env:FILE_ARCH -DKISAK_BUILD_MP=OFF -DKISAK_BUILD_DEDICATED=ON `
+            -DKISAK_DEDI_HEADLESS=ON @common
+
       # ci.yml's macos-headless configure, with debug info. The DWARF stays in
       # the object files until dsymutil gathers it into the dSYM.
       - name: Configure
@@ -233,6 +276,23 @@ jobs:
       - name: Build
         if: matrix.recipe != 'linux-client'
         run: cmake --build build-release --config RelWithDebInfo --target "$BINARY" --parallel
+
+      - name: Build the headless server
+        if: matrix.recipe == 'windows-client'
+        run: cmake --build build-dedi --config RelWithDebInfo --target KisakCOD-dedi --parallel
+
+      - name: Check the debug symbols against the binaries
+        if: matrix.recipe == 'windows-client'
+        run: |
+          mkdir -p "symbols/${STEM}"
+          # Each exe's CodeView record must name its PDB and carry its GUID and age.
+          check() {
+            cp "bin/RelWithDebInfo/$1.pdb" "symbols/${STEM}/"
+            python scripts/ci/release_meta.py pdb-id --exe "bin/RelWithDebInfo/$1.exe" \
+              --pdb "symbols/${STEM}/$1.pdb" | tr -d '\r'
+          }
+          check "$BINARY" >> "$GITHUB_ENV"
+          check KisakCOD-dedi | sed 's/^BUILD_ID=/SERVER_BUILD_ID=/' >> "$GITHUB_ENV"
 
       - name: Split the debug symbols and check both halves
         if: matrix.recipe == 'linux-headless'
@@ -376,6 +436,104 @@ jobs:
           diff <(names "dist/${STEM}-debugsymbols.zip") <(printf '%s\n' "${STEM}/${BINARY}.pdb")
           python -m zipfile -e "dist/${STEM}.zip" unpacked
           python scripts/ci/headless_smoke.py "unpacked/${STEM}/${BINARY}.exe"
+
+      # package-windows.ps1 stages the client, the server, the DLLs they load
+      # and the notices, then writes the zip and the installer from that
+      # folder. The notices name each bundled library at the version vcpkg built.
+      - name: Package
+        if: matrix.recipe == 'windows-client'
+        shell: pwsh
+        env:
+          TARGET: ${{ matrix.target }}
+          TRIPLET: ${{ matrix.triplet }}
+        run: |
+          $installed = "build-release/vcpkg_installed/$env:TRIPLET"
+          $version = {
+            param($port)
+            ((Get-Content -Raw "$installed/share/$port/vcpkg.spdx.json" | ConvertFrom-Json).packages[0].versionInfo -split '#')[0]
+          }
+          $openal, $ffmpeg = (& $version openal-soft), (& $version ffmpeg)
+          $notices = "$env:RUNNER_TEMP/THIRD-PARTY-NOTICES.txt"
+          python scripts/packaging/third_party_notices.py --out $notices --client `
+            --component "OpenAL Soft $openal (OpenAL32.dll)=$installed/share/openal-soft/copyright" `
+            --component "FFmpeg $ffmpeg (avcodec, avformat and avutil DLLs)=$installed/share/ffmpeg/copyright" `
+            --component "Microsoft Visual C++ runtime (vcruntime140, vcruntime140_1 and msvcp140 DLLs)=scripts/platform/windows/vcruntime-notice.txt"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          ./scripts/ci/package-windows.ps1 -Version $env:VERSION -Arch ($env:TARGET -replace '^windows-') `
+            -Stem $env:STEM -ClientExe "bin/RelWithDebInfo/$env:BINARY.exe" -DediExe bin/RelWithDebInfo/KisakCOD-dedi.exe `
+            -VcpkgInstalled $installed -Notices $notices -OutDir pkg -Installer -Iscc $iscc
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Move-Item "pkg/$env:STEM.zip", "pkg/$env:STEM-setup.exe" dist
+          # ISCC.exe carries no version resource; Inno Setup's uninstall entry has it.
+          $inno = foreach ($root in 'HKLM:\SOFTWARE\WOW6432Node', 'HKLM:\SOFTWARE', 'HKCU:\SOFTWARE') {
+            $key = "$root\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1"
+            if (Test-Path $key) { (Get-ItemProperty $key).DisplayVersion }
+          }
+          "OPENAL_VERSION=$openal", "FFMPEG_VERSION=$ffmpeg",
+            "VC_RUNTIME_VERSION=$((Get-Item "pkg/$env:STEM/vcruntime140.dll").VersionInfo.ProductVersion)",
+            "ISCC_VERSION=$(@($inno)[0])" >> $env:GITHUB_ENV
+
+      - name: Package the debug symbols and the provenance
+        if: matrix.recipe == 'windows-client'
+        run: |
+          requires="64-bit Windows 10 or newer on ${FILE_ARCH}; the Visual C++ runtime DLLs ship beside the executables"
+          python scripts/ci/release_meta.py zip --root symbols --stem "$STEM" --epoch "$(git log -1 --format=%ct)" \
+            --out "dist/${STEM}-debugsymbols.zip"
+          compiler="$(sed -n 's/^set(CMAKE_CXX_COMPILER_VERSION "\(.*\)")$/MSVC \1/p' \
+            build-release/CMakeFiles/*/CMakeCXXCompiler.cmake)"
+          jq -n --arg tag "$TAG" --arg commit "$COMMIT" --argjson leg "$LEG" --arg build_id "$BUILD_ID" \
+            --arg server_build_id "$SERVER_BUILD_ID" --arg compiler "$compiler" --arg cmake "$(cmake --version | sed -n 1p)" \
+            --arg tracy "$(git -C build-release/_deps/tracy-src rev-parse HEAD)" \
+            --arg openal "$OPENAL_VERSION" --arg ffmpeg "$FFMPEG_VERSION" --arg vc_runtime "$VC_RUNTIME_VERSION" \
+            --arg inno_setup "$ISCC_VERSION" --arg vcpkg "$(jq -r '."builtin-baseline"' vcpkg.json)" \
+            --arg image "${ImageOS:-}-${ImageVersion:-}" --arg requires "$requires" --arg run "$GITHUB_RUN_ID" \
+            '{tag: $tag, commit: $commit, target: $leg.target, role: $leg.role, level: $leg.level,
+              tier: $leg.tier, config: "RelWithDebInfo", build_id: $build_id, server_build_id: $server_build_id,
+              compiler: $compiler, cmake: $cmake, tracy: $tracy,
+              bundled: {openal_soft: $openal, ffmpeg: $ffmpeg, vc_runtime: $vc_runtime, vcpkg_baseline: $vcpkg},
+              inno_setup: $inno_setup, runner_image: $image, requires: $requires,
+              workflow_run: $run}' > "dist/${STEM}-provenance.json"
+
+      # The zip must hold exactly the staged folder; its server must run; the
+      # installer must install the same files per-user, register its uninstall
+      # entry, and remove both again.
+      - name: Smoke-run the packages
+        if: matrix.recipe == 'windows-client'
+        shell: pwsh
+        run: |
+          $entries = { param($zip) $z = [IO.Compression.ZipFile]::OpenRead($zip); try { $z.Entries.FullName } finally { $z.Dispose() } }
+          $staged = Get-ChildItem "pkg/$env:STEM" -File | ForEach-Object { "$env:STEM/$($_.Name)" } | Sort-Object
+          $zipped = & $entries "dist/$env:STEM.zip" | Sort-Object
+          if (Compare-Object $staged $zipped -CaseSensitive) { throw "the zip differs from the staged folder" }
+          foreach ($file in "$env:BINARY.exe", 'KisakCOD-dedi.exe', 'KisakCOD-README.txt', 'KisakCOD-LICENSE.txt',
+                            'KisakCOD-THIRD-PARTY-NOTICES.txt', 'OpenAL32.dll', 'vcruntime140.dll') {
+            if ("$env:STEM/$file" -cnotin $zipped) { throw "the zip has no $file" }
+          }
+          $symbols = & $entries "dist/$env:STEM-debugsymbols.zip" | Sort-Object
+          if (Compare-Object @("$env:STEM/KisakCOD-dedi.pdb", "$env:STEM/$env:BINARY.pdb") $symbols -CaseSensitive) {
+            throw "the symbols zip holds $($symbols -join ', ')"
+          }
+          $unpacked = "$env:RUNNER_TEMP/unpacked"
+          [IO.Compression.ZipFile]::ExtractToDirectory("dist/$env:STEM.zip", $unpacked)
+          python scripts/ci/headless_smoke.py "$unpacked/$env:STEM/KisakCOD-dedi.exe"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+          $dir = "$env:RUNNER_TEMP\installed"
+          $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{D9EC4207-97F5-5FF0-A12C-5B57B91933B0}_is1'
+          $setup = Start-Process "$PWD\dist\$env:STEM-setup.exe" -Wait -PassThru -ArgumentList '/VERYSILENT',
+            '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/CURRENTUSER', "/DIR=`"$dir`"", "/LOG=`"$env:RUNNER_TEMP\setup.log`""
+          if ($setup.ExitCode) { Get-Content "$env:RUNNER_TEMP\setup.log"; throw "setup exited $($setup.ExitCode)" }
+          $hashes = { param($root) Get-ChildItem $root -File | Where-Object Name -notlike 'unins000.*' |
+            ForEach-Object { "$($_.Name) $((Get-FileHash $_.FullName).Hash)" } | Sort-Object }
+          if (Compare-Object (& $hashes "$unpacked/$env:STEM") (& $hashes $dir)) { throw "the installed files differ from the zip" }
+          if ((Get-ItemProperty $key).DisplayVersion -ne $env:VERSION) { throw "no uninstall entry for $env:VERSION" }
+          # The uninstaller runs on from a copy in %TEMP%, so wait for the folder to go.
+          Start-Process "$dir\unins000.exe" -Wait -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
+          for ($i = 0; $i -lt 60 -and (Test-Path $dir); ++$i) { Start-Sleep 1 }
+          if (Test-Path $dir) { throw "uninstalling left $((Get-ChildItem -Recurse -Name $dir) -join ', ')" }
+          if (Test-Path $key) { throw "uninstalling left the uninstall entry" }
 
       - name: Package
         if: matrix.recipe == 'macos-headless'
