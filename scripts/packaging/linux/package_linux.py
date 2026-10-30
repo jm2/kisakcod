@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import io
 import os
+import re
 import shutil
 import sys
 import tarfile
@@ -45,7 +46,17 @@ ARCHES = {
 
 # Everything else the client needs is in lib/, so a package depends only on
 # the host's C/C++ runtime and Vulkan loader (and its GPU driver).
-DEB_DEPENDS = "libc6, libstdc++6, libgcc-s1, libatomic1, libvulkan1"
+DEB_DEPENDS = "libstdc++6, libgcc-s1, libatomic1, libvulkan1"
+# The GLIBC_x.y symbol versions an ELF needs are plain strings in its .dynstr.
+GLIBC_VERSION = re.compile(rb"GLIBC_(2\.[0-9]+(?:\.[0-9]+)?)")
+
+
+def glibc_floor(tree: Path) -> str:
+    """The newest GLIBC_ symbol version any file under tree needs, as "2.38"."""
+    found = {tuple(int(n) for n in m.decode().split("."))
+             for path in tree.rglob("*") if path.is_file() and not path.is_symlink()
+             for m in GLIBC_VERSION.findall(path.read_bytes())}
+    return ".".join(map(str, max(found))) if found else ""
 ARCH_DEPENDS = ("glibc", "gcc-libs", "vulkan-icd-loader")
 # The bundled runtime's sonames, which rpmbuild must not turn into Requires.
 BUNDLED = r"^(libSDL3|libopenal|libavformat|libavcodec|libavutil|libdxvk_d3d9)\\.so.*$"
@@ -202,9 +213,11 @@ def make_deb(args: argparse.Namespace, work: Path) -> Path:
     tree = work / "deb"
     system_tree(args, tree)
     size_kb = sum(p.stat().st_size for p in tree.rglob("*") if p.is_file()) // 1024
+    floor = glibc_floor(tree)
+    libc = f"libc6 (>= {floor})" if floor else "libc6"
     control = (f"Package: {NAME}\nVersion: {args.version}\nArchitecture: {debarch}\n"
                f"Maintainer: KisakCOD Contributors <noreply@github.com>\nInstalled-Size: {size_kb}\n"
-               f"Depends: {DEB_DEPENDS}\nSection: games\nPriority: optional\nHomepage: {URL}\n"
+               f"Depends: {libc}, {DEB_DEPENDS}\nSection: games\nPriority: optional\nHomepage: {URL}\n"
                f"Description: {SUMMARY}\n Needs the player's own Steam Call of Duty 4 1.8 data.\n")
     blobs = []
     for label, build in (("control", lambda t: t.addfile(*_mem("./control", control.encode(), args.epoch))),
