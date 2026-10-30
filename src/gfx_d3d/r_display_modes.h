@@ -27,3 +27,9 @@ void R_ChooseFullscreenSize(
     const _D3DDISPLAYMODE &desktop,
     int *width,
     int *height);
+
+// Whether Alt+Enter's desktop fullscreen still holds for this window restart.
+// A windowed restart ends it. The first fullscreen restart after Alt+Enter
+// records r_mode in *atDesktopMode (-1 until then); a later restart with a
+// different r_mode, from the options menu or the console, ends it (#950).
+bool R_KeepFullscreenAtDesktop(bool atDesktop, bool fullscreen, int mode, int *atDesktopMode);
