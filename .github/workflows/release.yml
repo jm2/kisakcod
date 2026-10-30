@@ -231,6 +231,7 @@ jobs:
 
       # --config picks the Visual Studio configuration; Ninja ignores it.
       - name: Build
+        if: matrix.recipe != 'linux-client'
         run: cmake --build build-release --config RelWithDebInfo --target "$BINARY" --parallel
 
       - name: Split the debug symbols and check both halves
