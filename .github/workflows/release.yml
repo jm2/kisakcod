@@ -13,7 +13,8 @@
 #              (ADR-0012) ships the client and the server with their pinned
 #              runtime as .tar.xz, .deb, .rpm and Arch packages; a Windows
 #              client leg ships them with their DLLs as a zip and an Inno
-#              Setup installer (scripts/ci/package-windows.ps1)
+#              Setup installer (scripts/ci/package-windows.ps1); the macOS
+#              client leg ships KisakCOD.app and the server in a .dmg
 #   checksums  SHA256SUMS over every packaged file
 #   notes      release notes: packages, tiers, changes since the last release
 #   publish    the only job with contents: write and it checks nothing out:
@@ -166,7 +167,7 @@ jobs:
     needs: metadata
     runs-on: ${{ matrix.runner }}
     # A Windows client leg builds two trees, and vcpkg's FFmpeg when its cache is cold.
-    timeout-minutes: ${{ matrix.recipe == 'windows-client' && 120 || 90 }}
+    timeout-minutes: ${{ matrix.recipe == 'macos-client' && 180 || matrix.recipe == 'windows-client' && 120 || 90 }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.metadata.outputs.matrix) }}
@@ -274,7 +275,7 @@ jobs:
 
       # --config picks the Visual Studio configuration; Ninja ignores it.
       - name: Build
-        if: matrix.recipe != 'linux-client'
+        if: matrix.recipe != 'linux-client' && matrix.recipe != 'macos-client'
         run: cmake --build build-release --config RelWithDebInfo --target "$BINARY" --parallel
 
       - name: Build the headless server
@@ -659,6 +660,161 @@ jobs:
           arch_files="$(tar --zstd -tf "dist/${STEM}.pkg.tar.zst")"
           grep -qx /opt/kisakcod/KisakCOD-mp <<<"$rpm_files" || fail "the .rpm has no client"
           grep -qx opt/kisakcod/KisakCOD-mp <<<"$arch_files" || fail "the Arch package has no client"
+
+      # ADR-0012: the macOS client ships as a dmg holding KisakCOD.app and
+      # the headless server. Homebrew tools are prerequisites, not pins
+      # (scripts/platform/macos/README.md); the provenance records them.
+      - name: Install the macOS client build tools
+        if: matrix.recipe == 'macos-client'
+        run: |
+          brew install llvm spirv-llvm-translator glslang bison flex meson ninja pkgconf
+          # bison and flex are keg-only; mesa needs a newer bison than /usr/bin's.
+          # mesa_clc links LLVMSPIRVLib from spirv-llvm-translator.
+          echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix flex)/bin" >> "$GITHUB_PATH"
+          python3 -m venv "${RUNNER_TEMP}/mesa-venv"
+          "${RUNNER_TEMP}/mesa-venv/bin/pip" install --quiet packaging==25.0 Mako==1.4.3 PyYAML==6.0.3
+
+      # The runtime prefix (zstd, SDL3, OpenAL Soft, FFmpeg, the Vulkan loader)
+      # and KosmicKrisp from the pinned tarballs. One external project at a
+      # time, each with its own parallel build: running them side by side
+      # oversubscribes the runner. Each step has its own timeout so the step
+      # timings show where the time goes.
+      - name: "Runtime: configure and the libraries"
+        if: matrix.recipe == 'macos-client'
+        timeout-minutes: 30
+        run: |
+          echo "runner: $(sysctl -n hw.ncpu) cores, $(( $(sysctl -n hw.memsize) / 1073741824 )) GiB"
+          runtime="${RUNNER_TEMP}/runtime"
+          echo "RUNTIME=$runtime" >> "$GITHUB_ENV"
+          cmake -S scripts/platform/macos/runtime -B "$runtime" \
+            -DKISAK_SOURCE_CACHE="${RUNNER_TEMP}/runtime-cache" \
+            -DKISAK_MESA_PYTHON_BIN_DIR="${RUNNER_TEMP}/mesa-venv/bin"
+          for project in zstd vulkan_headers spirv_headers vulkan_loader sdl3 openal ffmpeg; do
+            start=$SECONDS
+            cmake --build "$runtime" --target "kisak_runtime_${project}"
+            echo "::notice::runtime ${project}: $((SECONDS - start)) s"
+          done
+
+      - name: "Runtime: SPIRV-Tools"
+        if: matrix.recipe == 'macos-client'
+        timeout-minutes: 30
+        run: cmake --build "$RUNTIME" --target kisak_runtime_spirv_tools
+
+      - name: "Runtime: mesa (KosmicKrisp) and the license texts"
+        if: matrix.recipe == 'macos-client'
+        timeout-minutes: 45
+        run: cmake --build "$RUNTIME" --target runtime
+
+      # The server and the client at RelWithDebInfo; the client configure
+      # binds the runtime prefix and its build fetches and builds dxvk. Both
+      # presets generate Makefiles, where a bare --parallel is an unbounded
+      # make -j that swaps the runner, so every build names the core count.
+      # dxvk builds first and alone: its ninja picks its own job count.
+      - name: Build the server
+        if: matrix.recipe == 'macos-client'
+        timeout-minutes: 30
+        run: |
+          cmake --preset macos-arm64-dedi -B build-dedi -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          cmake --build build-dedi --target KisakCOD-dedi --parallel "$(sysctl -n hw.ncpu)"
+
+      - name: Build the client
+        if: matrix.recipe == 'macos-client'
+        timeout-minutes: 45
+        run: |
+          cmake --preset macos-arm64-client -B build-release -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=26.0 -DCMAKE_PREFIX_PATH="${RUNTIME}/prefix" \
+            -DKISAK_MACOS_BUNDLE=ON -DKISAK_BUNDLE_RUNTIME_PREFIX="${RUNTIME}/prefix" \
+            -DKISAK_BUNDLE_MESA_PREFIX="${RUNTIME}/mesa-prefix" \
+            -DKISAK_BUNDLE_DXVK_LIB="${PWD}/build-release/dxvk-macos/lib/libdxvk_d3d9.0.dylib" \
+            -DKISAK_BUNDLE_DEDI="${PWD}/bin/KisakCOD-dedi" -DKISAK_PACKAGE_VERSION="$VERSION" \
+            -DKISAK_BUNDLE_DSYM="${PWD}/symbols/${STEM}/KisakCOD-mp.dSYM"
+          cmake --build build-release --target kisak_dxvk_macos
+          cmake --build build-release --target KisakCOD-mp --parallel "$(sysctl -n hw.ncpu)"
+
+      # The server's DWARF goes into a dSYM before it is stripped; stripping
+      # voids the ad-hoc signature, so it is signed again. The client's dSYM
+      # comes from bundle.sh (KISAK_BUNDLE_DSYM): the dmg target relinks the
+      # client, so only the bundled copy can be stripped.
+      - name: Split the server's debug symbols into a dSYM
+        if: matrix.recipe == 'macos-client'
+        timeout-minutes: 15
+        run: |
+          mkdir -p "symbols/${STEM}"
+          dsymutil bin/KisakCOD-dedi -o "symbols/${STEM}/KisakCOD-dedi.dSYM"
+          strip -S -x bin/KisakCOD-dedi
+          codesign --force --sign - bin/KisakCOD-dedi
+
+      # bundle.sh assembles and signs the app; package_dmg.sh checks it on the
+      # mounted image.
+      - name: Bundle the app and package the dmg
+        if: matrix.recipe == 'macos-client'
+        timeout-minutes: 15
+        run: |
+          cmake --build build-release --target dmg --parallel "$(sysctl -n hw.ncpu)"
+          mkdir -p dist
+          mv "build-release/dist/kisakcod-${VERSION}-macos-arm64.dmg" "dist/${STEM}.dmg"
+
+      # Check the dmg a player downloads: the binaries on the image match
+      # their dSYMs by UUID and keep no debug map, and the server passes the
+      # assetless smoke run.
+      - name: Check the dmg against the symbols and smoke-run the server
+        if: matrix.recipe == 'macos-client'
+        run: |
+          fail() { echo "::error::$*" >&2; exit 1; }
+          uuid() { dwarfdump --uuid "$1" | awk -v arch="($FILE_ARCH)" '$3 == arch {print $2}'; }
+          mnt="${RUNNER_TEMP}/dmg"
+          mkdir -p "$mnt"
+          hdiutil attach -quiet -readonly -nobrowse -mountpoint "$mnt" "dist/${STEM}.dmg"
+          trap 'hdiutil detach -quiet "$mnt"' EXIT
+          # The image is closed: every load command path (LC_*_DYLIB names and
+          # LC_RPATH paths) resolves inside it or in the OS, never in Homebrew,
+          # /usr/local or a build tree, or it fails on a Mac without them.
+          checked=0
+          while IFS= read -r -d '' f; do
+            file -b "$f" | grep -q '^Mach-O' || continue
+            checked=$((checked + 1))
+            bad="$(otool -l "$f" | awk '$1 == "name" || $1 == "path" {print $2}' |
+                   grep -vE '^(@executable_path|@loader_path|@rpath)/|^@loader_path$|^/usr/lib/|^/System/Library/' || true)"
+            [ -z "$bad" ] || fail "${f#"${mnt}/"} loads from outside the image and the OS: ${bad//$'\n'/ }"
+          done < <(find "${mnt}/KisakCOD.app" "${mnt}/Dedicated Server" -type f -print0)
+          [ "$checked" -ge 3 ] || fail "only ${checked} Mach-O files on the image"
+          echo "::notice::the image is closed: ${checked} Mach-O files load only from the image and the OS"
+          for pair in "KisakCOD.app/Contents/MacOS/KisakCOD-mp:KisakCOD-mp" \
+                      "Dedicated Server/KisakCOD-dedi:KisakCOD-dedi"; do
+            bin="${mnt}/${pair%%:*}" name="${pair##*:}"
+            dsym="symbols/${STEM}/${name}.dSYM"
+            symbols="$(nm -ap "$bin")"
+            if grep -qE ' - [0-9a-f]{2} [0-9a-f]{4} +(SO|OSO|FUN) ' <<<"$symbols"; then
+              fail "${name} on the image keeps its debug map"
+            fi
+            dwarf_sections="$(otool -l "${dsym}/Contents/Resources/DWARF/${name}")"
+            grep -q 'sectname __debug_info' <<<"$dwarf_sections" || fail "the ${name} dSYM has no __debug_info"
+            id="$(uuid "$bin")"
+            if [ -z "$id" ] || [ "$id" != "$(uuid "$dsym")" ]; then fail "${name} and its dSYM UUIDs differ"; fi
+            scripts/ci/verify-artifact-arch.sh "$FILE_ARCH" "$bin"
+          done
+          python3 scripts/ci/headless_smoke.py "${mnt}/Dedicated Server/KisakCOD-dedi"
+          echo "BUILD_ID=$(uuid "${mnt}/KisakCOD.app/Contents/MacOS/KisakCOD-mp")" >> "$GITHUB_ENV"
+
+      - name: Package the symbols and the provenance
+        if: matrix.recipe == 'macos-client'
+        run: |
+          epoch="$(git log -1 --format=%ct)"
+          python3 scripts/ci/release_meta.py tarxz --root symbols --stem "$STEM" --epoch "$epoch" \
+            --out "dist/${STEM}-debugsymbols.tar.xz"
+          brew_tools="$(brew list --versions llvm spirv-llvm-translator glslang bison flex meson ninja pkgconf)"
+          venv="$("${RUNNER_TEMP}/mesa-venv/bin/pip" freeze --all)"
+          jq -n --arg tag "$TAG" --arg commit "$COMMIT" --argjson leg "$LEG" --arg build_id "$BUILD_ID" \
+            --arg compiler "$(clang --version | sed -n 1p)" --arg cmake "$(cmake --version | sed -n 1p)" \
+            --arg sdk "macOS SDK $(xcrun --show-sdk-version)" --arg brew "$brew_tools" --arg venv "$venv" \
+            --arg image "${ImageOS:-}-${ImageVersion:-}" --arg run "$GITHUB_RUN_ID" \
+            '{tag: $tag, commit: $commit, target: $leg.target, role: $leg.role, level: $leg.level,
+              tier: $leg.tier, config: "RelWithDebInfo", build_id: $build_id, compiler: $compiler,
+              sdk: $sdk, cmake: $cmake, runtime: "scripts/platform/macos/runtime",
+              build_tools: ($brew | split("\n")), mesa_python: ($venv | split("\n")),
+              runner_image: $image, requires: "macOS 26 or newer on Apple silicon; ad-hoc signed, not notarized",
+              workflow_run: $run}' > "dist/${STEM}-provenance.json"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

@@ -1,6 +1,9 @@
 ##### Vulkan-Headers, for the bundled loader (ADR-0011) #####
 # Header-only source dependency of Vulkan-Loader. Pinned by tarball hash because
-# the headers decide what the shipped loader is compiled against.
+# the headers decide what the shipped loader is compiled against. Installed by
+# its own CMake so the prefix carries share/cmake/VulkanHeaders: the loader's
+# find_package(VulkanHeaders) needs it, and without it a Homebrew copy of the
+# headers satisfied the loader silently.
 ExternalProject_Add(kisak_runtime_vulkan_headers
     URL https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/vulkan-sdk-1.4.363.0.tar.gz
     URL_HASH SHA256=4a078be12bef21cfebc09d878b77a63cff9d68f899254a0b00d0e37ef73e7f7e
@@ -8,10 +11,11 @@ ExternalProject_Add(kisak_runtime_vulkan_headers
     DOWNLOAD_DIR ${KISAK_SOURCE_CACHE}
     DOWNLOAD_NO_PROGRESS ON
     UPDATE_COMMAND ""
-    CONFIGURE_COMMAND ""
-    BUILD_COMMAND ""
-    INSTALL_COMMAND ${CMAKE_COMMAND} -E copy_directory
-        <SOURCE_DIR>/include ${KISAK_RUNTIME_PREFIX}/include
+    CMAKE_ARGS
+        -DCMAKE_INSTALL_PREFIX=${KISAK_RUNTIME_PREFIX}
+        -DVULKAN_HEADERS_ENABLE_MODULE=OFF
+        -DVULKAN_HEADERS_ENABLE_TESTS=OFF
+        -DBUILD_TESTS=OFF
     BUILD_BYPRODUCTS ${KISAK_RUNTIME_PREFIX}/include/vulkan/vulkan.h
     LOG_INSTALL ON
 )

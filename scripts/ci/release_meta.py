@@ -67,6 +67,9 @@ SHA_RE = re.compile(r"[0-9a-f]{40}", re.ASCII)
 LINUX = {"recipe": "linux-headless", "archive": "tar.xz", "exe": ""}
 # ADR-0012: the client and the server in one package, in every Linux format.
 LINUX_CLIENT = {"recipe": "linux-client", "archive": "tar.xz", "also": ["deb", "rpm", "pkg.tar.zst"], "exe": ""}
+# ADR-0012: KisakCOD.app and the headless server in one dmg; the dSYMs ship
+# as a tar.xz.
+MACOS_CLIENT = {"recipe": "macos-client", "archive": "dmg", "exe": ""}
 WINDOWS = {"recipe": "windows-headless", "archive": "zip", "exe": ".exe"}
 # ADR-0012: the client and the server in one zip, and its Inno Setup installer.
 WINDOWS_CLIENT = {"recipe": "windows-client", "archive": "zip", "also": ["exe"], "exe": ".exe"}
@@ -92,6 +95,8 @@ RECIPES = {
     # file_arch is the Mach-O architecture; the symbols ship as a dSYM bundle.
     ("macos-arm64", "headless-server"): {"recipe": "macos-headless", "archive": "tar.xz", "exe": "",
                                          "runner": "macos-26", "platform": "macos-arm64", "file_arch": "arm64"},
+    ("macos-arm64", "mp-client"): {**MACOS_CLIENT, "runner": "macos-26", "platform": "macos-arm64",
+                                   "file_arch": "arm64"},
 }
 # role -> (asset name part, binary, description)
 ROLES = {
@@ -213,8 +218,8 @@ def notes(legs: list[dict], tag: str, commit: str, run_url: str, repo: Path, lim
     out += ["| " + ", ".join(f"`{leg['stem']}{'-setup' * (ext == 'exe')}.{ext}`"
                              for ext in [leg["archive"], *leg.get("also", [])])
             + f" | {leg['target']} | {leg['role']} | {leg['tier']} | `{leg['level']}` |" for leg in legs]
-    out += ["", "Each package row has a `-debugsymbols` archive in the row's first format, which serves every "
-            + "format in the row (extract it beside the binaries), and a "
+    out += ["", "Each package row has a `-debugsymbols` archive (.tar.xz for a dmg row, otherwise the row's "
+            + "first format), which serves every format in the row (extract it beside the binaries), and a "
             + f"`-provenance.json`. `kisakcod-{version}-source.tar.gz` is the commit's source without the vendor "
             + "runtime binaries (Steamworks). `SHA256SUMS.txt` covers every file.", "", "## Status", ""]
     out += [f"- **{leg['label']}**: at capability level `{leg['level']}`, {LEVEL_NOTES[leg['level']]}" for leg in legs]

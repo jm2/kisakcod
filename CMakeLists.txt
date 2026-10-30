@@ -50,6 +50,8 @@ set(KISAK_BUNDLE_DXVK_LIB "" CACHE FILEPATH
     "KISAK_MACOS_BUNDLE: libdxvk_d3d9.0.dylib to bundle")
 set(KISAK_BUNDLE_DEDI "" CACHE FILEPATH
     "KISAK_MACOS_BUNDLE: headless KisakCOD-dedi (its own build) for the dmg target")
+set(KISAK_BUNDLE_DSYM "" CACHE FILEPATH
+    "KISAK_MACOS_BUNDLE: write the client's dSYM here and strip the bundled client")
 set(KISAK_PACKAGE_VERSION "0.1.0" CACHE STRING "Version in the release package names (ADR-0012)")
 set(_KISAK_DEFAULT_X86_MMX_SKINNING OFF)
 if (CMAKE_SIZEOF_VOID_P EQUAL 4 AND NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM|arm|aarch|AARCH)")
@@ -232,6 +234,10 @@ if (KISAK_MACOS_BUNDLE AND APPLE)
     if (NOT _kisak_dxvk_license)
         message(FATAL_ERROR "KISAK_MACOS_BUNDLE=ON needs the pinned dxvk (KISAK_DXVK_MACOS) for its license text")
     endif()
+    set(_kisak_bundle_dsym_args)
+    if (KISAK_BUNDLE_DSYM)
+        set(_kisak_bundle_dsym_args --dsym ${KISAK_BUNDLE_DSYM})
+    endif()
     add_custom_target(bundle
         COMMAND ${CMAKE_COMMAND} -E env
             bash ${CMAKE_SOURCE_DIR}/scripts/platform/macos/bundle.sh
@@ -242,6 +248,7 @@ if (KISAK_MACOS_BUNDLE AND APPLE)
             --dxvk-lib ${KISAK_BUNDLE_DXVK_LIB}
             --dxvk-license ${_kisak_dxvk_license}
             --version ${KISAK_PACKAGE_VERSION}
+            ${_kisak_bundle_dsym_args}
         DEPENDS KisakCOD-mp
         COMMENT "Bundling ${_kisak_bundle_app}"
         VERBATIM)

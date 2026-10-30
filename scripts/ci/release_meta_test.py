@@ -71,6 +71,13 @@ def manifest_with(levels: dict[tuple[str, str], str]) -> dict:
     return m
 
 
+def requiring_x86(levels: dict[tuple[str, str], str]) -> dict:
+    """manifest_with, with windows-x86 required: a target with no release recipes."""
+    m = manifest_with(levels)
+    next(t for t in m["targets"] if t["id"] == "windows-x86")["required"] = True
+    return m
+
+
 # Every headless cell at `links`: stable preview names, whatever the real levels are.
 HEADLESS_LINKS = manifest_with({(t["id"], "headless-server"): "links"
                                 for t in REAL_MANIFEST["targets"] if t.get("required")})
@@ -136,6 +143,14 @@ class MatrixTest(unittest.TestCase):
                           for leg in legs], [("kisakcod-1.2.3-macos-arm64-headless-preview", "macos-headless",
                                               "macos-26", "tar.xz", "", "arm64")])
 
+    def test_macos_client_leg_ships_a_dmg(self):
+        legs, missing = rm.build_matrix(manifest_with({("macos-arm64", "mp-client"): "fork_peer"}), "1.2.3")
+        self.assertEqual(missing, [])
+        self.assertEqual([(leg["stem"], leg["recipe"], leg["runner"], leg["binary"], leg["archive"],
+                           leg.get("also"), leg["file_arch"]) for leg in legs],
+                         [("kisakcod-1.2.3-macos-arm64-client-beta", "macos-client", "macos-26", "KisakCOD-mp",
+                           "dmg", None, "arm64")])
+
     def test_linux_client_legs_ship_every_format(self):
         legs, missing = rm.build_matrix(manifest_with({("linux-amd64", "mp-client"): "fork_peer",
                                                        ("linux-arm64", "mp-client"): "fork_peer"}), "1.2.3")
@@ -154,13 +169,16 @@ class MatrixTest(unittest.TestCase):
             ("linux-arm64", "headless-server"): "steam18_peer",
             ("linux-amd64", "mp-client"): "compiles",       # below links: no leg
             ("windows-x86", "headless-server"): "packaged",  # not required: no leg
-            ("macos-arm64", "mp-client"): "links",           # no recipe yet
         }), "2.0.0")
         self.assertEqual([(leg["stem"], leg["tier"]) for leg in legs], [
             ("kisakcod-2.0.0-linux-arm64-headless", "first-class"),
             ("kisakcod-2.0.0-linux-x64-headless-beta", "beta"),
         ])
-        self.assertEqual(missing, ["macos-arm64/mp-client"])
+        self.assertEqual(missing, [])
+
+    def test_a_required_cell_without_a_recipe_is_reported(self):
+        legs, missing = rm.build_matrix(requiring_x86({("windows-x86", "headless-server"): "links"}), "2.0.0")
+        self.assertEqual((legs, missing), ([], ["windows-x86/headless-server"]))
 
     def test_every_level_maps_to_a_tier(self):
         self.assertEqual([rm.tier(level) for level in rm.LEVELS[2:]],
@@ -194,12 +212,12 @@ class CliTest(unittest.TestCase):
         self.assertEqual(run.returncode, 1)
         self.assertIn("::error::", run.stderr)
         # No cell at links, or one with no recipe: no release.
-        for levels in ({}, {("macos-arm64", "mp-client"): "links"}):
+        for manifest in (manifest_with({}), requiring_x86({("windows-x86", "headless-server"): "links"})):
             with tempfile.TemporaryDirectory() as tmp:
                 path = Path(tmp) / "manifest.json"
-                path.write_text(json.dumps(manifest_with(levels)))
+                path.write_text(json.dumps(manifest))
                 run = cli("metadata", "--manifest", str(path))
-            self.assertEqual(run.returncode, 1, levels)
+            self.assertEqual(run.returncode, 1, run.stdout)
             self.assertIn("::error::", run.stderr)
 
     def test_gate_errors_when_publishing_and_warns_on_dry_run(self):
