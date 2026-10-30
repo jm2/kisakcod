@@ -178,6 +178,19 @@ On macOS 26.0 arm64, bundle of 35 MB with nine frameworks:
   instance exists, so the ICD lookup is proven statically only. Closing that
   gap is part of the K6 done-test, not of this check.
 
+## Release dmg
+
+ADR-0012's macOS package is `kisakcod-<version>-macos-arm64.dmg`. Configure the
+client as above with `-DKISAK_BUNDLE_DEDI=<headless KisakCOD-dedi>` (built from
+the `macos-arm64-dedi` preset) and run `cmake --build <dir> --target dmg`; it
+builds `bundle` first and writes `<dir>/dist/`. `package_dmg.sh` stages the
+app, an `Applications` link, `Dedicated Server/KisakCOD-dedi`, `README.txt`
+(`dmg-README.txt`: first launch past Gatekeeper, the data folder, the server
+and the firewall), `LICENSE.txt` and `THIRD-PARTY-NOTICES.txt`. It then mounts
+the image read-only and checks the copy players receive: the app's signature,
+its closure and its license texts, and a server that links only `/usr/lib` and
+`/System/Library` and has no run paths. If any check fails, no dmg is left.
+
 ## Open work
 
 - Turn the recipe above into `scripts/extern/*.cmake` pins and an
