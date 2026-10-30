@@ -101,7 +101,7 @@ class VersionTest(unittest.TestCase):
 class MatrixTest(unittest.TestCase):
     def test_real_manifest_builds_the_linux_headless_leg(self):
         legs, _ = rm.build_matrix(REAL_MANIFEST, "1.2.3")
-        leg = next(leg for leg in legs if leg["target"] == "linux-amd64")
+        leg = next(leg for leg in legs if (leg["target"], leg["role"]) == ("linux-amd64", "headless-server"))
         self.assertEqual(leg["stem"], real_stem("linux-amd64", "linux-x64", "1.2.3"))
         self.assertEqual((leg["role"], leg["recipe"], leg["runner"], leg["binary"]),
                          ("headless-server", "linux-headless", "ubuntu-24.04", "KisakCOD-dedi"))
@@ -202,7 +202,7 @@ class CliTest(unittest.TestCase):
 
     def test_readme_names_the_package_and_its_limits(self):
         legs, _ = rm.build_matrix(HEADLESS_LINKS, "1.2.3")
-        leg = next(leg for leg in legs if leg["target"] == "linux-amd64")
+        leg = next(leg for leg in legs if (leg["target"], leg["role"]) == ("linux-amd64", "headless-server"))
         run = cli("readme", "--leg", json.dumps(leg), "--version", "1.2.3", "--commit", SHA_A,
                   "--requires", "glibc 2.39")
         self.assertEqual(run.returncode, 0, run.stderr)
@@ -370,8 +370,8 @@ class NotesTest(unittest.TestCase):
         run = self.notes("v0.2.0")
         self.assertEqual(run.returncode, 0, run.stderr)
         stem = "kisakcod-0.2.0-linux-x64-client-beta"
-        self.assertIn(f"| `{stem}.tar.xz`, `{stem}.deb`, `{stem}.rpm`, `{stem}.pkg.tar.zst` | linux-amd64 | mp-client |",
-                      run.stdout)
+        files = f"`{stem}.tar.xz`, `{stem}.deb`, `{stem}.rpm`, `{stem}.pkg.tar.zst`"
+        self.assertIn(f"| {files} | linux-amd64 | mp-client |", run.stdout)
 
     def test_first_release_lists_the_history(self):
         self.git("tag", "-d", "v0.1.0")
