@@ -486,9 +486,11 @@ jobs:
           mkdir -p "$unpacked"
           tar -xJf "dist/${STEM}.tar.xz" -C "$unpacked"
           check_closure "${unpacked}/kisakcod-${VERSION}-linux-${PKG_ARCH}"
-          rpm -qpl "dist/${STEM}.rpm" | grep -qx /opt/kisakcod/KisakCOD-mp || fail "the .rpm has no client"
-          tar --zstd -tf "dist/${STEM}.pkg.tar.zst" | grep -qx opt/kisakcod/KisakCOD-mp \
-            || fail "the Arch package has no client"
+          # Captured, not piped into grep -q: under pipefail an early grep exit fails the producer.
+          rpm_files="$(rpm -qpl "dist/${STEM}.rpm")"
+          arch_files="$(tar --zstd -tf "dist/${STEM}.pkg.tar.zst")"
+          grep -qx /opt/kisakcod/KisakCOD-mp <<<"$rpm_files" || fail "the .rpm has no client"
+          grep -qx opt/kisakcod/KisakCOD-mp <<<"$arch_files" || fail "the Arch package has no client"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
