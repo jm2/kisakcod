@@ -16,6 +16,14 @@ set(KISAK_DXVK_MACOS_PREFIX ${CMAKE_BINARY_DIR}/dxvk-macos)
 # clang reads MACOSX_DEPLOYMENT_TARGET on every compile and link, including
 # meson's own reconfigure and dxvk's subprojects.
 set(KISAK_DXVK_MACOS_ENV ${CMAKE_COMMAND} -E env MACOSX_DEPLOYMENT_TARGET=26.0)
+# A bundle build takes SDL3 from the pinned runtime prefix only, never from
+# Homebrew: PKG_CONFIG_LIBDIR replaces pkg-config's default search path.
+set(KISAK_DXVK_MACOS_SETUP_ARGS)
+if (KISAK_BUNDLE_RUNTIME_PREFIX)
+    list(APPEND KISAK_DXVK_MACOS_ENV --unset=PKG_CONFIG_PATH
+        PKG_CONFIG_LIBDIR=${KISAK_BUNDLE_RUNTIME_PREFIX}/lib/pkgconfig)
+    list(APPEND KISAK_DXVK_MACOS_SETUP_ARGS -Dcmake_prefix_path=${KISAK_BUNDLE_RUNTIME_PREFIX})
+endif ()
 ExternalProject_Add(kisak_dxvk_macos
     GIT_REPOSITORY https://github.com/jm2/dxvk.git
     # kisakcod-macos branch; bump deliberately.
@@ -27,7 +35,7 @@ ExternalProject_Add(kisak_dxvk_macos
         --buildtype=release --prefix=${KISAK_DXVK_MACOS_PREFIX} --libdir=lib
         -Dnative_sdl3=enabled -Dnative_sdl2=disabled -Dnative_glfw=disabled
         -Denable_d3d8=false -Denable_d3d10=false -Denable_d3d11=false -Denable_dxgi=false
-        -Dnative_macos=true
+        -Dnative_macos=true ${KISAK_DXVK_MACOS_SETUP_ARGS}
     BUILD_COMMAND ${KISAK_DXVK_MACOS_ENV} ${KISAK_NINJA} -C <BINARY_DIR>
     INSTALL_COMMAND ${KISAK_DXVK_MACOS_ENV} ${KISAK_NINJA} -C <BINARY_DIR> install
     BUILD_BYPRODUCTS ${KISAK_DXVK_MACOS_PREFIX}/lib/libdxvk_d3d9.dylib
