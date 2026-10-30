@@ -16,6 +16,7 @@ ExternalProject_Add(kisak_runtime_vulkan_loader
         -DCMAKE_OSX_DEPLOYMENT_TARGET=${KISAK_DEPLOYMENT_TARGET}
         -DVULKAN_HEADERS_INSTALL_DIR=${KISAK_RUNTIME_PREFIX}
         # The pinned headers only, never a Homebrew or SDK copy.
+        -DVulkanHeaders_DIR=${KISAK_RUNTIME_PREFIX}/share/cmake/VulkanHeaders
         -DCMAKE_PREFIX_PATH=${KISAK_RUNTIME_PREFIX}
         -DCMAKE_IGNORE_PREFIX_PATH=/opt/homebrew
         -DBUILD_TESTS=OFF
