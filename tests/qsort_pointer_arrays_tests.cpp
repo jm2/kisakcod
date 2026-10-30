@@ -10,6 +10,7 @@
 // no check reaches.
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <iterator>
 #include <string>
 #include <string_view>
@@ -43,6 +44,9 @@ std::vector<std::string> g_seen;
 dvar_s g_hintBoxColor{};
 // FS_GetFileList's packed, unsorted names.
 const char g_files[] = "wood.csv\0Concrete.csv\0metal.csv\0asphalt.csv";
+va_info_t g_vaInfo{};
+char g_listbuf[0x10000];
+EffectFile g_effectFile;
 } // namespace
 
 clientStatic_t cls;
@@ -77,10 +81,11 @@ WEAK uint32_t __cdecl FS_FOpenFileByMode(char *qpath, int *f, fsMode_t)
     *f = 0;
     return static_cast<uint32_t>(-1);
 }
-WEAK void *__cdecl Sys_GetValue(int)
+WEAK void *__cdecl Sys_GetValue(int) { return &g_vaInfo; }
+WEAK void __cdecl Com_Error(errorParm_t, const char *fmt, ...)
 {
-    static va_info_t info{};
-    return &info;
+    std::fprintf(stderr, "Com_Error: %s\n", fmt);
+    std::abort();
 }
 // Unreached: every file fails to open, so none is read or parsed.
 WEAK uint32_t __cdecl FS_Read(uint8_t *, uint32_t, int) { return 0; }
@@ -116,10 +121,8 @@ void TestAutoCompleteArgSorted()
 // The loose impact effect files load in case-insensitive name order.
 void TestImpactFilesSorted()
 {
-    static char listbuf[0x10000];
-    static EffectFile effectFile;
     g_seen.clear();
-    CG_RegisterImpactEffectsForDir(const_cast<char *>("fx"), &effectFile, listbuf);
+    CG_RegisterImpactEffectsForDir(const_cast<char *>("fx"), &g_effectFile, g_listbuf);
     const std::vector<std::string> want = {"fx/asphalt.csv", "fx/Concrete.csv", "fx/metal.csv", "fx/wood.csv"};
     CHECK(g_seen == want);
 }
