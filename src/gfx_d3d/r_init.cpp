@@ -4118,10 +4118,12 @@ int __cdecl R_ClosestRefreshRateForMode(uint32_t width, uint32_t height, int ref
 }
 
 static bool s_fullscreenAtDesktop;
+static int s_fullscreenAtDesktopMode = -1;
 
 void R_SetFullscreenAtDesktop(bool atDesktop)
 {
     s_fullscreenAtDesktop = atDesktop;
+    s_fullscreenAtDesktopMode = -1;
 }
 
 void __cdecl R_SetWndParms(GfxWindowParms *wndParms)
@@ -4136,10 +4138,11 @@ void __cdecl R_SetWndParms(GfxWindowParms *wndParms)
         resolutionString = Dvar_EnumToString(r_mode);
         sscanf(resolutionString, "%ix%i", &wndParms->displayWidth, &wndParms->displayHeight);
     }
-    // A windowed restart ends Alt+Enter's desktop fullscreen, so fullscreen
-    // from the options menu or the console keeps r_mode, as in retail.
-    if (!wndParms->fullscreen)
-        s_fullscreenAtDesktop = false;
+    // A windowed restart or a new r_mode ends Alt+Enter's desktop fullscreen,
+    // so fullscreen from the options menu or the console keeps r_mode, as in
+    // retail.
+    s_fullscreenAtDesktop = R_KeepFullscreenAtDesktop(
+        s_fullscreenAtDesktop, wndParms->fullscreen, r_mode->current.integer, &s_fullscreenAtDesktopMode);
     _D3DDISPLAYMODE desktop{};
     if (wndParms->fullscreen && dx.d3d9->GetAdapterDisplayMode(dx.adapterIndex, &desktop) >= 0)
     {

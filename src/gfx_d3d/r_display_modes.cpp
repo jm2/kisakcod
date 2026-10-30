@@ -77,3 +77,12 @@ void R_ChooseFullscreenSize(
         }
     }
 }
+
+bool R_KeepFullscreenAtDesktop(bool atDesktop, bool fullscreen, int mode, int *atDesktopMode)
+{
+    if (!atDesktop || !fullscreen)
+        return false;
+    if (*atDesktopMode < 0)
+        *atDesktopMode = mode;
+    return *atDesktopMode == mode;
+}

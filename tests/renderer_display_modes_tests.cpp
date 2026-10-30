@@ -78,6 +78,30 @@ int main()
     Fullscreen(true, 1280, 720, 800, 600, "an unlisted desktop mode keeps r_mode's size");
     Fullscreen(true, 0, 0, 800, 600, "an empty desktop mode keeps r_mode's size");
 
+    // R_KeepFullscreenAtDesktop over the window restarts R_SetWndParms sees
+    // (r_mode is an enum index). On yoga, "r_mode 1920x1200; vid_restart"
+    // after Alt+Enter restarted at the desktop size (#950).
+    bool atDesktop = false;
+    int atDesktopMode = -1;
+    const auto AltEnter = [&]() {
+        atDesktop = true; // R_SetFullscreenAtDesktop(true)
+        atDesktopMode = -1;
+    };
+    const auto Restart = [&](bool fullscreen, int mode) {
+        atDesktop = R_KeepFullscreenAtDesktop(atDesktop, fullscreen, mode, &atDesktopMode);
+        return atDesktop ? 1 : 0;
+    };
+    AltEnter();
+    Expect(Restart(true, 4), 1, "Alt+Enter's restart takes the desktop");
+    Expect(Restart(true, 4), 1, "a restart at the same r_mode keeps the desktop");
+    Expect(Restart(true, 6), 0, "a new r_mode ends the desktop fullscreen");
+    Expect(Restart(true, 4), 0, "and it stays ended");
+    AltEnter();
+    Expect(Restart(false, 4), 0, "a windowed restart ends it");
+    Expect(Restart(true, 4), 0, "menu fullscreen after that keeps r_mode");
+    AltEnter();
+    Expect(Restart(true, 6), 1, "Alt+Enter after a windowed r_mode change takes the desktop");
+
     if (g_failures)
         return 1;
     std::printf("renderer-display-modes: all checks passed\n");
