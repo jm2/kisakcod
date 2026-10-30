@@ -8,9 +8,11 @@
 //
 // The rest of the engine boundary is weak, and --gc-sections drops the code
 // no check reaches.
+#include <algorithm>
 #include <cstdio>
-#include <cstring>
+#include <iterator>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <cgame/cg_local.h>
@@ -53,7 +55,7 @@ WEAK const char *__cdecl Cmd_Argv(int arg)
 }
 WEAK void __cdecl MyAssertHandler(const char *, int, int, const char *, ...) {}
 WEAK void __cdecl Com_Printf(int, const char *, ...) {}
-WEAK int __cdecl R_TextWidth(const char *text, int, Font_s *) { return static_cast<int>(std::strlen(text)); }
+WEAK int __cdecl R_TextWidth(const char *text, int, Font_s *) { return static_cast<int>(std::string_view(text).size()); }
 WEAK void __cdecl R_AddCmdDrawStretchPic(float, float, float, float, float, float, float, float, const float *, Material *) {}
 WEAK void __cdecl R_AddCmdDrawText(const char *text, int, Font_s *, float, float, float, float, float, const float *, int)
 {
@@ -66,7 +68,7 @@ WEAK void __cdecl Vec4Scale(const float *v, float scale, float *result)
 }
 WEAK int __cdecl FS_GetFileList(const char *, const char *, FsListBehavior_e, char *listbuf, int)
 {
-    std::memcpy(listbuf, g_files, sizeof(g_files));
+    std::copy(std::begin(g_files), std::end(g_files), listbuf);
     return 4;
 }
 WEAK uint32_t __cdecl FS_FOpenFileByMode(char *qpath, int *f, fsMode_t)
@@ -102,7 +104,7 @@ namespace
 void TestAutoCompleteArgSorted()
 {
     con_inputHintBoxColor = &g_hintBoxColor;
-    std::strcpy(g_consoleField.buffer, "r_mode 1");
+    I_strncpyz(g_consoleField.buffer, "r_mode 1", static_cast<int>(sizeof(g_consoleField.buffer)));
     g_args = {"r_mode", "1"};
     g_seen.clear();
     const char *modes[] = {"1920x1200", "1024x768", "1600x1200", "800x600", "1280x800"};
