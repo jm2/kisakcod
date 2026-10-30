@@ -124,6 +124,14 @@ class MatrixTest(unittest.TestCase):
                           for leg in legs], [("kisakcod-1.2.3-macos-arm64-headless-preview", "macos-headless",
                                               "macos-26", "tar.xz", "", "arm64")])
 
+    def test_macos_client_leg_ships_a_dmg(self):
+        legs, missing = rm.build_matrix(manifest_with({("macos-arm64", "mp-client"): "fork_peer"}), "1.2.3")
+        self.assertEqual(missing, [])
+        self.assertEqual([(leg["stem"], leg["recipe"], leg["runner"], leg["binary"], leg["archive"],
+                           leg.get("also"), leg["file_arch"]) for leg in legs],
+                         [("kisakcod-1.2.3-macos-arm64-client-beta", "macos-client", "macos-26", "KisakCOD-mp",
+                           "dmg", None, "arm64")])
+
     def test_linux_client_legs_ship_every_format(self):
         legs, missing = rm.build_matrix(manifest_with({("linux-amd64", "mp-client"): "fork_peer",
                                                        ("linux-arm64", "mp-client"): "fork_peer"}), "1.2.3")
@@ -142,13 +150,13 @@ class MatrixTest(unittest.TestCase):
             ("linux-arm64", "headless-server"): "steam18_peer",
             ("linux-amd64", "mp-client"): "compiles",       # below links: no leg
             ("windows-x86", "headless-server"): "packaged",  # not required: no leg
-            ("macos-arm64", "mp-client"): "links",           # no recipe yet
+            ("windows-arm64", "mp-client"): "links",         # no recipe yet
         }), "2.0.0")
         self.assertEqual([(leg["stem"], leg["tier"]) for leg in legs], [
             ("kisakcod-2.0.0-linux-arm64-headless", "first-class"),
             ("kisakcod-2.0.0-linux-x64-headless-beta", "beta"),
         ])
-        self.assertEqual(missing, ["macos-arm64/mp-client"])
+        self.assertEqual(missing, ["windows-arm64/mp-client"])
 
     def test_every_level_maps_to_a_tier(self):
         self.assertEqual([rm.tier(level) for level in rm.LEVELS[2:]],
@@ -182,7 +190,7 @@ class CliTest(unittest.TestCase):
         self.assertEqual(run.returncode, 1)
         self.assertIn("::error::", run.stderr)
         # No cell at links, or one with no recipe: no release.
-        for levels in ({}, {("macos-arm64", "mp-client"): "links"}):
+        for levels in ({}, {("windows-arm64", "mp-client"): "links"}):
             with tempfile.TemporaryDirectory() as tmp:
                 path = Path(tmp) / "manifest.json"
                 path.write_text(json.dumps(manifest_with(levels)))

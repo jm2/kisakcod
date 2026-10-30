@@ -23,7 +23,7 @@
     {"target": "linux-amd64", "role": "headless-server", "level": "fork_peer", "next": "G4b", "evidence": "G2 (#180, issuecomment-6392145142): ASan+UBSan 0 reports. G3 row 63 (#181, issuecomment-6486050318): x86 fork client over the LAN."},
     {"target": "linux-arm64", "role": "mp-client", "level": "fork_peer", "next": "G6", "evidence": "G5 (#184): dxvk-native client on a fork server, row 56 (issuecomment-6397734328); 0 ASan/UBSan reports, row 58 (issuecomment-6484761624)."},
     {"target": "linux-arm64", "role": "headless-server", "level": "fork_peer", "next": "G4b", "evidence": "G3 row 64 (#181, issuecomments 6486003334 and 6486452501): x86 fork client over the LAN; server ASan+UBSan 0 reports."},
-    {"target": "macos-arm64", "role": "mp-client", "level": "none", "next": "G5", "evidence": "In-game on mp_shipment and mp_crash on master in a manual run on the owner's data (120 fps, the display refresh); no CI leg yet, so not raised."},
+    {"target": "macos-arm64", "role": "mp-client", "level": "fork_peer", "next": "G6", "evidence": "G5 (#184): dxvk-native client on a fork server, row 57 (issuecomment-6392081219), and on a Steam 1.8 server, row 59 (issuecomment-6398138243); the G5 sanitizer bar closed in row 58 (issuecomment-6484761624)."},
     {"target": "macos-arm64", "role": "headless-server", "level": "fork_peer", "next": "G4b", "evidence": "G3 row 65 (#181, issuecomments 6502773306 and 6502838673): x86 fork client over the LAN; 14.5 h server soak."}
   ]
 }
