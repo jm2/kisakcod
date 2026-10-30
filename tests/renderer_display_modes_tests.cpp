@@ -106,16 +106,19 @@ int main()
 
     // R_CanSwitchModeInPlace over the latched dvars CL_Vid_Restart_f finds
     // (#953): display-mode changes switch in place, anything else restarts.
-    const auto InPlace = [](std::initializer_list<const char *> latched) {
-        return R_CanSwitchModeInPlace(latched.begin(), static_cast<uint32_t>(latched.size())) ? 1 : 0;
+    const auto InPlace = [](std::initializer_list<const char *> latched, bool fullscreenChanged = false) {
+        return R_CanSwitchModeInPlace(latched.begin(), static_cast<uint32_t>(latched.size()), fullscreenChanged) ? 1
+                                                                                                                  : 0;
     };
-    Expect(InPlace({"r_fullscreen"}), 1, "Alt+Enter switches in place");
+    Expect(InPlace({}, true), 1, "Alt+Enter, which sets r_fullscreen directly, switches in place");
+    Expect(InPlace({"r_fullscreen"}), 1, "a latched r_fullscreen switches in place");
     Expect(InPlace({"r_mode", "r_fullscreen", "r_displayRefresh"}), 1, "the options menu's mode switches in place");
     Expect(InPlace({"r_aspectRatio", "r_customMode", "r_vsync"}), 1, "aspect ratio, custom mode and vsync too");
     Expect(InPlace({"R_MODE"}), 1, "dvar names ignore case");
     Expect(InPlace({}), 0, "a bare vid_restart restarts");
     Expect(InPlace({"r_picmip"}), 0, "a texture setting restarts");
     Expect(InPlace({"r_fullscreen", "loc_language"}), 0, "a mode change with another latched dvar restarts");
+    Expect(InPlace({"loc_language"}, true), 0, "and so does Alt+Enter with another latched dvar");
     Expect(InPlace({"r_mod"}), 0, "a prefix of a display dvar restarts");
     Expect(InPlace({"r_modex"}), 0, "a longer name restarts");
 

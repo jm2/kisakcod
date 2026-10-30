@@ -4470,7 +4470,8 @@ bool R_SwitchDisplayModeInPlace(vidConfig_t *vidConfigOut)
         return false;
     std::vector<const char *> latched;
     Dvar_ForEach(R_AddLatchedName, &latched);
-    if (!R_CanSwitchModeInPlace(latched.data(), static_cast<uint32_t>(latched.size())))
+    const bool fullscreenChanged = r_fullscreen->current.enabled != (vidConfig.isFullscreen != 0);
+    if (!R_CanSwitchModeInPlace(latched.data(), static_cast<uint32_t>(latched.size()), fullscreenChanged))
     {
         if (!latched.empty())
             Com_Printf(8, "vid_restart: %s needs a full restart\n", latched[0]);

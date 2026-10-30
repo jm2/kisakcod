@@ -36,7 +36,9 @@ bool R_KeepFullscreenAtDesktop(bool atDesktop, bool fullscreen, int mode, int *a
 
 // Whether a vid_restart can switch the display mode in place instead of
 // restarting the renderer, cgame and the map (#953). latchedNames lists every
-// dvar whose latched value differs from its current one. The switch applies
-// only when there is at least one and each sets the display mode: r_mode,
+// dvar whose latched value differs from its current one. Alt+Enter sets
+// r_fullscreen directly, so nothing is latched; fullscreenChanged says
+// r_fullscreen differs from the window's mode. The switch applies when there
+// is a change and each latched dvar sets the display mode: r_mode,
 // r_fullscreen, r_displayRefresh, r_aspectRatio, r_customMode or r_vsync.
-bool R_CanSwitchModeInPlace(const char *const *latchedNames, uint32_t count);
+bool R_CanSwitchModeInPlace(const char *const *latchedNames, uint32_t count, bool fullscreenChanged);

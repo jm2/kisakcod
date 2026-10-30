@@ -92,7 +92,7 @@ bool R_KeepFullscreenAtDesktop(bool atDesktop, bool fullscreen, int mode, int *a
     return *atDesktopMode == mode;
 }
 
-bool R_CanSwitchModeInPlace(const char *const *latchedNames, uint32_t count)
+bool R_CanSwitchModeInPlace(const char *const *latchedNames, uint32_t count, bool fullscreenChanged)
 {
     static constexpr std::string_view displayModeDvars[] = {
         "r_mode", "r_fullscreen", "r_displayRefresh", "r_aspectRatio", "r_customMode", "r_vsync"};
@@ -101,7 +101,7 @@ bool R_CanSwitchModeInPlace(const char *const *latchedNames, uint32_t count)
             return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y));
         });
     };
-    if (!count)
+    if (!count && !fullscreenChanged)
         return false;
     return std::all_of(latchedNames, latchedNames + count, [&](const char *name) {
         return std::any_of(std::begin(displayModeDvars), std::end(displayModeDvars),
