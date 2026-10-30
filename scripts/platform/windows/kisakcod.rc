@@ -1,0 +1,4 @@
+// Icon resource 1: the exe's icon in Explorer and on shortcuts, and the
+// window classes' icon (win_main.cpp and win_syscon.cpp load resource 1).
+// scripts/packaging/icons/make_icons.py builds the .ico from kisakcod.svg.
+1 ICON "..\\..\\packaging\\icons\\kisakcod.ico"

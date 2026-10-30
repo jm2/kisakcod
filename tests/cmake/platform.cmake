@@ -783,3 +783,12 @@ if (KISAK_PLATFORM STREQUAL "linux")
         set_tests_properties(packaging-linux PROPERTIES TIMEOUT 120)
     endif()
 endif()
+
+# The icon builder (scripts/packaging/icons/make_icons.py): the macOS grid
+# shape and the .ico and .icns containers, on every platform.
+find_package(Python3 COMPONENTS Interpreter)
+if (Python3_Interpreter_FOUND)
+    add_test(NAME packaging-icons
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/packaging_icons_test.py)
+    set_tests_properties(packaging-icons PROPERTIES TIMEOUT 30)
+endif()

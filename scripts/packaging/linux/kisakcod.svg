@@ -1,7 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
-  <!-- KisakCOD placeholder icon (ADR-0012): original artwork, no retail marks. -->
-  <rect x="8" y="8" width="240" height="240" rx="40" fill="#20262e"/>
-  <circle cx="128" cy="128" r="78" fill="none" stroke="#d9a441" stroke-width="14"/>
-  <path d="M128 34v52M128 170v52M34 128h52M170 128h52" stroke="#d9a441" stroke-width="14" stroke-linecap="round"/>
-  <circle cx="128" cy="128" r="12" fill="#e8e8e8"/>
-</svg>

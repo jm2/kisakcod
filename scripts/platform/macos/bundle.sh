@@ -232,6 +232,7 @@ cat > "$CONTENTS/Info.plist" <<PLIST
 <dict>
     <key>CFBundleDevelopmentRegion</key><string>en</string>
     <key>CFBundleExecutable</key><string>KisakCOD-mp</string>
+    <key>CFBundleIconFile</key><string>KisakCOD</string>
     <key>CFBundleIdentifier</key><string>org.kisakcod.client</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleName</key><string>KisakCOD</string>
@@ -244,6 +245,9 @@ cat > "$CONTENTS/Info.plist" <<PLIST
 </plist>
 PLIST
 mkdir -p "$MACOS" && printf 'APPL????' > "$CONTENTS/PkgInfo"
+# The icon on Apple's grid (scripts/packaging/icons/make_icons.py).
+cp -f "$(dirname "$0")/../../packaging/icons/kisakcod.icns" "$RESOURCES/KisakCOD.icns" || {
+    echo "bundle: FAILED copying the icon" >&2; exit 1; }
 
 LICENSES="${LICENSES:-$RUNTIME/share/licenses}"
 if [ -d "$LICENSES" ]; then

@@ -34,6 +34,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 HERE = Path(__file__).resolve().parent
+ICON = HERE.parent / "icons" / "kisakcod.svg"
 NAME = "kisakcod"
 PREFIX = "/opt/kisakcod"
 SUMMARY = "Native 64-bit Call of Duty 4 multiplayer client and server"
@@ -157,7 +158,7 @@ def stage(args: argparse.Namespace, root: Path) -> None:
         exe.chmod(0o755)
     shutil.copy2(ROOT / "LICENSE", root / "LICENSE")
     shutil.copy2(args.notices, root / "THIRD-PARTY-NOTICES")
-    shutil.copy2(HERE / "kisakcod.svg", root / "kisakcod.svg")
+    shutil.copy2(ICON, root / "kisakcod.svg")
     write_text(root / "README.txt", readme(args.version, args.arch))
 
 
@@ -173,7 +174,7 @@ def system_tree(args: argparse.Namespace, dest: Path) -> None:
     write_text(dest / "usr/share/applications/kisakcod.desktop", DESKTOP)
     icon = dest / "usr/share/icons/hicolor/scalable/apps/kisakcod.svg"
     icon.parent.mkdir(parents=True)
-    shutil.copy2(HERE / "kisakcod.svg", icon)
+    shutil.copy2(ICON, icon)
 
 
 def tar_filter(epoch: int):
