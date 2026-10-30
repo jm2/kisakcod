@@ -751,7 +751,7 @@ bool __cdecl R_Cinematic_BinkOpen(
                 "%s\n\t(playbackFlags) = %i",
                 "(playbackFlags & 0x00000008)",
                 playbackFlags);
-        _snprintf(filepath[0].data(), filepath[0].size(), "video/%s.%s", filename, "bik");
+        Com_sprintf(filepath[0].data(), (uint32_t)filepath[0].size(), "video/%s.bik", filename);
         pathCount = 1;
     }
     else
