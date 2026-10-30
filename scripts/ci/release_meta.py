@@ -204,8 +204,8 @@ def notes(legs: list[dict], tag: str, commit: str, run_url: str, repo: Path, lim
            "## Packages", "", "| Package | Target | Role | Tier | Level |", "| --- | --- | --- | --- | --- |"]
     out += ["| " + ", ".join(f"`{leg['stem']}.{ext}`" for ext in [leg["archive"], *leg.get("also", [])])
             + f" | {leg['target']} | {leg['role']} | {leg['tier']} | `{leg['level']}` |" for leg in legs]
-    out += ["", "Each package has a `-debugsymbols` companion in the same format (extract it into the same "
-            + "directory) and a "
+    out += ["", "Each package row has a `-debugsymbols` archive in the row's first format, which serves every "
+            + "format in the row (extract it beside the binaries), and a "
             + f"`-provenance.json`. `kisakcod-{version}-source.tar.gz` is the commit's source without the vendor "
             + "runtime binaries (Steamworks). `SHA256SUMS.txt` covers every file.", "", "## Status", ""]
     out += [f"- **{leg['label']}**: at capability level `{leg['level']}`, {LEVEL_NOTES[leg['level']]}" for leg in legs]
