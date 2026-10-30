@@ -1284,7 +1284,12 @@ void __cdecl CL_DrawRect(int32_t x, int32_t y, int32_t width, int32_t height, co
 void __cdecl CL_ArchiveClientState(int32_t localClientNum, MemoryFile *memFile)
 {
     CG_ArchiveState(localClientNum, memFile);
-    FX_Archive(localClientNum, memFile);
+    // The FX archive is retail's 32-bit layout: 64-bit targets can read it
+    // (Disk32) but not write it, and FX_Save drops the player there (#944).
+    // A vid_restart shuts the FX system down and CG_Init starts a fresh one,
+    // so on 64-bit the effects playing at the restart start over instead.
+    if constexpr (sizeof(void *) == 4)
+        FX_Archive(localClientNum, memFile);
     R_ArchiveFogState(memFile);
 }
 
