@@ -92,9 +92,10 @@ the tree).
 3. **OpenAL Soft**: clang 21 rejects `-Werror=function-effects` on a `noexcept`
    CoreAudio lambda (`alc/backends/coreaudio.cpp`). Downgrade to
    `-Wfunction-effects`; the warning still prints, the build proceeds.
-4. **FFmpeg**: the decoder is `bink`, not `binkvideo`. Minimal LGPL build:
-   `--enable-demuxer=bink --enable-decoder=bink,binkaudio_dct,binkaudio_rdft,adpcm_ima_wav`
-   `--enable-parser=bink --enable-protocol=file,pipe --disable-everything`
+4. **FFmpeg**: the decoder is `bink`, not `binkvideo`. Minimal LGPL build, with
+   WAV and MP3 for the streamed sounds and music (#942):
+   `--enable-demuxer=bink,wav,mp3 --enable-decoder=bink,binkaudio_dct,binkaudio_rdft,adpcm_ima_wav,pcm_s16le,mp3float`
+   `--enable-parser=bink,mpegaudio --enable-protocol=file,pipe --disable-everything`
    `--disable-gpl --disable-nonfree --enable-shared`; no autodetect, so no
    OpenSSL/Vulkan/x264 finds its way in.
 5. **Meson caches** found dependencies. After changing `PKG_CONFIG_PATH`, use a

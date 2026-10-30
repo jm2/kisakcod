@@ -1,5 +1,5 @@
-##### FFmpeg, LGPL, bink only (ADR-0011) #####
-# The cinematic decoder. Everything else is off: no autodetect, so no OpenSSL,
+##### FFmpeg, LGPL (ADR-0011) #####
+# The cinematic decoder, and the streamed sounds' WAV and MP3 (#942). The rest is off: no autodetect, so no OpenSSL,
 # Vulkan or x264 can be found and the license stays LGPL 2.1+. The decoder is
 # called `bink` in FFmpeg 9, not `binkvideo`.
 ExternalProject_Add(kisak_runtime_ffmpeg
@@ -14,9 +14,10 @@ ExternalProject_Add(kisak_runtime_ffmpeg
         --enable-shared --disable-static --disable-programs --disable-doc
         --disable-network --disable-autodetect --disable-everything
         --enable-avformat --enable-avcodec --enable-avutil --enable-swresample
-        --enable-demuxer=bink
-        --enable-decoder=bink,binkaudio_dct,binkaudio_rdft,adpcm_ima_wav
-        --enable-parser=bink
+        # Bink for cinematics; WAV (16-bit PCM) and MP3 for streamed sounds and music (#942).
+        --enable-demuxer=bink,wav,mp3
+        --enable-decoder=bink,binkaudio_dct,binkaudio_rdft,adpcm_ima_wav,pcm_s16le,mp3float
+        --enable-parser=bink,mpegaudio
         --enable-protocol=file,pipe
         --disable-gpl --disable-nonfree --enable-pic
         --extra-cflags=-mmacosx-version-min=${KISAK_DEPLOYMENT_TARGET}
@@ -27,4 +28,15 @@ ExternalProject_Add(kisak_runtime_ffmpeg
     LOG_CONFIGURE ON
     LOG_BUILD ON
     LOG_INSTALL ON
+)
+
+# The built FFmpeg must read what the engine streams (#942): build and run
+# scripts/platform/ffmpeg_check against the prefix, or fail the runtime.
+ExternalProject_Add(kisak_runtime_ffmpeg_check
+    DEPENDS kisak_runtime_ffmpeg
+    SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/../platform/ffmpeg_check
+    CMAKE_ARGS -DKISAK_FFMPEG_PREFIX=${KISAK_RUNTIME_PREFIX}
+        -DCMAKE_OSX_DEPLOYMENT_TARGET=${KISAK_DEPLOYMENT_TARGET}
+    INSTALL_COMMAND ""
+    TEST_COMMAND <BINARY_DIR>/ffmpeg_stream_check
 )

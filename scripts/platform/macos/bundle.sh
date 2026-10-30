@@ -267,9 +267,10 @@ KisakCOD.app bundles its runtime, built from source at these pins
   zstd                               1.5.7
   SDL3                               3.4.18
   OpenAL Soft                        1.25.2      (LGPL-2.1)
-  FFmpeg                             9.0.2       (LGPL-2.1; bink demuxer,
-                                                   bink/binkaudio/adpcm_ima_wav
-                                                   decoders only)
+  FFmpeg                             9.0.2       (LGPL-2.1; bink, wav and mp3
+                                                   demuxers; bink/binkaudio,
+                                                   adpcm_ima_wav, pcm_s16le and
+                                                   mp3float decoders only)
   dxvk (jm2/dxvk kisakcod-macos)     dac6ce62dada1f9fd2a3c347cd66580deecd6bca
 
 Device access is through Mesa's Metal driver; no GPU driver is bundled.
