@@ -167,7 +167,7 @@ jobs:
     needs: metadata
     runs-on: ${{ matrix.runner }}
     # A Windows client leg builds two trees, and vcpkg's FFmpeg when its cache is cold.
-    timeout-minutes: ${{ matrix.recipe == 'windows-client' && 120 || 90 }}
+    timeout-minutes: ${{ matrix.recipe == 'macos-client' && 180 || matrix.recipe == 'windows-client' && 120 || 90 }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.metadata.outputs.matrix) }}
@@ -674,33 +674,76 @@ jobs:
           "${RUNNER_TEMP}/mesa-venv/bin/pip" install --quiet packaging==25.0 Mako==1.4.3 PyYAML==6.0.3
 
       # The runtime prefix (zstd, SDL3, OpenAL Soft, FFmpeg, the Vulkan loader)
-      # and KosmicKrisp from the pinned tarballs, then the server and the
-      # client at RelWithDebInfo. Each binary's DWARF is gathered into a dSYM
-      # before it is stripped; bundle.sh and package_dmg.sh then sign and
-      # check the app on the mounted image.
-      - name: Build the runtime, the server and the client
+      # and KosmicKrisp from the pinned tarballs. One external project at a
+      # time, each with its own parallel build: running them side by side
+      # oversubscribes the runner. Each step has its own timeout so the step
+      # timings show where the time goes.
+      - name: "Runtime: configure and the libraries"
         if: matrix.recipe == 'macos-client'
+        timeout-minutes: 30
         run: |
+          echo "runner: $(sysctl -n hw.ncpu) cores, $(( $(sysctl -n hw.memsize) / 1073741824 )) GiB"
           runtime="${RUNNER_TEMP}/runtime"
+          echo "RUNTIME=$runtime" >> "$GITHUB_ENV"
           cmake -S scripts/platform/macos/runtime -B "$runtime" \
             -DKISAK_SOURCE_CACHE="${RUNNER_TEMP}/runtime-cache" \
             -DKISAK_MESA_PYTHON_BIN_DIR="${RUNNER_TEMP}/mesa-venv/bin"
-          cmake --build "$runtime" --parallel
+          for project in zstd vulkan_headers spirv_headers vulkan_loader sdl3 openal ffmpeg; do
+            start=$SECONDS
+            cmake --build "$runtime" --target "kisak_runtime_${project}"
+            echo "::notice::runtime ${project}: $((SECONDS - start)) s"
+          done
+
+      - name: "Runtime: SPIRV-Tools"
+        if: matrix.recipe == 'macos-client'
+        timeout-minutes: 30
+        run: cmake --build "$RUNTIME" --target kisak_runtime_spirv_tools
+
+      - name: "Runtime: mesa (KosmicKrisp) and the license texts"
+        if: matrix.recipe == 'macos-client'
+        timeout-minutes: 45
+        run: cmake --build "$RUNTIME" --target runtime
+
+      # The server and the client at RelWithDebInfo; the client configure
+      # binds the runtime prefix and its build fetches and builds dxvk.
+      - name: Build the server
+        if: matrix.recipe == 'macos-client'
+        timeout-minutes: 30
+        run: |
           cmake --preset macos-arm64-dedi -B build-dedi -DCMAKE_BUILD_TYPE=RelWithDebInfo
           cmake --build build-dedi --target KisakCOD-dedi --parallel
+
+      - name: Build the client
+        if: matrix.recipe == 'macos-client'
+        timeout-minutes: 45
+        run: |
           cmake --preset macos-arm64-client -B build-release -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=26.0 -DCMAKE_PREFIX_PATH="${runtime}/prefix" \
-            -DKISAK_MACOS_BUNDLE=ON -DKISAK_BUNDLE_RUNTIME_PREFIX="${runtime}/prefix" \
-            -DKISAK_BUNDLE_MESA_PREFIX="${runtime}/mesa-prefix" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=26.0 -DCMAKE_PREFIX_PATH="${RUNTIME}/prefix" \
+            -DKISAK_MACOS_BUNDLE=ON -DKISAK_BUNDLE_RUNTIME_PREFIX="${RUNTIME}/prefix" \
+            -DKISAK_BUNDLE_MESA_PREFIX="${RUNTIME}/mesa-prefix" \
             -DKISAK_BUNDLE_DXVK_LIB="${PWD}/build-release/dxvk-macos/lib/libdxvk_d3d9.0.dylib" \
             -DKISAK_BUNDLE_DEDI="${PWD}/bin/KisakCOD-dedi" -DKISAK_PACKAGE_VERSION="$VERSION"
           cmake --build build-release --target KisakCOD-mp --parallel
+
+      # Each binary's DWARF goes into a dSYM before it is stripped; stripping
+      # voids the ad-hoc signature, so each is signed again.
+      - name: Split the debug symbols into dSYMs
+        if: matrix.recipe == 'macos-client'
+        timeout-minutes: 15
+        run: |
           mkdir -p "symbols/${STEM}"
           for bin in KisakCOD-mp KisakCOD-dedi; do
             dsymutil "bin/${bin}" -o "symbols/${STEM}/${bin}.dSYM"
             strip -S -x "bin/${bin}"
             codesign --force --sign - "bin/${bin}"
           done
+
+      # bundle.sh assembles and signs the app; package_dmg.sh checks it on the
+      # mounted image.
+      - name: Bundle the app and package the dmg
+        if: matrix.recipe == 'macos-client'
+        timeout-minutes: 15
+        run: |
           cmake --build build-release --target dmg
           mkdir -p dist
           mv "build-release/dist/kisakcod-${VERSION}-macos-arm64.dmg" "dist/${STEM}.dmg"
