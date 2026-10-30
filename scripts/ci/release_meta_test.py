@@ -71,6 +71,17 @@ def manifest_with(levels: dict[tuple[str, str], str]) -> dict:
     return m
 
 
+# Every headless cell at `links`: stable preview names, whatever the real levels are.
+HEADLESS_LINKS = manifest_with({(t["id"], "headless-server"): "links"
+                                for t in REAL_MANIFEST["targets"] if t.get("required")})
+
+
+def real_stem(target: str, platform: str, version: str) -> str:
+    """The headless stem the real manifest gives a target, at its current level."""
+    cell = next(c for c in REAL_MANIFEST["cells"] if (c["target"], c["role"]) == (target, "headless-server"))
+    return f"kisakcod-{version}-{platform}-headless{rm.TIER_SUFFIX[rm.tier(cell['level'])]}"
+
+
 class VersionTest(unittest.TestCase):
     def test_publish_takes_only_plain_semver(self):
         self.assertEqual(rm.parse_version("v1.20.3", False),
@@ -91,7 +102,7 @@ class MatrixTest(unittest.TestCase):
     def test_real_manifest_builds_the_linux_headless_leg(self):
         legs, _ = rm.build_matrix(REAL_MANIFEST, "1.2.3")
         leg = next(leg for leg in legs if leg["target"] == "linux-amd64")
-        self.assertEqual(leg["stem"], "kisakcod-1.2.3-linux-x64-headless-preview")
+        self.assertEqual(leg["stem"], real_stem("linux-amd64", "linux-x64", "1.2.3"))
         self.assertEqual((leg["role"], leg["recipe"], leg["runner"], leg["binary"]),
                          ("headless-server", "linux-headless", "ubuntu-24.04", "KisakCOD-dedi"))
 
@@ -152,7 +163,7 @@ class CliTest(unittest.TestCase):
         out = dict(line.split("=", 1) for line in run.stdout.splitlines())
         self.assertEqual((out["tag"], out["version"], out["prerelease"]), ("v1.2.3", "1.2.3", "true"))
         stems = [leg["stem"] for leg in json.loads(out["matrix"])["include"]]
-        self.assertIn("kisakcod-1.2.3-linux-x64-headless-preview", stems)
+        self.assertIn(real_stem("linux-amd64", "linux-x64", "1.2.3"), stems)
 
     def test_metadata_fails_closed(self):
         run = cli("metadata", "--version", "1.2.3", "--dry-run", "false")
@@ -178,7 +189,7 @@ class CliTest(unittest.TestCase):
         self.assertEqual(cli("gate", "--commit", "HEAD", "--ref", "refs/heads/master", "--ci-runs", "1").returncode, 1)
 
     def test_readme_names_the_package_and_its_limits(self):
-        legs, _ = rm.build_matrix(REAL_MANIFEST, "1.2.3")
+        legs, _ = rm.build_matrix(HEADLESS_LINKS, "1.2.3")
         leg = next(leg for leg in legs if leg["target"] == "linux-amd64")
         run = cli("readme", "--leg", json.dumps(leg), "--version", "1.2.3", "--commit", SHA_A,
                   "--requires", "glibc 2.39")
@@ -323,7 +334,7 @@ class NotesTest(unittest.TestCase):
         self.git("checkout", "-q", "master")
         self.git("merge", "-q", "--no-ff", "topic", "-m", "Merge pull request #7 from jm2/topic\n\nAdd a thing")
         self.commit = self.git("rev-parse", "HEAD")
-        self.legs, _ = rm.build_matrix(REAL_MANIFEST, "0.2.0")
+        self.legs, _ = rm.build_matrix(HEADLESS_LINKS, "0.2.0")
 
     def tearDown(self):
         self.tmp.cleanup()
