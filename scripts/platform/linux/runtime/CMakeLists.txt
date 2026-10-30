@@ -67,7 +67,8 @@ ExternalProject_Add(kisak_runtime_openal
     LOG_INSTALL ON
 )
 
-# The engine needs only Bink video and audio and the file protocol (LGPL build).
+# The engine needs Bink video and audio, the streamed sounds' WAV and MP3, and
+# the file protocol (LGPL build).
 ExternalProject_Add(kisak_runtime_ffmpeg
     URL https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz
     URL_HASH SHA256=8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e
@@ -80,9 +81,10 @@ ExternalProject_Add(kisak_runtime_ffmpeg
         --disable-network --disable-autodetect --disable-everything
         --enable-avformat --enable-avcodec --enable-avutil
         --disable-avdevice --disable-avfilter --disable-swscale --disable-swresample
-        --enable-demuxer=bink
-        --enable-decoder=bink,binkaudio_dct,binkaudio_rdft,adpcm_ima_wav
-        --enable-parser=bink
+        # Bink for cinematics; WAV (16-bit PCM) and MP3 for streamed sounds and music (#942).
+        --enable-demuxer=bink,wav,mp3
+        --enable-decoder=bink,binkaudio_dct,binkaudio_rdft,adpcm_ima_wav,pcm_s16le,mp3float
+        --enable-parser=bink,mpegaudio
         --enable-protocol=file,pipe
         --disable-gpl --disable-nonfree --enable-pic
         # Bink decoding is light; skip the nasm build dependency.
@@ -95,6 +97,16 @@ ExternalProject_Add(kisak_runtime_ffmpeg
     LOG_CONFIGURE ON
     LOG_BUILD ON
     LOG_INSTALL ON
+)
+
+# The built FFmpeg must read what the engine streams (#942): build and run
+# scripts/platform/ffmpeg_check against the prefix, or fail the runtime.
+ExternalProject_Add(kisak_runtime_ffmpeg_check
+    DEPENDS kisak_runtime_ffmpeg
+    SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../ffmpeg_check
+    CMAKE_ARGS -DKISAK_FFMPEG_PREFIX=${KISAK_RUNTIME_PREFIX}
+    INSTALL_COMMAND ""
+    TEST_COMMAND <BINARY_DIR>/ffmpeg_stream_check
 )
 
 # dxvk-native's D3D9 with only the SDL3 window-system backend, against the

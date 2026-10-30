@@ -114,6 +114,6 @@ add_custom_target(runtime_licenses
 
 add_custom_target(runtime ALL
     DEPENDS kisak_runtime_vulkan_loader kisak_runtime_spirv_tools
-            kisak_runtime_sdl3 kisak_runtime_openal kisak_runtime_ffmpeg
+            kisak_runtime_sdl3 kisak_runtime_openal kisak_runtime_ffmpeg kisak_runtime_ffmpeg_check
             kisak_runtime_mesa runtime_licenses
     COMMENT "macOS runtime prefix: ${KISAK_RUNTIME_PREFIX}, mesa: ${KISAK_MESA_PREFIX}")
