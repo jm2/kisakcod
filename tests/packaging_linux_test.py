@@ -11,6 +11,7 @@ need rpmbuild and makepkg; the release jobs build those on their own distros.
 from __future__ import annotations
 
 import io
+import os
 import platform
 import shutil
 import sys
@@ -119,9 +120,22 @@ def main() -> int:
         return 0
     with tempfile.TemporaryDirectory() as work_name:
         work = Path(work_name)
-        check(package_linux.main(make_inputs(work)) == 0, "the packager succeeds")
+        inputs = make_inputs(work)
+        check(package_linux.main(list(inputs)) == 0, "the packager succeeds")
         check_portable(work / "out" / f"kisakcod-0.1.0-linux-{ARCH}.tar.xz")
         check_deb(work / "out" / f"kisakcod_0.1.0_{ARCH}.deb")
+        # A relative --out (as release.yml passes) still gives the spec an absolute tree path.
+        inputs[inputs.index("--out") + 1] = "relative-out"
+        inputs[inputs.index("--formats") + 1] = "rpm"
+        here = os.getcwd()
+        os.chdir(work)
+        try:
+            check(package_linux.main(inputs) == 0, "the packager takes a relative --out")
+        finally:
+            os.chdir(here)
+        spec = (work / "relative-out" / "rpm" / "kisakcod.spec").read_text()
+        check(f"cp -a {work.resolve() / 'relative-out' / 'rpm' / 'tree'}/." in spec,
+              "the .rpm spec names its staged tree by an absolute path")
     if failures:
         return 1
     print("packaging-linux: all checks passed")

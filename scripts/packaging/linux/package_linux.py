@@ -319,6 +319,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--formats", default="tarxz,deb,rpm,arch")
     parser.add_argument("--epoch", type=int, default=int(os.environ.get("SOURCE_DATE_EPOCH", "0")))
     args = parser.parse_args(argv)
+    args.out = args.out.resolve()  # the .rpm spec and PKGBUILD name staged paths; rpmbuild changes directory
     makers = {"tarxz": make_tarxz, "deb": make_deb, "rpm": make_rpm, "arch": make_arch}
     formats = [f for f in args.formats.split(",") if f]
     unknown = [f for f in formats if f not in makers]
