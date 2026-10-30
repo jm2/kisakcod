@@ -3,9 +3,10 @@
 # the Visual C++ runtime DLLs those need, KisakCOD-README.txt,
 # KisakCOD-LICENSE.txt and KisakCOD-THIRD-PARTY-NOTICES.txt. The text files
 # carry a prefix because the installer can put them in the player's Call of
-# Duty 4 folder. No Steam, Miles, Bink or game files. Writes
-# <OutDir>\kisakcod-<version>-windows-<arch>.zip and, with -Installer, the Inno
-# Setup installer built from the same folder (scripts/platform/windows/kisakcod.iss).
+# Duty 4 folder. No Steam, Miles, Bink or game files. Writes <OutDir>\<stem>.zip
+# and, with -Installer, <OutDir>\<stem>-setup.exe, the Inno Setup installer built
+# from the same folder (scripts/platform/windows/kisakcod.iss). The stem defaults
+# to kisakcod-<version>-windows-<arch>; release.yml passes its leg's stem.
 #
 # -Notices is the THIRD-PARTY-NOTICES to ship, from
 # scripts/packaging/third_party_notices.py --client with a --component for each
@@ -15,7 +16,7 @@
 #
 # Usage: package-windows.ps1 -Version 0.1.0 -Arch amd64 -ClientExe <bin>\KisakCOD-mp.exe
 #            -DediExe <bin>\KisakCOD-dedi.exe -VcpkgInstalled <build>\vcpkg_installed\x64-windows
-#            -Notices <file> -OutDir dist [-Installer [-Iscc <path>\ISCC.exe]]
+#            -Notices <file> -OutDir dist [-Stem <name>] [-Installer [-Iscc <path>\ISCC.exe]]
 #            [-CrtDir <redist>\Microsoft.VC145.CRT]
 [CmdletBinding()]
 param(
@@ -26,6 +27,7 @@ param(
     [Parameter(Mandatory = $true)] [string] $VcpkgInstalled,
     [Parameter(Mandatory = $true)] [string] $Notices,
     [Parameter(Mandatory = $true)] [string] $OutDir,
+    [ValidatePattern('^[0-9A-Za-z][0-9A-Za-z._-]*$')] [string] $Stem,
     [switch] $Installer,
     [string] $Iscc = $env:KISAK_ISCC,
     [string] $CrtDir
@@ -36,10 +38,10 @@ $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 if ($Version -notmatch '^(\d+)\.(\d+)\.(\d+)(-[0-9A-Za-z.-]+)?$') { throw "Version $Version is not X.Y.Z[-suffix]." }
 $numericVersion = "$($Matches[1]).$($Matches[2]).$($Matches[3]).0"
 $peArch = @{ amd64 = 'x64'; arm64 = 'ARM64' }[$Arch]
-$stem = "kisakcod-$Version-windows-$Arch"
+if (-not $Stem) { $Stem = "kisakcod-$Version-windows-$Arch" }
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $OutDir = (Resolve-Path $OutDir).Path
-$stage = Join-Path $OutDir $stem
+$stage = Join-Path $OutDir $Stem
 if (Test-Path -LiteralPath $stage) { throw "$stage already exists." }
 New-Item -ItemType Directory -Path $stage | Out-Null
 
@@ -161,18 +163,18 @@ Set-Content -LiteralPath (Join-Path $stage 'KisakCOD-README.txt') -Encoding utf8
 
 # A fixed timestamp keeps the zip reproducible, as release.yml's headless legs are.
 $epoch = if ($env:SOURCE_DATE_EPOCH) { $env:SOURCE_DATE_EPOCH } else { git -C $repo log -1 --format=%ct }
-$zip = Join-Path $OutDir "$stem.zip"
-python (Join-Path $PSScriptRoot 'release_meta.py') zip --root $OutDir --stem $stem --epoch $epoch --out $zip
+$zip = Join-Path $OutDir "$Stem.zip"
+python (Join-Path $PSScriptRoot 'release_meta.py') zip --root $OutDir --stem $Stem --epoch $epoch --out $zip
 if ($LASTEXITCODE) { throw 'Writing the zip failed.' }
 $outputs = @($zip)
 
 if ($Installer) {
     if (-not $Iscc) { $Iscc = (Get-Command ISCC.exe -ErrorAction Stop).Source }
     & $Iscc /Q "/DAppVersion=$Version" "/DAppNumericVersion=$numericVersion" "/DSourceDir=$stage" `
-        "/DOutputDir=$OutDir" "/DOutputBaseFilename=$stem-setup" "/DTargetArch=$(@{ amd64 = 'x64'; arm64 = 'arm64' }[$Arch])" `
+        "/DOutputDir=$OutDir" "/DOutputBaseFilename=$Stem-setup" "/DTargetArch=$(@{ amd64 = 'x64'; arm64 = 'arm64' }[$Arch])" `
         (Join-Path $repo 'scripts\platform\windows\kisakcod.iss')
     if ($LASTEXITCODE) { throw 'The Inno Setup compiler failed.' }
-    $outputs += Join-Path $OutDir "$stem-setup.exe"
+    $outputs += Join-Path $OutDir "$Stem-setup.exe"
 }
 
 Get-ChildItem -LiteralPath $stage | ForEach-Object { '{0,-36} {1,10}' -f $_.Name, $_.Length }

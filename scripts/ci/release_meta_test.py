@@ -117,6 +117,18 @@ class MatrixTest(unittest.TestCase):
             ("kisakcod-1.2.3-windows-x64-headless-preview", "windows-headless", "windows-2025", "zip", ".exe", "x64"),
         ])
 
+    def test_windows_client_legs_build_with_their_vcpkg_triplet(self):
+        legs, missing = rm.build_matrix(manifest_with({("windows-amd64", "mp-client"): "fork_peer",
+                                                       ("windows-arm64", "mp-client"): "fork_peer"}), "1.2.3")
+        self.assertEqual(missing, [])
+        self.assertEqual([(leg["stem"], leg["recipe"], leg["runner"], leg["binary"], leg["file_arch"], leg["triplet"],
+                           leg["also"]) for leg in legs], [
+            ("kisakcod-1.2.3-windows-arm64-client-beta", "windows-client", "windows-11-arm", "KisakCOD-mp", "ARM64",
+             "arm64-windows", ["exe"]),
+            ("kisakcod-1.2.3-windows-x64-client-beta", "windows-client", "windows-2025", "KisakCOD-mp", "x64",
+             "x64-windows", ["exe"]),
+        ])
+
     def test_macos_leg_ships_a_tar_xz(self):
         legs, missing = rm.build_matrix(manifest_with({("macos-arm64", "headless-server"): "links"}), "1.2.3")
         self.assertEqual(missing, [])
@@ -372,6 +384,13 @@ class NotesTest(unittest.TestCase):
         stem = "kisakcod-0.2.0-linux-x64-client-beta"
         files = f"`{stem}.tar.xz`, `{stem}.deb`, `{stem}.rpm`, `{stem}.pkg.tar.zst`"
         self.assertIn(f"| {files} | linux-amd64 | mp-client |", run.stdout)
+
+    def test_a_windows_client_lists_its_installer(self):
+        self.legs, _ = rm.build_matrix(manifest_with({("windows-amd64", "mp-client"): "fork_peer"}), "0.2.0")
+        run = self.notes("v0.2.0")
+        self.assertEqual(run.returncode, 0, run.stderr)
+        stem = "kisakcod-0.2.0-windows-x64-client-beta"
+        self.assertIn(f"| `{stem}.zip`, `{stem}-setup.exe` | windows-amd64 | mp-client |", run.stdout)
 
     def test_first_release_lists_the_history(self):
         self.git("tag", "-d", "v0.1.0")
