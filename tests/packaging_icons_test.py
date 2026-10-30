@@ -13,7 +13,6 @@ from __future__ import annotations
 import re
 import struct
 import sys
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -50,17 +49,20 @@ def test_continuous_rect() -> None:
 
 def test_macos_variant() -> None:
     svg = (ROOT / "scripts/packaging/icons/kisakcod.svg").read_bytes()
-    root = ET.fromstring(make_icons.macos_variant(svg))
-    ns = {"s": make_icons.SVG_NS}
+    out = make_icons.macos_variant(svg).decode()
     shape = make_icons.continuous_rect(100, 100, 824, 185.4)
     for name in ("shape", "outline"):
-        node = root.find(f".//*[@id='{name}']", ns)
-        check(node is not None and node.get("d") == shape, f"#{name} is not the grid's squircle")
-    art = root.find(".//*[@id='art']", ns)
-    check(art is not None and "scale(0.858333)" in (art.get("transform") or ""), "the art is not fitted to 824")
-    shadow = [p for p in root.findall("s:path", ns) if p.get("filter") == "url(#mac-shadow)"]
-    check(len(shadow) == 1 and shadow[0].get("d") == shape, "no drop shadow under the squircle")
-    check(root.find(".//s:filter[@id='mac-shadow']", ns) is not None, "the shadow filter is missing")
+        found = re.search(rf'<path id="{name}" d="([^"]*)"', out)
+        check(found is not None and found.group(1) == shape, f"#{name} is not the grid's squircle")
+    art = re.search(r'<g id="art" transform="([^"]*)"', out)
+    check(art is not None and "scale(0.858333)" in art.group(1), "the art is not fitted to 824")
+    check(out.count(f'<path d="{shape}" fill="#000" filter="url(#mac-shadow)"/>') == 1,
+          "no drop shadow under the squircle")
+    check(out.index('<filter id="mac-shadow"') < out.index("</defs>") < out.index('filter="url(#mac-shadow)"/>'),
+          "the shadow filter is not defined before its use")
+    # The shadow sits under the clipped art, which sits under the outline.
+    check(out.index("url(#mac-shadow)\"/>") < out.index('clip-path="url(#clip)">') < out.index('id="outline"'),
+          "the layers are out of order")
 
 
 def test_ico_directory() -> None:

@@ -19,16 +19,15 @@ from __future__ import annotations
 
 import argparse
 import io
+import re
 import shutil
 import struct
 import subprocess  # nosec B404: runs the SVG renderer with fixed arguments
 import sys
 import tempfile
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-SVG_NS = "http://www.w3.org/2000/svg"
 ICO_SIZES = (16, 20, 24, 32, 40, 48, 64, 256)
 # OSType -> pixel size; every entry holds PNG data (macOS 10.7 and later).
 ICNS_TYPES = (("icp4", 16), ("icp5", 32), ("ic11", 32), ("icp6", 64), ("ic12", 64), ("ic07", 128),
@@ -68,30 +67,32 @@ def continuous_rect(x: float, y: float, size: float, r: float) -> str:
 
 
 def macos_variant(svg: bytes) -> bytes:
-    """The artwork on Apple's grid: the squircle shape, scaled art, a shadow."""
-    ET.register_namespace("", SVG_NS)
-    root = ET.fromstring(svg)
-    ns = {"s": SVG_NS}
+    """Place the artwork on Apple's grid: squircle shape, fitted art, shadow.
+
+    kisakcod.svg marks what changes with ids, so plain substitution does it:
+    #shape and #outline take the grid's squircle, #art is fitted to it, and
+    a shadow path goes in under the clipped art.
+    """
+    text = svg.decode()
     margin = (1024 - MAC_BODY) / 2
     shape = continuous_rect(margin, margin, MAC_BODY, MAC_RADIUS)
+
+    def one(pattern: str, repl: str, what: str) -> None:
+        nonlocal text
+        text, n = re.subn(pattern, repl, text)
+        if n != 1:
+            raise SystemExit(f"make_icons: kisakcod.svg has {n} {what}, not 1")
+
     for name in ("shape", "outline"):
-        node = root.find(f".//*[@id='{name}']", ns)
-        if node is None:
-            raise SystemExit(f"make_icons: kisakcod.svg has no #{name}")
-        node.set("d", shape)
-    art = root.find(".//*[@id='art']", ns)
-    if art is None:
-        raise SystemExit("make_icons: kisakcod.svg has no #art")
+        one(rf'(<path id="{name}" d=")[^"]*(")', rf"\g<1>{shape}\g<2>", f"#{name} paths")
     # The full-bleed art fills 32-992; fit that box to the grid's body.
     scale = MAC_BODY / 960
-    art.set("transform", f"translate(512 512) scale({scale:.6f}) translate(-512 -512)")
-    defs = root.find("s:defs", ns)
-    shadow = ET.SubElement(defs, f"{{{SVG_NS}}}filter", id="mac-shadow", x="-10%", y="-10%",
-                           width="120%", height="120%")
-    ET.SubElement(shadow, f"{{{SVG_NS}}}feDropShadow", dx="0", dy="10", stdDeviation="10",
-                  attrib={"flood-color": "#000", "flood-opacity": ".3"})
-    root.insert(1, ET.Element(f"{{{SVG_NS}}}path", d=shape, fill="#000", filter="url(#mac-shadow)"))
-    return ET.tostring(root)
+    one(r'<g id="art">', f'<g id="art" transform="translate(512 512) scale({scale:.6f}) translate(-512 -512)">',
+        "#art groups")
+    one(r"</defs>", '<filter id="mac-shadow" x="-10%" y="-10%" width="120%" height="120%">'
+        '<feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#000" flood-opacity=".3"/></filter>\n'
+        f'  </defs>\n  <path d="{shape}" fill="#000" filter="url(#mac-shadow)"/>', "</defs> tags")
+    return text.encode()
 
 
 def renderer() -> list[str]:
@@ -104,13 +105,14 @@ def renderer() -> list[str]:
 
 
 def render(svg: bytes, size: int, command: list[str], work: Path) -> bytes:
-    """svg at size x size, as a PNG with no timestamps."""
+    """Render svg at size x size as a PNG with no timestamps."""
     from PIL import Image  # only rendering needs Pillow
 
     src, out = work / "icon.svg", work / "icon.png"
     src.write_bytes(svg)
     args = [a.format(size=size, out=out, svg=src) for a in command]
-    subprocess.run(args, check=True)  # nosec B603: a fixed renderer and our own paths
+    # A renderer found by renderer() and our own temp paths; no shell, no user input.
+    subprocess.run(args, check=True)  # nosec B603  # nosemgrep
     with Image.open(out) as image:
         image = image.convert("RGBA")
         if image.size != (size, size):
