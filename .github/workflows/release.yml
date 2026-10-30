@@ -727,22 +727,23 @@ jobs:
             -DKISAK_MACOS_BUNDLE=ON -DKISAK_BUNDLE_RUNTIME_PREFIX="${RUNTIME}/prefix" \
             -DKISAK_BUNDLE_MESA_PREFIX="${RUNTIME}/mesa-prefix" \
             -DKISAK_BUNDLE_DXVK_LIB="${PWD}/build-release/dxvk-macos/lib/libdxvk_d3d9.0.dylib" \
-            -DKISAK_BUNDLE_DEDI="${PWD}/bin/KisakCOD-dedi" -DKISAK_PACKAGE_VERSION="$VERSION"
+            -DKISAK_BUNDLE_DEDI="${PWD}/bin/KisakCOD-dedi" -DKISAK_PACKAGE_VERSION="$VERSION" \
+            -DKISAK_BUNDLE_DSYM="${PWD}/symbols/${STEM}/KisakCOD-mp.dSYM"
           cmake --build build-release --target kisak_dxvk_macos
           cmake --build build-release --target KisakCOD-mp --parallel "$(sysctl -n hw.ncpu)"
 
-      # Each binary's DWARF goes into a dSYM before it is stripped; stripping
-      # voids the ad-hoc signature, so each is signed again.
-      - name: Split the debug symbols into dSYMs
+      # The server's DWARF goes into a dSYM before it is stripped; stripping
+      # voids the ad-hoc signature, so it is signed again. The client's dSYM
+      # comes from bundle.sh (KISAK_BUNDLE_DSYM): the dmg target relinks the
+      # client, so only the bundled copy can be stripped.
+      - name: Split the server's debug symbols into a dSYM
         if: matrix.recipe == 'macos-client'
         timeout-minutes: 15
         run: |
           mkdir -p "symbols/${STEM}"
-          for bin in KisakCOD-mp KisakCOD-dedi; do
-            dsymutil "bin/${bin}" -o "symbols/${STEM}/${bin}.dSYM"
-            strip -S -x "bin/${bin}"
-            codesign --force --sign - "bin/${bin}"
-          done
+          dsymutil bin/KisakCOD-dedi -o "symbols/${STEM}/KisakCOD-dedi.dSYM"
+          strip -S -x bin/KisakCOD-dedi
+          codesign --force --sign - bin/KisakCOD-dedi
 
       # bundle.sh assembles and signs the app; package_dmg.sh checks it on the
       # mounted image.

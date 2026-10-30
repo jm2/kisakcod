@@ -11,12 +11,15 @@
 #   bundle.sh --app <out.app> --client <KisakCOD-mp> --runtime-prefix <dir>
 #             --mesa-prefix <dir> --dxvk-lib <libdxvk_d3d9.0.dylib>
 #             [--licenses <dir>] [--dxvk-license <file>] [--version <short version>]
+#             [--dsym <out.dSYM>]
 #
 # --licenses defaults to <runtime-prefix>/share/licenses (one directory per
 # component, from the runtime project); --dxvk-license is dxvk's LICENSE.
+# --dsym gathers the client's DWARF into <out.dSYM> and strips the bundled copy,
+# so the dSYM matches the binary that ships whenever the client was relinked.
 set -euo pipefail
 
-APP="" CLIENT="" RUNTIME="" MESA="" DXVK="" LICENSES="" DXVK_LICENSE="" VERSION="0.1.0"
+APP="" CLIENT="" RUNTIME="" MESA="" DXVK="" LICENSES="" DXVK_LICENSE="" VERSION="0.1.0" DSYM=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --app) APP="$2"; shift 2 ;;
@@ -27,6 +30,7 @@ while [ $# -gt 0 ]; do
         --licenses) LICENSES="$2"; shift 2 ;;
         --dxvk-license) DXVK_LICENSE="$2"; shift 2 ;;
         --version) VERSION="$2"; shift 2 ;;
+        --dsym) DSYM="$2"; shift 2 ;;
         *) echo "bundle: unknown argument $1" >&2; exit 2 ;;
     esac
 done
@@ -85,6 +89,12 @@ ICD_DIR="$RESOURCES/vulkan/icd.d"
 mkdir -p "$MACOS" "$FRAMEWORKS" "$ICD_DIR" "$RESOURCES/licenses"
 cp -f "$CLIENT" "$MACOS/KisakCOD-mp"
 chmod +x "$MACOS/KisakCOD-mp"
+if [ -n "$DSYM" ]; then
+    # The UUID survives the install-name rewrites and the signing below.
+    mkdir -p "$(dirname "$DSYM")"
+    dsymutil "$CLIENT" -o "$DSYM"
+    strip -S -x "$MACOS/KisakCOD-mp"
+fi
 
 is_system() {
     case "$1" in
