@@ -736,7 +736,7 @@ bool __cdecl R_Cinematic_BinkOpen(
     uint32_t errTextSize)
 {
     char *cwd; // [esp+4h] [ebp-20Ch]
-    char filepath[3][256];
+    CinematicMoviePaths filepath;
     int pathCount;
 
     cwd = Sys_Cwd();
@@ -751,7 +751,7 @@ bool __cdecl R_Cinematic_BinkOpen(
                 "%s\n\t(playbackFlags) = %i",
                 "(playbackFlags & 0x00000008)",
                 playbackFlags);
-        _snprintf(filepath[0], 0x100u, "video/%s.%s", filename, "bik");
+        _snprintf(filepath[0].data(), filepath[0].size(), "video/%s.%s", filename, "bik");
         pathCount = 1;
     }
     else
@@ -773,7 +773,7 @@ bool __cdecl R_Cinematic_BinkOpen(
     }
     for (int pathIndex = 0; pathIndex < pathCount; ++pathIndex)
     {
-        if (R_Cinematic_BinkOpenPath(filepath[pathIndex], playbackFlags, errText, errTextSize))
+        if (R_Cinematic_BinkOpenPath(filepath[pathIndex].data(), playbackFlags, errText, errTextSize))
             return 1;
     }
     return 0;

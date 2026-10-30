@@ -5,11 +5,11 @@
 
 namespace
 {
-bool MoviePath(char *path, const char *root, const char *folder, const char *filename, char separator)
+bool MoviePath(std::array<char, 256> &path, const char *root, const char *folder, const char *filename, char separator)
 {
     const int length = std::snprintf(
-        path, 256, "%s%c%s%cvideo%c%s.bik", root, separator, folder, separator, separator, filename);
-    return length >= 0 && length < 256;
+        path.data(), path.size(), "%s%c%s%cvideo%c%s.bik", root, separator, folder, separator, separator, filename);
+    return length >= 0 && length < (int)path.size();
 }
 }
 
@@ -18,7 +18,7 @@ int R_CinematicMoviePaths(
     const char *basePath,
     const char *filename,
     char separator,
-    char (*paths)[256])
+    CinematicMoviePaths &paths)
 {
     int count = 0;
     if (homePath && *homePath && std::strcmp(homePath, basePath) != 0)

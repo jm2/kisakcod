@@ -35,12 +35,12 @@ void ExpectPath(const char *got, const std::string &want, const char *what)
 }
 
 // The first path that opens, as R_Cinematic_BinkOpen's loop takes it.
-const char *FirstOpened(char (*paths)[256], int count)
+const char *FirstOpened(const CinematicMoviePaths &paths, int count)
 {
     for (int index = 0; index < count; ++index)
     {
-        if (std::ifstream(paths[index], std::ios::binary))
-            return paths[index];
+        if (std::ifstream(paths[index].data(), std::ios::binary))
+            return paths[index].data();
     }
     return nullptr;
 }
@@ -59,7 +59,7 @@ int main()
     const fs::path movie = home / "main" / "video" / "atvi.bik";
     std::ofstream(movie, std::ios::binary) << "BIKi";
 
-    char paths[3][256];
+    CinematicMoviePaths paths{};
     const std::string homeText = home.string();
     const std::string baseText = base.string();
     int count = R_CinematicMoviePaths(homeText.c_str(), baseText.c_str(), "atvi", sep, paths);
@@ -70,15 +70,15 @@ int main()
         ExpectPath(opened, movie.string(), "the home path's movie opens");
     if (count == 3)
     {
-        ExpectPath(paths[0], (home / "main" / "video" / "atvi.bik").string(), "home path first");
-        ExpectPath(paths[1], (base / "main" / "video" / "atvi.bik").string(), "then the game folder's main");
-        ExpectPath(paths[2], (base / "raw" / "video" / "atvi.bik").string(), "then the game folder's raw");
+        ExpectPath(paths[0].data(), (home / "main" / "video" / "atvi.bik").string(), "home path first");
+        ExpectPath(paths[1].data(), (base / "main" / "video" / "atvi.bik").string(), "then the game folder's main");
+        ExpectPath(paths[2].data(), (base / "raw" / "video" / "atvi.bik").string(), "then the game folder's raw");
     }
 
     count = R_CinematicMoviePaths("", "/game", "atvi", '/', paths);
     Expect(count == 2, "an empty home path is skipped");
     if (count == 2)
-        ExpectPath(paths[0], "/game/main/video/atvi.bik", "retail's path without a home path");
+        ExpectPath(paths[0].data(), "/game/main/video/atvi.bik", "retail's path without a home path");
 
     count = R_CinematicMoviePaths("/game", "/game", "atvi", '/', paths);
     Expect(count == 2, "a home path that is the game folder is skipped");
