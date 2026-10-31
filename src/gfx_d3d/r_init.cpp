@@ -4506,7 +4506,10 @@ bool R_SwitchDisplayModeInPlace(vidConfig_t *vidConfigOut)
     // below, and R_FatalInitError would end the game; the full restart creates
     // a new device instead.
     if (dx.device->TestCooperativeLevel() != D3D_OK)
+    {
+        Com_Printf(8, "vid_restart: the device is lost; full restart\n");
         return false;
+    }
     std::vector<const char *> latched;
     Dvar_ForEach(R_AddLatchedName, &latched);
     const bool fullscreenChanged = r_fullscreen->current.enabled != (vidConfig.isFullscreen != 0);
