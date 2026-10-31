@@ -802,8 +802,9 @@ static void CL_FreeVidRestartBuffers()
 }
 
 // #953: a restart that only changes the display mode switches it in place, so
-// the map, cgame and the connection stay up. Screen placement and the console
-// width follow the new size; everything else reads cls.vidConfig each frame.
+// the map, cgame and the connection stay up. Screen placement, the console
+// width and cgame's view size follow the new size; the rest reads
+// cls.vidConfig each frame.
 static bool CL_SwitchDisplayModeInPlace()
 {
     if (!cls.rendererStarted || !R_SwitchDisplayModeInPlace(&cls.vidConfig))
@@ -811,7 +812,12 @@ static bool CL_SwitchDisplayModeInPlace()
     ScrPlace_SetupUnsafeViewport(&scrPlaceFullUnsafe, 0, 0, cls.vidConfig.displayWidth, cls.vidConfig.displayHeight);
     ScrPlace_SetupViewport(&scrPlaceFull, 0, 0, cls.vidConfig.displayWidth, cls.vidConfig.displayHeight);
     for (int32_t localClientNum = 0; localClientNum < 1; ++localClientNum)
+    {
         ScrPlace_SetupViewport(&scrPlaceView[localClientNum], 0, 0, cls.vidConfig.displayWidth, cls.vidConfig.displayHeight);
+        // CG_Init keeps the 3D view's size and aspect in cgs.
+        if (clientUIActives[localClientNum].cgameInitialized)
+            CG_InitViewDimensions(localClientNum);
+    }
     g_console_field_width = cls.vidConfig.displayWidth - 48;
     g_consoleField.widthInPixels = cls.vidConfig.displayWidth - 48;
     return true;
