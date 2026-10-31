@@ -23,9 +23,9 @@ Owner, 2026-10-27: bugs first. Rule-4 PRs with a test that fails without
 the fix and a `Retail check:` line (ADR-0009); new crash and memory bugs
 join by rank.
 
-Drained 2026-10-31 (LAN bugs #940-#977 via #943-#977). Left: SP-only
-#195 #204; #270 (parked); #278 deltas; #914 (dxvk tests not in CI); #954
-(x86 address space: 0.1.0 known limit); #964 #965 (owner check on #977).
+Drained 2026-10-31 (LAN bugs #940-#977 via #943-#977). Left: SP-only #195,
+#204; #270 (parked); #278 deltas; #914 (dxvk tests not in CI); #954 (x86
+address space: 0.1.0 known limit); #964 #965 (owner check on #977).
 
 ## Queue
 
