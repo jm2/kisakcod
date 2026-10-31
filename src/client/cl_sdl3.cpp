@@ -279,7 +279,7 @@ bool CL_SdlCreateWindow(GfxWindowParms *wndParms, bool borderless)
     s_buttons = 0;
     s_motionX = s_motionY = 0.0f;
     s_focused = (SDL_GetWindowFlags(s_window) & SDL_WINDOW_INPUT_FOCUS) != 0;
-    SDL_StartTextInput(s_window);
+    // Text input follows the key catchers (SyncTextInput, each pump).
 
     // MainWndProc's WM_CREATE work.
 #ifdef _WIN32
@@ -325,6 +325,25 @@ void CL_SdlDestroyWindow(void *nativeWindow)
     SDL_QuitSubSystem(SDL_INIT_VIDEO);
 }
 
+namespace
+{
+// Text input only when CL_CharEvent would take the characters: the console
+// (catcher 0x1), the chat line (0x20), a menu (0x10), or the full-screen
+// console while disconnected. In play it stays off: on macOS an active text
+// input shows the press-and-hold accent picker while a movement key is held.
+void SyncTextInput()
+{
+    const bool wanted = (clientUIActives[0].keyCatchers & 0x31) != 0
+        || clientUIActives[0].connectionState == CA_DISCONNECTED;
+    if (wanted == SDL_TextInputActive(s_window))
+        return;
+    if (wanted)
+        SDL_StartTextInput(s_window);
+    else
+        SDL_StopTextInput(s_window);
+}
+} // namespace
+
 bool CL_SdlPumpEvents()
 {
     if (!s_window)
@@ -333,6 +352,7 @@ bool CL_SdlPumpEvents()
     // otherwise. The render thread's loading keep-alive leaves them queued.
     if (SDL_GetCurrentThreadID() != s_windowThread)
         return true;
+    SyncTextInput();
     SDL_Event ev;
     while (SDL_PollEvent(&ev))
         HandleEvent(ev);
