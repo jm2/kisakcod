@@ -61,6 +61,7 @@ ScreenPlacement scrPlaceView[1];
 field_t g_consoleField;
 
 // The rest of the client, renderer and file system: no-ops.
+WEAK void CG_InitViewDimensions(int) {}
 WEAK void CL_CreateDevGui() {}
 WEAK void CL_DestroyDevGui() {}
 WEAK const char *CL_GetConfigString(int, unsigned int) { return ""; }
@@ -136,6 +137,8 @@ WEAK void R_ConfigureRenderer(const GfxConfiguration *) {}
 WEAK Font_s *R_RegisterFont(const char *, int) { return nullptr; }
 WEAK void R_Shutdown(int) {}
 WEAK void R_SyncRenderThread() {}
+// No in-place mode switch (#953): every restart here is the full one.
+WEAK bool R_SwitchDisplayModeInPlace(vidConfig_t *) { return false; }
 WEAK void ScrPlace_SetupUnsafeViewport(ScreenPlacement *, int, int, int, int) {}
 WEAK void ScrPlace_SetupViewport(ScreenPlacement *, int, int, int, int) {}
 WEAK void SEH_UpdateLanguageInfo() {}
