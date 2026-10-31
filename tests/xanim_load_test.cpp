@@ -235,6 +235,29 @@ bool TestTransactionalRollback()
     return true;
 }
 
+// Contract (#219): Rollback restores the failed flag Begin saw. A failure
+// latched inside the transaction is cleared; one latched before Begin is
+// not revived.
+bool TestRollbackKeepsFailureFromBeforeBegin()
+{
+    std::vector<unsigned char> bytes(16);
+    unsigned char *pos = bytes.data();
+
+    buf_cursor::Activate(bytes.data(), bytes.size());
+    buf_cursor::AnchorPos(&pos);
+    buf_cursor::Begin();
+    buf_cursor::Fail();
+    buf_cursor::Rollback();
+    CHECK(!buf_cursor::Failed());
+
+    buf_cursor::Fail();
+    buf_cursor::Begin();
+    buf_cursor::Rollback();
+    CHECK(buf_cursor::Failed());
+    buf_cursor::Deactivate();
+    return true;
+}
+
 // Contract: ReadString scans until NUL or end-of-buffer, then validates
 // the length against maxStringLen. A buffer with no NUL terminator
 // fails (no unbounded strlen scan runs past the end).
@@ -411,6 +434,7 @@ int RunAll()
     CHECK(TestOverrunLatchesFailed());
     CHECK(TestAnchorPosSync());
     CHECK(TestTransactionalRollback());
+    CHECK(TestRollbackKeepsFailureFromBeforeBegin());
     CHECK(TestReadStringBounds());
     CHECK(TestReadBoneLimit());
     CHECK(TestReadTriLimit());
