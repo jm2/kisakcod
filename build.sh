@@ -236,8 +236,11 @@ build_dxvk_native() {
         run_cmd git clone --filter=blob:none "$DXVK_NATIVE_REPO" "$src"
     fi
     run_cmd git -C "$src" fetch --quiet origin "$DXVK_NATIVE_COMMIT"
+    # The Linux runtime's Direct3DCreate9 patch (#970), on a clean checkout.
+    run_cmd git -C "$src" checkout --quiet -- src/d3d9/d3d9_main.cpp
     run_cmd git -C "$src" checkout --quiet --detach "$DXVK_NATIVE_COMMIT"
     run_cmd git -C "$src" submodule update --init --recursive --quiet
+    run_cmd git -C "$src" apply "$repo_root/scripts/platform/linux/runtime/dxvk-create-d3d9-catch.patch"
     run_cmd rm -rf "$bld"
     run_cmd meson setup "$bld" "$src" --buildtype=release --prefix="$prefix" --libdir=lib \
         -Dnative_sdl3=enabled -Dnative_sdl2=disabled -Dnative_glfw=disabled
