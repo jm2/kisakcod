@@ -17,6 +17,23 @@ set(ENV{PKG_CONFIG_PATH} "")
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(KISAK_DXVK_D3D9 REQUIRED IMPORTED_TARGET dxvk-d3d9)
 
+# The release links dxvk's libstdc++ statically, which is what kept its error
+# from reaching the client (#970). A dxvk on the shared libstdc++ passes the
+# test below without exercising that, so it must not need one.
+set(_kisak_dxvk_lib "${KISAK_DXVK_PREFIX}/lib/libdxvk_d3d9.so.0")
+find_program(KISAK_READELF readelf REQUIRED)
+execute_process(COMMAND ${KISAK_READELF} -d "${_kisak_dxvk_lib}"
+    OUTPUT_VARIABLE _kisak_dxvk_dynamic RESULT_VARIABLE _kisak_readelf_result)
+if (NOT _kisak_readelf_result EQUAL 0)
+    message(FATAL_ERROR "readelf couldn't read ${_kisak_dxvk_lib}")
+endif()
+if (_kisak_dxvk_dynamic MATCHES "NEEDED[^\n]*libstdc\\+\\+")
+    message(FATAL_ERROR "${_kisak_dxvk_lib} needs the shared libstdc++, so dxvk's -static-libstdc++ "
+        "found no static libstdc++ and the release build isn't reproduced. Install it "
+        "(libstdc++-static on Fedora and RHEL; Debian's and Ubuntu's libstdc++-dev has it) "
+        "and rebuild the runtime.")
+endif()
+
 set(_kisak_repo "${CMAKE_CURRENT_SOURCE_DIR}/../../..")
 add_executable(posix_direct3d_check
     "${_kisak_repo}/tests/posix_direct3d_tests.cpp"
