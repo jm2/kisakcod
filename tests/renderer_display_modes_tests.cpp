@@ -8,6 +8,7 @@
 // mode for fullscreen entered with Alt+Enter. R_CanSwitchModeInPlace decides
 // whether CL_Vid_Restart_f switches the display mode in place. R_IsWindowedMove
 // decides which game-window moves are kept as the windowed position.
+// R_TakeFrameToDrop drops the frame an in-place switch left behind.
 
 #include <cstdio>
 #include <initializer_list>
@@ -154,6 +155,17 @@ int main()
     Move(xpos, ypos);
     Move(120, 80);
     Kept(120, 80, "the window's moves are kept again");
+
+    // R_TakeFrameToDrop over the frames around an in-place switch (#981): the
+    // frame being built when the switch reset the device holds a null pretess
+    // index buffer, and drawing it ended the game with ERR_FATAL on antec-win.
+    bool dropFrame = false;
+    const auto Drawn = [&] { return !R_TakeFrameToDrop(&dropFrame); };
+    Expect(Drawn(), 1, "frames draw before a switch");
+    dropFrame = true; // R_SwitchDisplayModeInPlace
+    Expect(Drawn(), 0, "the frame the switch left behind is dropped");
+    Expect(Drawn(), 1, "the next frame draws");
+    Expect(Drawn(), 1, "and so do the ones after it");
 
     // R_FirstFullRestartDvar names the dvar vid_restart logs when it falls
     // back: the index of the returned name in latched, or -1 for none.

@@ -119,3 +119,10 @@ bool R_IsWindowedMove(bool fullscreen, bool windowFullscreen)
 {
     return !fullscreen && !windowFullscreen;
 }
+
+bool R_TakeFrameToDrop(bool *dropFrame)
+{
+    const bool drop = *dropFrame;
+    *dropFrame = false;
+    return drop;
+}

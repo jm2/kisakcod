@@ -4490,6 +4490,13 @@ static void R_AttachWindowParms(const GfxWindowParms *wndParms)
     R_StoreWindowSettings(wndParms);
 }
 
+static bool s_dropFrameAfterModeSwitch;
+
+bool R_DropFrameAfterModeSwitch()
+{
+    return R_TakeFrameToDrop(&s_dropFrameAfterModeSwitch);
+}
+
 bool R_SwitchDisplayModeInPlace(vidConfig_t *vidConfigOut)
 {
     iassert(Sys_IsMainThread());
@@ -4546,6 +4553,7 @@ bool R_SwitchDisplayModeInPlace(vidConfig_t *vidConfigOut)
     }
     R_EndDeviceReset(remoteScreenUpdateNesting);
     R_InitGamma();
+    s_dropFrameAfterModeSwitch = true;
     memcpy(vidConfigOut, &vidConfig, sizeof(vidConfig_t));
     return switched;
 }

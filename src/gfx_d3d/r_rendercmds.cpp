@@ -321,7 +321,7 @@ void __cdecl R_IssueRenderCommands(uint32_t type)
     bool v1; // [esp+1Eh] [ebp-16h]
 
     iassert( Sys_IsMainThread() || Sys_IsRenderThread() );
-    if (R_CheckLostDevice())
+    if (!R_DropFrameAfterModeSwitch() && R_CheckLostDevice())
     {
         PROF_SCOPED("R_IssueRenderCommands");
         frontEndDataOut->drawType = type;
