@@ -61,6 +61,9 @@ PrivilegesRequiredOverridesAllowed=commandline
 CloseApplications=yes
 CloseApplicationsFilter=KisakCOD-mp.exe,KisakCOD-dedi.exe
 SetupLogging=yes
+; File times are stored in UTC, so they install unshifted on a host in another
+; time zone from the compiling runner's (#947).
+TimeStampsInUTC=yes
 #if TargetArch == "arm64"
 ArchitecturesAllowed=arm64
 ArchitecturesInstallIn64BitMode=arm64
