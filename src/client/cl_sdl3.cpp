@@ -270,11 +270,18 @@ bool CL_SdlCreateWindow(GfxWindowParms *wndParms, bool borderless)
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_Y_NUMBER, wndParms->y);
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, wndParms->displayWidth);
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, wndParms->displayHeight);
+#ifdef __APPLE__
+    // macOS fullscreen is the window's own native (Spaces) fullscreen, over a
+    // windowed device (R_SetD3DPresentParameters, #974).
+    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_BORDERLESS_BOOLEAN, borderless);
+    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_FULLSCREEN_BOOLEAN, wndParms->fullscreen);
+#else
     // The Win32 path makes fullscreen a hidden topmost popup that
     // R_CreateGameWindow shows once the device exists.
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_BORDERLESS_BOOLEAN, wndParms->fullscreen || borderless);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_HIDDEN_BOOLEAN, wndParms->fullscreen);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_ALWAYS_ON_TOP_BOOLEAN, wndParms->fullscreen);
+#endif
     s_window = SDL_CreateWindowWithProperties(props);
     s_windowThread = SDL_GetCurrentThreadID();
     SDL_DestroyProperties(props);
@@ -315,6 +322,28 @@ void CL_SdlSetWindowMode(const GfxWindowParms *wndParms, bool borderless)
 {
     if (!s_window || NativeHandle(s_window) != wndParms->hwnd)
         return;
+#ifdef __APPLE__
+    // Native (Spaces) fullscreen, as other macOS games do: with a fullscreen
+    // device instead, dxvk's own mode switch fought this window's and the
+    // screen went black (#974). The back buffer keeps r_mode's size, and dxvk
+    // scales it to the window.
+    if (wndParms->fullscreen)
+    {
+        SDL_SetWindowFullscreenMode(s_window, nullptr);
+        SDL_SetWindowFullscreen(s_window, true);
+    }
+    else
+    {
+        SDL_SetWindowFullscreen(s_window, false);
+        SDL_SyncWindow(s_window);
+        SDL_SetWindowBordered(s_window, !borderless);
+        SDL_SetWindowSize(s_window, wndParms->displayWidth, wndParms->displayHeight);
+        SDL_SetWindowPosition(s_window, wndParms->x, wndParms->y);
+    }
+    SDL_SyncWindow(s_window);
+    SDL_ShowWindow(s_window);
+    return;
+#endif
     SDL_SetWindowBordered(s_window, !(wndParms->fullscreen || borderless));
     SDL_SetWindowAlwaysOnTop(s_window, wndParms->fullscreen);
     SDL_SetWindowSize(s_window, wndParms->displayWidth, wndParms->displayHeight);
@@ -380,13 +409,36 @@ void CL_SdlRaiseWindow()
         SDL_RaiseWindow(s_window);
 }
 
+namespace
+{
+// Back-buffer pixels per window unit. The menus take the cursor in back-buffer
+// pixels, as the Win32 client's are; macOS native fullscreen makes the window
+// the display's size while dxvk scales r_mode's back buffer to it (#977).
+void BackBufferPerWindowUnit(float *sx, float *sy)
+{
+    *sx = 1.0f;
+    *sy = 1.0f;
+    int w = 0;
+    int h = 0;
+    if (s_window && SDL_GetWindowSize(s_window, &w, &h) && w > 0 && h > 0 && vidConfig.displayWidth &&
+        vidConfig.displayHeight)
+    {
+        *sx = static_cast<float>(vidConfig.displayWidth) / static_cast<float>(w);
+        *sy = static_cast<float>(vidConfig.displayHeight) / static_cast<float>(h);
+    }
+}
+} // namespace
+
 void CL_SdlTakeMouseMotion(int *x, int *y, int *dx, int *dy)
 {
     float fx = 0.0f;
     float fy = 0.0f;
     SDL_GetMouseState(&fx, &fy);
-    *x = static_cast<int>(fx);
-    *y = static_cast<int>(fy);
+    float sx;
+    float sy;
+    BackBufferPerWindowUnit(&sx, &sy);
+    *x = static_cast<int>(fx * sx);
+    *y = static_cast<int>(fy * sy);
     *dx = static_cast<int>(s_motionX);
     *dy = static_cast<int>(s_motionY);
     s_motionX -= static_cast<float>(*dx);
@@ -401,8 +453,12 @@ void CL_SdlSetMouseCaptured(bool captured)
 
 void CL_SdlWarpMouse(int x, int y)
 {
-    if (s_window)
-        SDL_WarpMouseInWindow(s_window, static_cast<float>(x), static_cast<float>(y));
+    if (!s_window)
+        return;
+    float sx;
+    float sy;
+    BackBufferPerWindowUnit(&sx, &sy);
+    SDL_WarpMouseInWindow(s_window, static_cast<float>(x) / sx, static_cast<float>(y) / sy);
 }
 
 bool CL_SdlIsMinimized()

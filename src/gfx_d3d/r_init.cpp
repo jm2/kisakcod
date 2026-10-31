@@ -3984,10 +3984,24 @@ void __cdecl R_SetD3DPresentParameters(_D3DPRESENT_PARAMETERS_ *d3dpp, const Gfx
     d3dpp->EnableAutoDepthStencil = 0;
     d3dpp->AutoDepthStencilFormat = dx.depthStencilFormat;
     d3dpp->PresentationInterval = r_vsync->current.enabled ? 1 : 0x80000000;
+#if defined(KISAK_DXVK_NATIVE) && defined(__APPLE__)
+    // Presenting without vsync in native fullscreen blinks whole frames black
+    // through KosmicKrisp's direct-to-display path, so fullscreen is synced
+    // (#964). Windowed still follows r_vsync.
+    if (wndParms->fullscreen)
+        d3dpp->PresentationInterval = 1;
+#endif
     iassert( wndParms->hwnd );
     d3dpp->hDeviceWindow = wndParms->hwnd;
     d3dpp->Flags = 0;
-    if (wndParms->fullscreen)
+#if defined(KISAK_DXVK_NATIVE) && defined(__APPLE__)
+    // macOS fullscreen is the window's native fullscreen (CL_SdlSetWindowMode),
+    // so the device stays windowed and dxvk never switches modes (#974).
+    const bool exclusive = false;
+#else
+    const bool exclusive = wndParms->fullscreen;
+#endif
+    if (exclusive)
     {
         d3dpp->Windowed = 0;
         d3dpp->FullScreen_RefreshRateInHz = wndParms->hz;
