@@ -3222,9 +3222,7 @@ char __cdecl R_PreCreateWindow()
         char error[256];
         dx.d3d9 = Posix_Direct3DCreate9(error, sizeof(error));
         if (!dx.d3d9)
-            R_FatalInitError(va("Couldn't start Vulkan or the display: %s\n"
-                                "This needs an unlocked desktop session and a Vulkan driver.",
-                                error));
+            R_FatalInitError(va("Couldn't start Vulkan or the display: %s", error));
 #else
         dx.d3d9 = Direct3DCreate9(0x20u);
 #endif

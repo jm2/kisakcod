@@ -27,14 +27,18 @@ private:
 };
 } // namespace dxvk
 
+namespace
+{
+// A failed attempt leaves dxvk's global state half set up, and a second
+// Direct3DCreate9 then crashes inside it, so every later call returns the
+// first failure.
+bool s_failed = false;
+char s_failure[256] = "unknown error";
+} // namespace
+
 IDirect3D9 *Posix_Direct3DCreate9(char *error, std::size_t errorSize)
 {
-    // A failed attempt leaves dxvk's global state half set up, and a second
-    // Direct3DCreate9 then crashes inside it, so every later call returns the
-    // first failure.
-    static bool failed = false;
-    static std::string failure = "unknown error";
-    if (!failed)
+    if (!s_failed)
     {
         try
         {
@@ -42,17 +46,17 @@ IDirect3D9 *Posix_Direct3DCreate9(char *error, std::size_t errorSize)
         }
         catch (const dxvk::DxvkError &e)
         {
-            failure = e.message();
+            std::snprintf(s_failure, sizeof(s_failure), "%s", e.message().c_str());
         }
         catch (const std::exception &e)
         {
-            failure = e.what();
+            std::snprintf(s_failure, sizeof(s_failure), "%s", e.what());
         }
         catch (...)
         {
         }
-        failed = true;
+        s_failed = true;
     }
-    std::snprintf(error, errorSize, "%s", failure.c_str());
+    std::snprintf(error, errorSize, "%s", s_failure);
     return nullptr;
 }
