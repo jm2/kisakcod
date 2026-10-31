@@ -267,6 +267,21 @@ void CheckPortRetry()
     (void)Sys_SocketClose(&blocker);
     g_net_ip_latch.current.string = nullptr;
 }
+// Retail UDP_OpenSocket enables SO_BROADCAST on the game socket: the LAN
+// server scan sends NA_BROADCAST through Sys_SendPacket, which the OS
+// refuses on a socket without it.
+void CheckBroadcastSend()
+{
+    g_net_ip_latch.current.string = nullptr;
+    NET_Init();
+    netadr_t to;
+    std::memset(&to, 0, sizeof(to));
+    to.type = NA_BROADCAST;
+    to.port = BigShort(28960);
+    unsigned char payload[] = {0xff, 0xff, 0xff, 0xff, 'g', 'e', 't', 'i', 'n', 'f', 'o'};
+    Check(Sys_SendPacket(sizeof(payload), payload, to) == 1, "an NA_BROADCAST packet leaves the game socket");
+    NET_Shutdown();
+}
 // Retail's local-subnet LAN rule: an address in the same /24 as one of the
 // host's addresses is LAN even outside the private ranges.
 void CheckLocalSubnetRule()
@@ -293,6 +308,7 @@ int main()
     CheckNetLayerLifecycle();
     CheckNamedInterfaceBind();
     CheckPortRetry();
+    CheckBroadcastSend();
 
     if (g_failures == 0)
         std::printf("net_local: %d checks passed\n", g_checks);
