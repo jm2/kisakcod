@@ -1024,6 +1024,30 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_tests_properties(qsort-pointer-arrays PROPERTIES TIMEOUT 20)
 endif()
 
+# Where the Windows client finds localization.txt (win32/win_localize.cpp,
+# #982): the working directory, then the command line's fs_basepath, then
+# the exe's folder. The lookup is portable, so it runs with the other
+# engine-TU tests on Linux and clang.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(kisakcod-win-localize-tests win_localize_tests.cpp
+        ${SRC_DIR}/win32/win_localize.cpp ${SRC_DIR}/qcommon/com_fileaccess.cpp
+        ${SRC_DIR}/universal/q_parse.cpp ${SRC_DIR}/universal/q_shared.cpp)
+    target_compile_definitions(kisakcod-win-localize-tests PRIVATE KISAK_MP UNIX)
+    target_include_directories(kisakcod-win-localize-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    add_dependencies(kisakcod-win-localize-tests update_build_number)
+    target_compile_features(kisakcod-win-localize-tests PRIVATE cxx_std_20)
+    target_compile_options(kisakcod-win-localize-tests PRIVATE -fms-extensions -ffunction-sections -fdata-sections)
+    target_link_options(kisakcod-win-localize-tests PRIVATE -Wl,--gc-sections)
+    if (CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+        target_compile_options(kisakcod-win-localize-tests PRIVATE -fsanitize-address-globals-dead-stripping)
+        target_link_options(kisakcod-win-localize-tests PRIVATE -Wl,-z,start-stop-gc)
+    endif()
+    set_target_properties(kisakcod-win-localize-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME win-localize-basepath COMMAND kisakcod-win-localize-tests)
+    set_tests_properties(win-localize-basepath PROPERTIES TIMEOUT 20)
+endif()
+
 # 64-bit pointer truncations on headless server paths (WS-3 silent hazards):
 # the production TUs at 64-bit, one executable per subject (see the test's
 # header). Linux, clang and 64-bit only, for the reasons the dvar test gives;
