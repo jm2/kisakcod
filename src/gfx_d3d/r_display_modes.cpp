@@ -108,3 +108,8 @@ bool R_CanSwitchModeInPlace(const char *const *latchedNames, uint32_t count, boo
                            [&](std::string_view dvar) { return sameName(dvar, name); });
     });
 }
+
+bool R_IsWindowedMove(bool fullscreen, bool windowFullscreen)
+{
+    return !fullscreen && !windowFullscreen;
+}

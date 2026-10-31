@@ -4,6 +4,7 @@
 #include <SDL3/SDL.h>
 
 #include <client/client.h>
+#include <gfx_d3d/r_display_modes.h>
 #include <gfx_d3d/r_dvars.h>
 #include <gfx_d3d/r_init.h>
 #include <qcommon/cmd.h>
@@ -146,10 +147,17 @@ void WindowMoved(const SDL_WindowEvent &window)
         IN_ActivateMouse(0);
         return;
     }
-    Dvar_SetInt(vid_xpos, window.data1);
-    Dvar_SetInt(vid_ypos, window.data2);
-    Dvar_ClearModified(const_cast<dvar_s *>(vid_xpos));
-    Dvar_ClearModified(const_cast<dvar_s *>(vid_ypos));
+    // Not for a window still fullscreen after Alt+Enter has cleared
+    // r_fullscreen, nor for one a restart has since destroyed: its events can
+    // still be queued (#946).
+    if (s_window && window.windowID == SDL_GetWindowID(s_window) &&
+        R_IsWindowedMove(r_fullscreen->current.enabled, vidConfig.isFullscreen != 0))
+    {
+        Dvar_SetInt(vid_xpos, window.data1);
+        Dvar_SetInt(vid_ypos, window.data2);
+        Dvar_ClearModified(const_cast<dvar_s *>(vid_xpos));
+        Dvar_ClearModified(const_cast<dvar_s *>(vid_ypos));
+    }
     if (s_focused)
         IN_Activate(1);
 }

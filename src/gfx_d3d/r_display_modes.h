@@ -42,3 +42,12 @@ bool R_KeepFullscreenAtDesktop(bool atDesktop, bool fullscreen, int mode, int *a
 // is a change and each latched dvar sets the display mode: r_mode,
 // r_fullscreen, r_displayRefresh, r_aspectRatio, r_customMode or r_vsync.
 bool R_CanSwitchModeInPlace(const char *const *latchedNames, uint32_t count, bool fullscreenChanged);
+
+// Whether a move of the game window is the windowed position that
+// MainWndProc's WM_MOVE, and the SDL3 window-moved event, keep in vid_xpos
+// and vid_ypos for the next window (#946). windowFullscreen is the mode the
+// renderer last gave the window (vidConfig.isFullscreen). Retail checks only
+// r_fullscreen, but Alt+Enter clears it before the vid_restart that makes the
+// fullscreen window a window, and that window's moves to (0, 0) in between
+// put the next window there.
+bool R_IsWindowedMove(bool fullscreen, bool windowFullscreen);

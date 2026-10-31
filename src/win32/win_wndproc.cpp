@@ -12,6 +12,7 @@
 
 #include <sound/snd_public.h>
 
+#include <gfx_d3d/r_display_modes.h>
 #include <gfx_d3d/r_dvars.h>
 #include <gfx_d3d/r_init.h>
 #include <qcommon/cmd.h>
@@ -454,10 +455,15 @@ LRESULT WINAPI MainWndProc(
 			r.bottom = 1;
 			style = GetWindowLongA(hWnd, -16);
 			AdjustWindowRect(&r, style, 0);
-			Dvar_SetInt(vid_xpos, r.left + xPos);
-			Dvar_SetInt(vid_ypos, r.top + yPos);
-			Dvar_ClearModified((dvar_s*)vid_xpos);
-			Dvar_ClearModified((dvar_s*)vid_ypos);
+			// Not while the window is still fullscreen, after Alt+Enter has
+			// cleared r_fullscreen (#946).
+			if (R_IsWindowedMove(r_fullscreen->current.enabled, vidConfig.isFullscreen != 0))
+			{
+				Dvar_SetInt(vid_xpos, r.left + xPos);
+				Dvar_SetInt(vid_ypos, r.top + yPos);
+				Dvar_ClearModified((dvar_s*)vid_xpos);
+				Dvar_ClearModified((dvar_s*)vid_ypos);
+			}
 			if (g_wv.activeApp)
 				IN_Activate(1);
 		}
