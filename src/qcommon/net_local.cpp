@@ -166,6 +166,15 @@ bool OpenSockets()
     }
     if (boundPort != port && net_port)
         Dvar_SetInt(net_port, boundPort);
+    // Retail UDP_OpenSocket sets SO_BROADCAST on the game socket, and
+    // Sys_SendPacket sends NA_BROADCAST (the LAN server scan) through it.
+    if (Sys_SocketEnableBroadcast(gameSocket) != SysSocketOptionStatus::Applied)
+    {
+        (void)Sys_SocketClose(&gameSocket);
+        gameSocket = nullptr;
+        SetError("couldn't enable broadcast on the IP socket");
+        return false;
+    }
 
     // The broadcast socket is best effort: LAN discovery is optional and a
     // host that refuses a second bind still runs the server.
