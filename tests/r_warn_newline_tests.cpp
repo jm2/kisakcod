@@ -13,6 +13,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <string_view>
 
 r_globals_t rg;
 
@@ -28,6 +29,7 @@ void Com_PrintWarning(int, const char *fmt, ...)
 {
     va_list va;
     va_start(va, fmt);
+    // flawfinder: ignore (test-only capture stub forwards the production TU format)
     std::vsnprintf(g_printed, sizeof(g_printed), fmt, va);
     va_end(va);
     ++g_prints;
@@ -76,8 +78,9 @@ int main()
         else
             R_WarnOncePerFrame(static_cast<GfxWarningType>(type), 7, 8);
 
-        const size_t len = std::strlen(g_printed);
-        if (g_prints != 1 || len < 2 || g_printed[len - 1] != '\n' || std::strchr(g_printed, '\n') != g_printed + len - 1)
+        // vsnprintf NUL-terminates within the buffer.
+        const std::string_view printed(g_printed);
+        if (g_prints != 1 || printed.size() < 2 || printed.back() != '\n' || printed.find('\n') != printed.size() - 1)
         {
             std::fprintf(stderr, "FAIL warning %d: %d prints, \"%s\" does not end in exactly one newline\n", type, g_prints, g_printed);
             ++failures;
