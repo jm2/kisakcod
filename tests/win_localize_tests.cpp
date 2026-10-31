@@ -10,11 +10,15 @@
 #include <qcommon/qcommon.h>
 #include <universal/q_shared.h>
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <string>
+
+#include <unistd.h>
 
 #define WEAK __attribute__((weak))
 
@@ -97,16 +101,22 @@ void TestFindsLocalization(const std::filesystem::path &install)
 int main()
 {
     namespace fs = std::filesystem;
-    const fs::path root = fs::temp_directory_path() / ("kc-win-localize-" + std::to_string(std::rand()));
+    // A folder this run creates (create_directory fails if it exists), named
+    // for the process and the clock, holds fixed names.
+    const auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
+    const fs::path root = fs::temp_directory_path()
+        / ("kc-win-localize-" + std::to_string(getpid()) + "-" + std::to_string(ticks));
+    if (!fs::create_directory(root))
+    {
+        std::fprintf(stderr, "FAIL the test folder already exists\n");
+        return 1;
+    }
     const fs::path install = root / "cod4";
     const fs::path elsewhere = root / "elsewhere";
-    fs::create_directories(install);
-    fs::create_directories(elsewhere);
-    if (FILE *f = std::fopen((install / "localization.txt").string().c_str(), "w"))
-    {
-        std::fputs("russian\nWIN_COMPUTER_CHANGE_TITLE\n\"Hardware\"\nWIN_COMPUTER_CHANGE_BODY\n\"Hardware changed\"\n", f);
-        std::fclose(f);
-    }
+    fs::create_directory(install);
+    fs::create_directory(elsewhere);
+    std::ofstream(install / "localization.txt")
+        << "russian\nWIN_COMPUTER_CHANGE_TITLE\n\"Hardware\"\nWIN_COMPUTER_CHANGE_BODY\n\"Hardware changed\"\n";
     fs::current_path(elsewhere); // no localization.txt here, as for an installed exe
 
     TestCommandLineBasePath();

@@ -26,22 +26,34 @@ char* __cdecl Win_GetLanguage()
 	return localization.language;
 }
 
+static bool Win_IsCommandLineSpace(char c)
+{
+    return c == ' ' || c == '\t';
+}
+
+// Whether c ends the token: the closing quote of a quoted token, else
+// whitespace.
+static bool Win_EndsCommandLineToken(char c, bool quoted)
+{
+    return quoted ? c == '"' : Win_IsCommandLineSpace(c);
+}
+
 // The next token of a command line, split as Cmd_TokenizeString splits it:
 // whitespace separates tokens and quotes group them. Empty at the end.
 static const char *Win_NextCommandLineToken(const char *line, char *token, int tokenSize)
 {
     int length = 0;
-    while (*line == ' ' || *line == '\t')
+    while (Win_IsCommandLineSpace(*line))
         ++line;
     const bool quoted = *line == '"';
     if (quoted)
         ++line;
-    for (; *line && (quoted ? *line != '"' : *line != ' ' && *line != '\t'); ++line)
+    for (; *line && !Win_EndsCommandLineToken(*line, quoted); ++line)
     {
         if (length < tokenSize - 1)
             token[length++] = *line;
     }
-    if (quoted && *line == '"')
+    if (*line == '"')
         ++line;
     token[length] = 0;
     return line;
