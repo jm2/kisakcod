@@ -30,3 +30,12 @@ uint32_t CL_SdlCodepointToCp1252(uint32_t codepoint);
 // The reverse, for text the engine hands back (the clipboard): a CP1252 byte
 // -> its Unicode code point, or 0 for a control or unassigned byte.
 uint32_t CL_SdlCp1252ToCodepoint(uint8_t byte);
+
+// The SDL_Keymod bits the fullscreen toggle reads (SDL_keycode.h).
+constexpr uint32_t kSdlModAlt = 0x0100u | 0x0200u; // SDL_KMOD_LALT | SDL_KMOD_RALT
+constexpr uint32_t kSdlModGui = 0x0400u | 0x0800u; // SDL_KMOD_LGUI | SDL_KMOD_RGUI
+
+// Whether a key press is the fullscreen toggle: Return (scancode 40) with
+// Command on macOS (apple), the Mac convention, and with Alt elsewhere, as
+// Win32's WM_SYSKEYDOWN. Such a press is the toggle only, never a game key.
+bool CL_SdlIsFullscreenToggle(uint32_t scancode, uint32_t mods, bool apple);

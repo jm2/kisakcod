@@ -26,6 +26,7 @@ static_assert(SDL_SCANCODE_KP_1 == 89 && SDL_SCANCODE_KP_0 == 98 && SDL_SCANCODE
 static_assert(SDL_SCANCODE_KP_EQUALS == 103 && SDL_SCANCODE_LCTRL == 224 && SDL_SCANCODE_RALT == 230);
 static_assert(SDL_BUTTON_LMASK == 1 && SDL_BUTTON_MMASK == 2 && SDL_BUTTON_RMASK == 4);
 static_assert(SDL_BUTTON_X1MASK == 8 && SDL_BUTTON_X2MASK == 16);
+static_assert(kSdlModAlt == SDL_KMOD_ALT && kSdlModGui == SDL_KMOD_GUI);
 
 // win32/win_wndproc.cpp is not built with KISAK_CLIENT_SDL3; these are its
 // definitions. r_dvars.cpp registers the dvars.
@@ -83,10 +84,19 @@ int32_t ControlChar(const SDL_KeyboardEvent &key)
 void KeyEvent(const SDL_KeyboardEvent &key)
 {
     const uint32_t eventTime = EventTime(key.timestamp);
-    // MainWndProc's WM_SYSKEYDOWN: Alt+Enter toggles fullscreen (#917).
-    if (key.down && !key.repeat && key.scancode == SDL_SCANCODE_RETURN && (key.mod & SDL_KMOD_ALT))
+    // MainWndProc's WM_SYSKEYDOWN: Alt+Enter toggles fullscreen (#917);
+    // Command+Return on macOS. Every press of the combination is the toggle's,
+    // held repeats too, so it never reaches a binding or the chat line as
+    // Enter; only the first press toggles, as WM_SYSKEYDOWN's auto-repeat bit
+    // does on Win32.
+#if defined(__APPLE__)
+    constexpr bool apple = true;
+#else
+    constexpr bool apple = false;
+#endif
+    if (key.down && CL_SdlIsFullscreenToggle(key.scancode, key.mod, apple))
     {
-        if (client_state != 7 && r_fullscreen)
+        if (!key.repeat && client_state != 7 && r_fullscreen)
         {
             const bool fullscreen = !r_fullscreen->current.enabled;
             Dvar_SetBool(r_fullscreen, fullscreen);

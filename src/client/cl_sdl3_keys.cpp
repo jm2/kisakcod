@@ -164,3 +164,8 @@ uint32_t CL_SdlCp1252ToCodepoint(uint8_t byte)
         return kHighBlock[byte - 0x80];
     return 0;
 }
+
+bool CL_SdlIsFullscreenToggle(uint32_t scancode, uint32_t mods, bool apple)
+{
+    return scancode == 40 && (mods & (apple ? kSdlModGui : kSdlModAlt)) != 0;
+}

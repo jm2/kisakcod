@@ -96,6 +96,23 @@ int main()
             Expect(static_cast<int32_t>(CL_SdlCodepointToCp1252(cp)), static_cast<int32_t>(byte), "CP1252 round trip");
     }
 
+    // Fullscreen: Command+Return on macOS, Alt+Enter elsewhere; the other
+    // modifier is an ordinary Enter on each.
+    const auto toggle = [](uint32_t scancode, uint32_t mods, bool apple) {
+        return static_cast<int32_t>(CL_SdlIsFullscreenToggle(scancode, mods, apple));
+    };
+    Expect(toggle(40, 0x0400, true), 1, "macOS: left Command+Return toggles");
+    Expect(toggle(40, 0x0800, true), 1, "macOS: right Command+Return toggles");
+    Expect(toggle(40, 0x0100, true), 0, "macOS: Option+Return does not toggle");
+    Expect(toggle(40, 0x0200, true), 0, "macOS: right Option+Return does not toggle");
+    Expect(toggle(40, 0x0100, false), 1, "Linux/Windows: Alt+Enter toggles");
+    Expect(toggle(40, 0x0200, false), 1, "Linux/Windows: right Alt+Enter toggles, as WM_SYSKEYDOWN");
+    Expect(toggle(40, 0x0400, false), 0, "Linux/Windows: Super+Enter does not toggle");
+    Expect(toggle(40, 0, true), 0, "macOS: plain Return");
+    Expect(toggle(40, 0, false), 0, "plain Enter");
+    Expect(toggle(88, 0x0400, true), 0, "macOS: keypad Enter is not the toggle");
+    Expect(toggle(4, 0x0400, true), 0, "macOS: Command+A is not the toggle");
+
     if (failures)
         return 1;
     std::puts("client-sdl3-keys: all checks passed");
