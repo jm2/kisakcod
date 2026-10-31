@@ -269,16 +269,31 @@ void CheckPortRetry()
 }
 // Retail UDP_OpenSocket enables SO_BROADCAST on the game socket: the LAN
 // server scan sends NA_BROADCAST through Sys_SendPacket, which the OS
-// refuses on a socket without it.
+// refuses on a socket without it. A host with no route to the limited
+// broadcast address refuses even a socket that has it, so a probe socket
+// with broadcast enabled decides whether the host can take the check.
 void CheckBroadcastSend()
 {
+    unsigned char payload[] = {0xff, 0xff, 0xff, 0xff, 'g', 'e', 't', 'i', 'n', 'f', 'o'};
+    const SysSocketAddress limited{{255, 255, 255, 255}, 28960};
+    SysSocketHandle probe = nullptr;
+    const bool canBroadcast = Sys_SocketOpenUdp(0, true, &probe) == SysSocketOpenStatus::Opened
+        && Sys_SocketEnableBroadcast(probe) == SysSocketOptionStatus::Applied
+        && Sys_SocketSendTo(probe, payload, sizeof(payload), &limited) == SysSocketSendStatus::Sent;
+    if (probe)
+        (void)Sys_SocketClose(&probe);
+    if (!canBroadcast)
+    {
+        std::printf("net_local: this host has no broadcast route; skipping the NA_BROADCAST check\n");
+        return;
+    }
+
     g_net_ip_latch.current.string = nullptr;
     NET_Init();
     netadr_t to;
     std::memset(&to, 0, sizeof(to));
     to.type = NA_BROADCAST;
     to.port = BigShort(28960);
-    unsigned char payload[] = {0xff, 0xff, 0xff, 0xff, 'g', 'e', 't', 'i', 'n', 'f', 'o'};
     Check(Sys_SendPacket(sizeof(payload), payload, to) == 1, "an NA_BROADCAST packet leaves the game socket");
     NET_Shutdown();
 }
