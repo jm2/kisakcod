@@ -71,6 +71,18 @@ void TestCommandLineBasePath()
               == "C:\\Program Files (x86)\\cod4",
         "a quoted fs_basepath from +seta");
     Check(BasePath("+set fs_basepath a +SET fs_basepath b") == "b", "the last fs_basepath wins");
+    // Dvar_Set_f joins the value tokens with single spaces, as
+    // Dvar_GetCombinedString does, so an unquoted path keeps its spaces.
+    Check(BasePath("+set fs_basepath C:\\Program Files\\KisakCOD  x86 +set name kc")
+              == "C:\\Program Files\\KisakCOD x86",
+        "an unquoted fs_basepath keeps its spaces");
+    Check(BasePath("+set fs_basepath \"C:\\Program Files\\cod4\" +set name kc") == "C:\\Program Files\\cod4",
+        "a quoted fs_basepath with spaces");
+    // Without a value Dvar_Set_f does nothing, so an earlier value stands.
+    Check(BasePath("+set fs_basepath C:\\cod4 +set fs_basepath") == "C:\\cod4", "a valueless last fs_basepath");
+    Check(BasePath("+set fs_basepath C:\\cod4 +set fs_basepath  +set name kc") == "C:\\cod4",
+        "a valueless fs_basepath before another +set");
+    Check(BasePath("+set fs_basepath") == "<none>", "only a valueless fs_basepath sets none");
     Check(BasePath("+set FS_BASEPATH a") == "<none>", "the dvar name matches exactly");
     Check(BasePath("+set name fs_basepath") == "<none>", "only the dvar name counts");
     Check(BasePath("") == "<none>", "an empty command line sets none");

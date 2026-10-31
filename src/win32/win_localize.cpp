@@ -59,15 +59,39 @@ static const char *Win_NextCommandLineToken(const char *line, char *token, int t
     return line;
 }
 
+// The value of a set command from its third token on, the tokens joined with
+// single spaces as Dvar_GetCombinedString joins them; false when there is no
+// third token, which Dvar_Set_f ignores.
+static bool Win_CommandLineValue(const char *rest, char *value, int valueSize)
+{
+    char token[MAX_OSPATH];
+    bool hasValue = false;
+    value[0] = 0;
+    for (;;)
+    {
+        while (Win_IsCommandLineSpace(*rest))
+            ++rest;
+        if (!*rest)
+            return hasValue;
+        rest = Win_NextCommandLineToken(rest, token, sizeof(token));
+        if (hasValue)
+            I_strncat(value, valueSize, " ");
+        I_strncat(value, valueSize, token);
+        hasValue = true;
+    }
+}
+
 bool __cdecl Win_CommandLineBasePath(const char *commandLine, char *path, int pathSize)
 {
     char line[1024];
     char token[MAX_OSPATH];
     bool found = false;
 
+    char value[MAX_OSPATH];
+
     // Com_ParseCommandLine starts a line at each '+' or newline, and
-    // Com_StartupVariable applies "set" or "seta" (case-insensitive) to a
-    // dvar named exactly fs_basepath; a later line wins.
+    // Com_StartupVariable applies "set" or "seta" (case-insensitive) with a
+    // value to a dvar named exactly fs_basepath; a later line wins.
     while (*commandLine)
     {
         int length = 0;
@@ -85,10 +109,9 @@ bool __cdecl Win_CommandLineBasePath(const char *commandLine, char *path, int pa
         if (I_stricmp(token, "set") && I_stricmp(token, "seta"))
             continue;
         next = Win_NextCommandLineToken(next, token, sizeof(token));
-        if (strcmp(token, "fs_basepath"))
+        if (strcmp(token, "fs_basepath") || !Win_CommandLineValue(next, value, sizeof(value)))
             continue;
-        Win_NextCommandLineToken(next, token, sizeof(token));
-        I_strncpyz(path, token, pathSize);
+        I_strncpyz(path, value, pathSize);
         found = true;
     }
     return found;
