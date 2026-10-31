@@ -4473,8 +4473,8 @@ bool R_SwitchDisplayModeInPlace(vidConfig_t *vidConfigOut)
     const bool fullscreenChanged = r_fullscreen->current.enabled != (vidConfig.isFullscreen != 0);
     if (!R_CanSwitchModeInPlace(latched.data(), static_cast<uint32_t>(latched.size()), fullscreenChanged))
     {
-        if (!latched.empty())
-            Com_Printf(8, "vid_restart: %s needs a full restart\n", latched[0]);
+        if (const char *other = R_FirstFullRestartDvar(latched.data(), static_cast<uint32_t>(latched.size())))
+            Com_Printf(8, "vid_restart: %s needs a full restart\n", other);
         return false;
     }
     const dvar_s *const displayModeDvars[] = {r_mode, r_fullscreen, r_displayRefresh, r_aspectRatio, r_customMode, r_vsync};

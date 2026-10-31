@@ -42,3 +42,8 @@ bool R_KeepFullscreenAtDesktop(bool atDesktop, bool fullscreen, int mode, int *a
 // is a change and each latched dvar sets the display mode: r_mode,
 // r_fullscreen, r_displayRefresh, r_aspectRatio, r_customMode or r_vsync.
 bool R_CanSwitchModeInPlace(const char *const *latchedNames, uint32_t count, bool fullscreenChanged);
+
+// The first of latchedNames that doesn't set the display mode, so the restart
+// must be the full one; null when every latched dvar sets it. vid_restart
+// logs it when it falls back.
+const char *R_FirstFullRestartDvar(const char *const *latchedNames, uint32_t count);

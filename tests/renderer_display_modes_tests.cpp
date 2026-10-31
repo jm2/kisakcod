@@ -122,6 +122,22 @@ int main()
     Expect(InPlace({"r_mod"}), 0, "a prefix of a display dvar restarts");
     Expect(InPlace({"r_modex"}), 0, "a longer name restarts");
 
+    // R_FirstFullRestartDvar names the dvar vid_restart logs when it falls
+    // back: the index of the returned name in latched, or -1 for none.
+    const auto FullRestartDvar = [](std::initializer_list<const char *> latched) {
+        const char *other = R_FirstFullRestartDvar(latched.begin(), static_cast<uint32_t>(latched.size()));
+        for (size_t index = 0; index < latched.size(); ++index)
+        {
+            if (latched.begin()[index] == other)
+                return static_cast<int>(index);
+        }
+        return -1;
+    };
+    Expect(FullRestartDvar({"r_fullscreen", "r_ignorehwgamma"}), 1, "the fallback names the non-display dvar");
+    Expect(FullRestartDvar({"r_picmip", "loc_language"}), 0, "the first of several");
+    Expect(FullRestartDvar({"r_mode", "r_fullscreen"}), -1, "none when every dvar sets the mode");
+    Expect(FullRestartDvar({}), -1, "none when nothing is latched");
+
     if (g_failures)
         return 1;
     std::printf("renderer-display-modes: all checks passed\n");
