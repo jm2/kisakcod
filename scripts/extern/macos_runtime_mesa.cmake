@@ -12,14 +12,19 @@
 # (see README). Only the ICD dylib is shipped; the .spv it generates follows
 # those tools byte for byte, so it is a build artifact and never committed.
 #
-# The patch fixes two leaks, about 1.5 KB a frame (#971).
+# The patch fixes leaks in KosmicKrisp (#971, #974).
 # mtl_new_render_pass_descriptor calls init on a descriptor `new` already
 # initialized, so every render pass leaks the first color attachment array.
 # kk_queue_submit presents the drawable kk_encode_drawable_present retained,
 # then drops it without a release, so every frame leaks a CAMetalDrawable.
+# A blit command buffer freed or re-recorded before its submit never released
+# its drawable either. dxvk holds one acquired image at each swapchain rebuild,
+# so every rebuild kept one of the CAMetalLayer's three drawables checked out;
+# after a fullscreen round trip nextDrawable blocked for good and the window
+# stayed black (#974).
 # The greps fail the build if an edit stops applying. ExternalProject splits
 # commands on ";", so a pattern spells it $<SEMICOLON>. Drop the patch once a
-# Mesa bump carries both fixes.
+# Mesa bump carries the fixes.
 ExternalProject_Add(kisak_runtime_mesa
     URL https://archive.mesa3d.org/mesa-26.2.4.tar.xz
     URL_HASH SHA256=bce5f7fbebb934373b86c999a064d52fb5065878dc57f287f95346648ec832e9
@@ -28,8 +33,12 @@ ExternalProject_Add(kisak_runtime_mesa
     UPDATE_COMMAND ""
     PATCH_COMMAND sed -i "" "s/\\[\\[MTL4RenderPassDescriptor new\\] init\\]/[MTL4RenderPassDescriptor new]/" src/kosmickrisp/bridge/mtl_render_state.m
         COMMAND sed -i "" "s/mtl_drawable_present(cmd_buffer->drawable)$<SEMICOLON>$/& mtl_release(cmd_buffer->drawable)$<SEMICOLON>/" src/kosmickrisp/vulkan/kk_queue.c
+        COMMAND sed -i "" "s/^   mtl_release(cmd->argument_table)$<SEMICOLON>$/   if (cmd->drawable) mtl_release(cmd->drawable)$<SEMICOLON> &/" src/kosmickrisp/vulkan/kk_cmd_buffer.c
+        COMMAND sed -i "" "s/^   mtl_retain(drawable)$<SEMICOLON>$/   if (cmd->drawable) mtl_release(cmd->drawable)$<SEMICOLON> &/" src/kosmickrisp/vulkan/kk_wsi.c
         COMMAND grep -q "return \\[MTL4RenderPassDescriptor new\\]$<SEMICOLON>" src/kosmickrisp/bridge/mtl_render_state.m
         COMMAND grep -q "mtl_drawable_present(cmd_buffer->drawable)$<SEMICOLON> mtl_release(cmd_buffer->drawable)$<SEMICOLON>" src/kosmickrisp/vulkan/kk_queue.c
+        COMMAND grep -q "if (cmd->drawable) mtl_release(cmd->drawable)$<SEMICOLON>    mtl_release(cmd->argument_table)" src/kosmickrisp/vulkan/kk_cmd_buffer.c
+        COMMAND grep -q "if (cmd->drawable) mtl_release(cmd->drawable)$<SEMICOLON>    mtl_retain(drawable)" src/kosmickrisp/vulkan/kk_wsi.c
     DEPENDS kisak_runtime_zstd kisak_runtime_spirv_tools
     CONFIGURE_COMMAND ${CMAKE_COMMAND} -E env
         PATH=${KISAK_MESA_PYTHON_BIN_DIR}:${KISAK_LLVM_BIN_DIR}:$ENV{PATH}
