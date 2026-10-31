@@ -1,0 +1,27 @@
+# Builds the client's Direct3DCreate9 wrapper test (tests/posix_direct3d_tests.cpp)
+# against a runtime prefix's dxvk-native (#970). The Linux runtime project adds
+# it as an ExternalProject after dxvk and runs it with no Vulkan driver, so a
+# prefix whose dxvk aborts the client instead of failing with a reason fails
+# to build.
+cmake_minimum_required(VERSION 3.20)
+project(kisakcod_dxvk_check CXX)
+
+set(KISAK_DXVK_PREFIX "" CACHE PATH "the runtime prefix holding dxvk-native's lib/ and include/")
+if (NOT KISAK_DXVK_PREFIX)
+    message(FATAL_ERROR "Set KISAK_DXVK_PREFIX to the runtime prefix")
+endif()
+
+# Only the prefix's dxvk-d3d9.pc, never a host install.
+set(ENV{PKG_CONFIG_LIBDIR} "${KISAK_DXVK_PREFIX}/lib/pkgconfig")
+set(ENV{PKG_CONFIG_PATH} "")
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(KISAK_DXVK_D3D9 REQUIRED IMPORTED_TARGET dxvk-d3d9)
+
+set(_kisak_repo "${CMAKE_CURRENT_SOURCE_DIR}/../../..")
+add_executable(posix_direct3d_check
+    "${_kisak_repo}/tests/posix_direct3d_tests.cpp"
+    "${_kisak_repo}/src/_platform/posix/posix_direct3d.cpp")
+target_include_directories(posix_direct3d_check SYSTEM PRIVATE "${_kisak_repo}/src")
+target_compile_features(posix_direct3d_check PRIVATE cxx_std_20)
+target_link_libraries(posix_direct3d_check PRIVATE PkgConfig::KISAK_DXVK_D3D9)
+set_target_properties(posix_direct3d_check PROPERTIES BUILD_RPATH "${KISAK_DXVK_PREFIX}/lib")

@@ -1,10 +1,12 @@
 // Posix_Direct3DCreate9 (_platform/posix/posix_direct3d.cpp): dxvk-native's
 // Direct3DCreate9 throws dxvk::DxvkError when it can't start Vulkan or the
-// display, and the client aborted on it (#941). Here no Vulkan driver exists
-// (the test points the loader at a missing one), so the wrapper must return
-// null with dxvk's reason instead of throwing, and a second call must return
-// the same failure without going back into dxvk, whose half-initialized state
-// crashes a retry.
+// display, and the client aborted on it (#941); the Linux runtime's dxvk, with
+// libstdc++ linked in, still aborted it (#970) until patched to return null.
+// Here no Vulkan driver exists (the test points the loader at a missing one),
+// so the wrapper must return null with a reason instead of throwing or
+// aborting, and a second call must return the same failure without going back
+// into dxvk, whose half-initialized state crashes a retry. The Linux runtime
+// also builds this against its own dxvk (scripts/platform/dxvk_check).
 
 #include <cstdio>
 #include <cstdlib>
@@ -40,7 +42,7 @@ int main()
         std::printf("SKIP: a Vulkan driver started\n");
         return 0;
     }
-    Expect(first[0] != '\0' && std::strcmp(first, "unknown error") != 0, "the failure carries dxvk's reason");
+    Expect(first[0] != '\0' && std::strcmp(first, "unknown error") != 0, "the failure carries a reason");
     Expect(Posix_Direct3DCreate9(second, sizeof(second)) == nullptr, "a second call fails too");
     Expect(std::strcmp(first, second) == 0, "a second call reports the first failure");
     std::printf("reason: %s\n", first);

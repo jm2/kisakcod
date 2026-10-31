@@ -110,13 +110,18 @@ ExternalProject_Add(kisak_runtime_ffmpeg_check
 )
 
 # dxvk-native's D3D9 with only the SDL3 window-system backend, against the
-# SDL3 above.
+# SDL3 above. Its native build links libstdc++ statically, so an error it
+# throws out of Direct3DCreate9 can't be caught in the client, which aborts
+# (#970). The patch catches it inside dxvk, logs it and returns null; build.sh
+# applies the same one. The checkout makes the step safe to run again.
 ExternalProject_Add(kisak_runtime_dxvk
     DEPENDS kisak_runtime_sdl3
     GIT_REPOSITORY https://github.com/doitsujin/dxvk.git
     GIT_TAG b1a1c99ab52b687cf950d62c88bc2fa316b41663 # v3.1.1
     GIT_SUBMODULES_RECURSE ON
     UPDATE_COMMAND ""
+    PATCH_COMMAND git checkout -- src/d3d9/d3d9_main.cpp
+        COMMAND git apply ${CMAKE_CURRENT_SOURCE_DIR}/dxvk-create-d3d9-catch.patch
     CONFIGURE_COMMAND ${CMAKE_COMMAND} -E env PKG_CONFIG_PATH=${KISAK_RUNTIME_PREFIX}/lib/pkgconfig
         ${KISAK_MESON} setup <BINARY_DIR> <SOURCE_DIR>
         --buildtype=release --prefix=${KISAK_RUNTIME_PREFIX} --libdir=lib
@@ -128,6 +133,21 @@ ExternalProject_Add(kisak_runtime_dxvk
     LOG_CONFIGURE ON
     LOG_BUILD ON
     LOG_INSTALL ON
+)
+
+# With no Vulkan driver, the built dxvk must fail Direct3DCreate9 with a reason
+# instead of aborting the client (#970): build and run the client's wrapper
+# test, scripts/platform/dxvk_check, against the prefix, or fail the runtime.
+ExternalProject_Add(kisak_runtime_dxvk_check
+    DEPENDS kisak_runtime_dxvk
+    SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../dxvk_check
+    CMAKE_ARGS -DKISAK_DXVK_PREFIX=${KISAK_RUNTIME_PREFIX}
+    INSTALL_COMMAND ""
+    TEST_COMMAND ${CMAKE_COMMAND} -E env
+        LD_LIBRARY_PATH=${KISAK_RUNTIME_PREFIX}/lib
+        DXVK_WSI_DRIVER=SDL3 SDL_VIDEO_DRIVER=offscreen
+        VK_DRIVER_FILES=<BINARY_DIR>/no-such-icd.json VK_ICD_FILENAMES=<BINARY_DIR>/no-such-icd.json
+        <BINARY_DIR>/posix_direct3d_check
 )
 
 # Each component's license texts, into <prefix>/share/licenses/<component>/,

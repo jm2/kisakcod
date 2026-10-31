@@ -1,0 +1,20 @@
+--- a/src/d3d9/d3d9_main.cpp
++++ b/src/d3d9/d3d9_main.cpp
+@@ -20,7 +20,16 @@
+     if (!ppDirect3D9Ex)
+       return D3DERR_INVALIDCALL;
+ 
+-    *ppDirect3D9Ex = ref(new D3D9InterfaceEx(Extended, pOverrideList, OverrideCount));
++    // kisakcod (#970): this library links libstdc++ statically, so a
++    // DxvkError (no Vulkan driver, no display) can't be caught past it.
++    // Log it and fail here instead.
++    try {
++      *ppDirect3D9Ex = ref(new D3D9InterfaceEx(Extended, pOverrideList, OverrideCount));
++    } catch (const DxvkError& e) {
++      Logger::err(e.message());
++      *ppDirect3D9Ex = nullptr;
++      return D3DERR_NOTAVAILABLE;
++    }
+     return D3D_OK;
+   }
+ }

@@ -9,9 +9,11 @@
 #include <d3d9.h>
 
 // dxvk's exception type (src/util/util_error.h in the pinned fork): one
-// message string. dxvk-native's Direct3DCreate9 lets it escape, and its
+// message string. The macOS fork's Direct3DCreate9 lets it escape, and its
 // type_info is hidden in the library, so a matching declaration here catches
 // it by name (libc++ and libstdc++ both compare hidden type_infos by name).
+// The Linux build links libstdc++ statically, so its error can't be caught
+// here; the runtime patches it to log the error and return null (#970).
 namespace dxvk
 {
 class DxvkError
@@ -42,7 +44,10 @@ IDirect3D9 *Posix_Direct3DCreate9(char *error, std::size_t errorSize)
     {
         try
         {
-            return Direct3DCreate9(D3D_SDK_VERSION);
+            if (IDirect3D9 *d3d9 = Direct3DCreate9(D3D_SDK_VERSION))
+                return d3d9;
+            std::snprintf(s_failure, sizeof(s_failure), "%s",
+                          "Direct3DCreate9 returned no interface (the dxvk log has the reason)");
         }
         catch (const dxvk::DxvkError &e)
         {
