@@ -28,6 +28,10 @@
 #include <database/database.h>
 #include "r_scene.h"
 #include "r_rendertarget.h"
+
+#if defined(KISAK_DXVK_NATIVE)
+#include <_platform/posix/posix_direct3d.h>
+#endif
 #include "r_buffers.h"
 #include "rb_sky.h"
 #include "r_bsp.h"
@@ -3212,7 +3216,18 @@ char __cdecl R_PreCreateWindow()
     else
     {
         Com_Printf(8, "Getting Direct3D 9 interface...\n");
+#if defined(KISAK_DXVK_NATIVE)
+        // dxvk-native throws where D3D9 would return null; nothing can render
+        // without it, so stop with the reason instead of aborting.
+        char error[256];
+        dx.d3d9 = Posix_Direct3DCreate9(error, sizeof(error));
+        if (!dx.d3d9)
+            R_FatalInitError(va("Couldn't start Vulkan or the display: %s\n"
+                                "This needs an unlocked desktop session and a Vulkan driver.",
+                                error));
+#else
         dx.d3d9 = Direct3DCreate9(0x20u);
+#endif
         if (!dx.d3d9)
         {
             Com_Printf(8, "Direct3D 9 failed to initialize\n");

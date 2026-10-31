@@ -183,6 +183,11 @@ else()
     # (_platform/posix/posix_win32_window.h).
     if (KISAK_TARGET_NEEDS_CLIENT_MEDIA)
         target_sources(${PROJECT_NAME} PRIVATE ${SRC_DIR}/_platform/posix/d3dx9_native.cpp
-            ${SRC_DIR}/_platform/posix/posix_win32_window.cpp)
+            ${SRC_DIR}/_platform/posix/posix_win32_window.cpp
+            ${SRC_DIR}/_platform/posix/posix_desktop.cpp)
+        if (APPLE)
+            # posix_desktop.cpp asks the window server whether a dialog can show.
+            target_link_libraries(${PROJECT_NAME} PRIVATE "-framework CoreGraphics" "-framework CoreFoundation")
+        endif()
     endif()
 endif()

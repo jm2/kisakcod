@@ -1482,6 +1482,23 @@ if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
     set_tests_properties(cl-cinematic-connect-contracts PROPERTIES TIMEOUT 20)
 endif()
 
+# Posix_Direct3DCreate9 (_platform/posix/posix_direct3d.cpp): with no Vulkan
+# driver, dxvk-native's Direct3DCreate9 throws; the wrapper returns null with
+# its reason, and a second call doesn't go back into dxvk (#941). Linux only,
+# where pkg-config finds dxvk-d3d9, as the cinematic test above.
+if (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND KISAK_CIN_TEST_DXVK_D3D9_FOUND)
+    add_executable(kisakcod-posix-direct3d-tests posix_direct3d_tests.cpp ${SRC_DIR}/_platform/posix/posix_direct3d.cpp)
+    target_include_directories(kisakcod-posix-direct3d-tests SYSTEM PRIVATE ${SRC_DIR})
+    target_compile_features(kisakcod-posix-direct3d-tests PRIVATE cxx_std_20)
+    target_link_libraries(kisakcod-posix-direct3d-tests PRIVATE PkgConfig::KISAK_CIN_TEST_DXVK_D3D9)
+    set_target_properties(kisakcod-posix-direct3d-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME posix-direct3d-no-driver COMMAND kisakcod-posix-direct3d-tests)
+    # The client's SDL3 WSI on SDL's offscreen video driver, and a Vulkan
+    # driver file that doesn't exist (for the loader old and new).
+    set_tests_properties(posix-direct3d-no-driver PROPERTIES TIMEOUT 20
+        ENVIRONMENT "DXVK_WSI_DRIVER=SDL3;SDL_VIDEO_DRIVER=offscreen;VK_DRIVER_FILES=${CMAKE_CURRENT_BINARY_DIR}/no-such-icd.json;VK_ICD_FILENAMES=${CMAKE_CURRENT_BINARY_DIR}/no-such-icd.json")
+endif()
+
 # Portal winding helpers (gfx_d3d/r_dpvs.cpp): vertex i is winding[i], not
 # (*winding)[3 * i]. The renderer headers need d3d9.h: Linux clang builds
 # where pkg-config finds dxvk-d3d9, as the browser filter test above.
