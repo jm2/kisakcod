@@ -2984,6 +2984,103 @@ int RunWin32RemoveTreeContracts(const std::string &workingDirectory)
         return 1;
     return 0;
 }
+
+// Sys_FileSystemSetDataRoots (#948): a game folder whose main is a junction,
+// a data root that is itself one, and a home main that is one (ADR-0012's
+// layout) list through them; another home junction is still refused, and
+// Sys_FileSystemFindLink names a link.
+bool ListsOnly(
+    const std::string &path,
+    const char *const name,
+    const SysFileSystemEntryKind kind)
+{
+    std::vector<SysFileSystemDirectoryEntry> entries;
+    return Sys_FileSystemListDirectory(path.c_str(), 8, &entries) == SysFileSystemListStatus::Complete
+        && entries.size() == 1
+        && entries[0].name == name
+        && entries[0].kind == kind;
+}
+
+bool Refused(const std::string &path)
+{
+    std::vector<SysFileSystemDirectoryEntry> entries;
+    return Sys_FileSystemListDirectory(path.c_str(), 8, &entries) == SysFileSystemListStatus::Error;
+}
+
+bool TestDataRootsFollowLinks(const std::string &workingDirectory)
+{
+    SetCheckStage("data-roots/setup");
+    const std::string store = MakeUniquePath(workingDirectory) + "-store";
+    const std::string storeMain = Join(store, "main");
+    const std::string iwd = Join(storeMain, "iw_00.iwd");
+    const std::string game = MakeUniquePath(workingDirectory) + "-game";
+    const std::string gameMain = Join(game, "main");
+    const std::string library = MakeUniquePath(workingDirectory) + "-library";
+    const std::string home = MakeUniquePath(workingDirectory) + "-home";
+    const std::string homeMain = Join(home, "main");
+    const std::string homeMods = Join(home, "mods");
+    if (!Check(Sys_FileSystemCreateDirectory(store.c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(storeMain.c_str()))
+        || !Check(WriteFile(iwd))
+        || !Check(Sys_FileSystemCreateDirectory(game.c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(home.c_str())))
+    {
+        return false;
+    }
+    const bool gameLinked = CreateJunctionNative(gameMain, storeMain);
+    const bool homeLinked = gameLinked && CreateJunctionNative(homeMain, storeMain);
+    const bool libraryLinked = homeLinked && CreateJunctionNative(library, game)
+        && CreateJunctionNative(homeMods, storeMain);
+    const auto cleanUp = [&]() {
+        (void)RemoveDirectoryNative(homeMods);
+        (void)RemoveDirectoryNative(library);
+        (void)RemoveDirectoryNative(homeMain);
+        (void)RemoveDirectoryNative(gameMain);
+        (void)RemoveFileNative(iwd);
+        (void)RemoveDirectoryNative(storeMain);
+        (void)RemoveDirectoryNative(store);
+        (void)RemoveDirectoryNative(game);
+        (void)RemoveDirectoryNative(home);
+    };
+    if (!libraryLinked)
+    {
+        const bool skip = !gameLinked && JunctionFailedWithoutPrivilege();
+        if (skip)
+            std::fputs("SKIP: Windows host cannot create junction reparse points\n", stderr);
+        cleanUp();
+        return skip || Check(false);
+    }
+
+    std::string link;
+    SetCheckStage("data-roots/refused-before-roots");
+    bool ok = Check(Refused(gameMain));
+    SetCheckStage("data-roots/home-main-refused-before-roots");
+    ok = ok && Check(Refused(homeMain));
+    // FS_Startup's home main ends in a separator.
+    const std::string homeMainRoot = homeMain + "\\";
+    const char *const roots[] = {game.c_str(), library.c_str(), homeMainRoot.c_str()};
+    Sys_FileSystemSetDataRoots(roots, 3);
+    SetCheckStage("data-roots/main-junction-followed");
+    ok = ok && Check(ListsOnly(gameMain, "iw_00.iwd", SysFileSystemEntryKind::RegularFile));
+    SetCheckStage("data-roots/junction-child-listed-as-directory");
+    ok = ok && Check(ListsOnly(game, "main", SysFileSystemEntryKind::Directory));
+    SetCheckStage("data-roots/root-itself-a-junction");
+    ok = ok && Check(ListsOnly(Join(library, "main"), "iw_00.iwd", SysFileSystemEntryKind::RegularFile));
+    SetCheckStage("data-roots/home-main-junction-followed");
+    ok = ok && Check(ListsOnly(homeMain, "iw_00.iwd", SysFileSystemEntryKind::RegularFile));
+    SetCheckStage("data-roots/rest-of-home-still-refused");
+    ok = ok && Check(Refused(homeMods));
+    SetCheckStage("data-roots/creating-through-a-link-refused");
+    ok = ok && Check(!Sys_FileSystemCreateDirectory(Join(gameMain, "new").c_str()));
+    SetCheckStage("data-roots/find-link");
+    ok = ok && Check(Sys_FileSystemFindLink(Join(homeMain, "iw_00.iwd").c_str(), &link) && link == homeMain);
+    ok = ok && Check(!Sys_FileSystemFindLink(iwd.c_str(), &link) && link.empty());
+    Sys_FileSystemSetDataRoots(nullptr, 0);
+    SetCheckStage("data-roots/cleared");
+    ok = ok && Check(Refused(gameMain)) && Check(Refused(homeMain));
+    cleanUp();
+    return ok;
+}
 #endif // defined(_WIN32)
 
 #if !defined(_WIN32)
@@ -3218,6 +3315,9 @@ int main()
 #endif
 #if defined(_WIN32)
     if (RunWin32RemoveTreeContracts(workingDirectory) != 0)
+        return 1;
+    // Last: data roots are process-wide.
+    if (!TestDataRootsFollowLinks(workingDirectory))
         return 1;
 #endif
     return 0;
