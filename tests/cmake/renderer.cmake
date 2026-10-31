@@ -105,6 +105,27 @@ if (WIN32)
     kisakcod_ilp32(kisakcod-renderer-display-modes-tests renderer-display-modes)
 endif()
 
+# R_WarnOncePerFrame (gfx_d3d/r_warn.cpp) prints each per-frame warning as one
+# console line ending in a newline, as retail's table does (#988). The renderer
+# headers need d3d9.h: Windows, or Linux clang builds where pkg-config finds
+# dxvk-d3d9.
+if (WIN32 OR (KISAK_PLATFORM STREQUAL "linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND KISAK_CIN_TEST_DXVK_D3D9_FOUND))
+    add_executable(kisakcod-r-warn-newline-tests r_warn_newline_tests.cpp
+        ${SRC_DIR}/gfx_d3d/r_warn.cpp)
+    target_include_directories(kisakcod-r-warn-newline-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+    target_compile_features(kisakcod-r-warn-newline-tests PRIVATE cxx_std_20)
+    target_compile_definitions(kisakcod-r-warn-newline-tests PRIVATE KISAK_MP)
+    if (NOT WIN32)
+        target_compile_definitions(kisakcod-r-warn-newline-tests PRIVATE UNIX KISAK_DXVK_NATIVE)
+        target_compile_options(kisakcod-r-warn-newline-tests PRIVATE -fms-extensions)
+        target_link_libraries(kisakcod-r-warn-newline-tests PRIVATE PkgConfig::KISAK_CIN_TEST_DXVK_D3D9)
+    endif()
+    set_target_properties(kisakcod-r-warn-newline-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME r-warn-newline COMMAND kisakcod-r-warn-newline-tests)
+    set_tests_properties(r-warn-newline PROPERTIES TIMEOUT 20)
+endif()
+
 # SM2/SM3 shader reflection without D3DX (G5): the CTAB parser and the
 # input/output semantics the material loader moves to on targets D3DX9 does not
 # ship for (ARM64, POSIX), run against hand-built CTAB payloads and token streams.
