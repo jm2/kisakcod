@@ -298,6 +298,10 @@ python3 "$(dirname "$0")/native_closure.py" bundle "$APP" || {
     echo "bundle: FAILED verification" >&2; exit 1; }
 codesign --verify --deep --strict "$APP" >/dev/null 2>&1 || {
     echo "bundle: signature verification failed" >&2; exit 1; }
+# The bundled loader and ICD offer the surface extensions SDL3's Vulkan window
+# needs; without them the client can't start on any Mac.
+python3 "$(dirname "$0")/check_vulkan_wsi.py" "$FRAMEWORKS/libvulkan.1.dylib" "$ICD_DIR/kosmickrisp_mesa_icd.json" || {
+    echo "bundle: FAILED Vulkan surface check" >&2; exit 1; }
 if [ -e "$APP_DEST" ]; then
     mv "$APP_DEST" "$APP_DEST.replaced-$(date +%Y%m%d%H%M%S)"
 fi

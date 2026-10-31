@@ -4,6 +4,10 @@
 # translator dylib loads libLLVM, and generating libpoly.spv/libkk.spv dies with
 # a pointer-authentication fault in runSpirvWriterPasses (exit 139).
 #
+# -Dplatforms=macos builds the Metal WSI: VK_KHR_surface and
+# VK_EXT_metal_surface, which the client's SDL3 window needs. With no platform
+# the driver renders but can't present, and the client can't start.
+#
 # Build-host prerequisites, not pins: LLVM, glslang and bison must be on PATH
 # (see README). Only the ICD dylib is shipped; the .spv it generates follows
 # those tools byte for byte, so it is a build artifact and never committed.
@@ -21,7 +25,7 @@ ExternalProject_Add(kisak_runtime_mesa
         PKG_CONFIG_PATH=${KISAK_RUNTIME_PREFIX}/lib/pkgconfig
         ${KISAK_MESON} setup <BINARY_DIR> <SOURCE_DIR>
         --buildtype=release --prefix=${KISAK_MESA_PREFIX} --libdir=lib
-        -Dplatforms= -Dgallium-drivers= -Dvulkan-drivers=kosmickrisp
+        -Dplatforms=macos -Dgallium-drivers= -Dvulkan-drivers=kosmickrisp
         -Dopengl=false -Degl=disabled -Dglx=disabled -Dgbm=disabled
         -Dllvm=enabled -Dshared-llvm=enabled -Dzstd=auto -Dwerror=false
     BUILD_COMMAND ${CMAKE_COMMAND} -E env
