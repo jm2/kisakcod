@@ -6,6 +6,7 @@
 // (Apple, for one) after a card games expect.
 
 #include "posix_videocard.h"
+#include "posix_direct3d.h"
 
 #include <qcommon/sys_local.h>
 
@@ -16,7 +17,9 @@
 void Posix_DetectVideoCard()
 {
     std::snprintf(sys_info.gpuDescription, sizeof(sys_info.gpuDescription), "Unknown video card");
-    IDirect3D9 *d3d9 = Direct3DCreate9(D3D_SDK_VERSION);
+    // A failure here is reported by the renderer's own Direct3DCreate9.
+    char error[256];
+    IDirect3D9 *d3d9 = Posix_Direct3DCreate9(error, sizeof(error));
     if (!d3d9)
         return;
     D3DADAPTER_IDENTIFIER9 id;

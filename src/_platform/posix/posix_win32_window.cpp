@@ -9,6 +9,8 @@
 
 #include <SDL3/SDL.h>
 
+#include "posix_desktop.h"
+
 namespace
 {
 HMONITOR ToMonitor(SDL_DisplayID display)
@@ -37,6 +39,9 @@ int MessageBoxA(HWND window, const char *text, const char *caption, UINT type)
     // MB_ICONHAND (0x10) is the renderer's fatal-error box; everything else
     // is shown as a warning.
     const SDL_MessageBoxFlags flags = (type & 0x10u) ? SDL_MESSAGEBOX_ERROR : SDL_MESSAGEBOX_WARNING;
+    // The console log already has the text; a dialog nobody can see would hang.
+    if (!Posix_DialogCanShow())
+        return 1; // IDOK
     SDL_ShowSimpleMessageBox(flags, caption, text, static_cast<SDL_Window *>(window));
     return 1; // IDOK
 }
