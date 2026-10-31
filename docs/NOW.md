@@ -23,10 +23,10 @@ Owner, 2026-10-27: bugs first. Rule-4 PRs with a test that fails without
 the fix and a `Retail check:` line (ADR-0009); new crash and memory bugs
 join by rank.
 
-Drained 2026-10-31 (validation-LAN bugs: #940-#950, #953 via #943-#966).
-Left: SP-only #195 #204; #270 (parked); #278 deltas; #914 (dxvk-gated tests
-not in CI); #954 (x86 address space: known limit for 0.1.0); macOS fullscreen
-#964 #965 (0.1.0 known issues: play windowed).
+Drained 2026-10-31 (LAN bugs #940-#977 via #943-#977). Left: SP-only
+issues #195 and #204; #270 (parked); #278 deltas; #914 (dxvk tests not in
+CI); #954 (x86 address space: 0.1.0 known limit); #964 and #965 (owner
+check on #977).
 
 ## Queue
 
@@ -34,14 +34,14 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 
 | # | Bead | Gate | Moves | Done-test | Size | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| 69 | Alt+Enter fullscreen at desktop size (#917) | G6 | K6 | window, fullscreen, window on each OS | S | #923, #955 (in-place switch) merged; macOS: #964, #965 open |
+| 69 | Alt+Enter fullscreen at desktop size (#917) | G6 | K6 | window, fullscreen, window on each OS | S | #923, #955 merged; macOS native fullscreen #976, #977 merged, owner check left |
 | 71 | Windows amd64/arm64 installer and `.zip` (ADR-0012) | G6 | K6 | the ADR-0012 done-test | M | #931, #956 merged; console checks done |
-| 73 | macOS arm64 `.dmg` (ADR-0011, ADR-0012; extends 66) | G6 | K6 | as 66, from the `.dmg` | L | #925, #926, #933, #962 (bundled WSI) merged; clean-account check left |
+| 73 | macOS arm64 `.dmg` (ADR-0011, ADR-0012; extends 66) | G6 | K6 | as 66, from the `.dmg` | L | #925, #926, #933, #962, #973 merged; clean-account check left |
 | 66 | G6: the macOS `.app` bundles its runtime ([ADR-0011](decisions/0011-macos-client-bundles-its-runtime.md)) | G6 | K6 | a clean account without Homebrew plays a LAN round; `otool -L` shows no `/opt/homebrew` | L | clean-account round left |
 
 Done 2026-10-29: rows 67 (#921), 68 (#922), 70 (#927), 72 (#929, #930), 74 (#935, #936, #937: dry run 41039821931 green on all 10 legs); G3 (#181), G4a (#182), G5 (#184).
 
-**Resume here:** the 0.1.0 draft is cut from a LAN-tested master head; row 66's clean-account round and #964/#965 remain. Before #962 no macOS client ran on the bundled Vulkan driver (G5 used Homebrew's ICD). Host: #804.
+**Resume here:** recut the 0.1.0 draft at a LAN-tested master head (#970-#977 postdate b262a36b); row 66's clean-account round remains. Before #962 no macOS client ran on the bundled Vulkan driver. Host: #804.
 
 ## Blocked on owner
 
@@ -62,5 +62,5 @@ Done 2026-10-29: rows 67 (#921), 68 (#922), 70 (#927), 72 (#929, #930), 74 (#935
 - 0.1.0 ships the D3D9 and dxvk-native clients; native Vulkan (#713) comes after ([ADR-0010](decisions/0010-interim-renderers-ship-in-0-1-0.md)), 2026-10-25.
 - Alt+Enter and display-mode changes switch in place, not a full `vid_restart`, on every target including x86 (#953), 2026-10-30.
 - Game data may be reached through junctions and symlinks (#948, #961); the rest of the writable home refuses them, 2026-10-30.
-- Fullscreen toggle: Command+Return on macOS, Alt+Enter elsewhere, 2026-10-31.
+- Fullscreen toggle: Command+Return on macOS (native Spaces, synced), Alt+Enter elsewhere, 2026-10-31.
 - Standing rules (x86 pre-approval, sanitizer bar, vulnerabilities, retail data, shared hosts) are in [CHARTER](CHARTER.md#standing-owner-rules).
