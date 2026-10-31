@@ -52,9 +52,16 @@ jobs:
             file-arch: x86-64
             # Builds and runs the OpenAL Soft sound shim test (null backend).
             openal: true
+            # clang, as the Linux releases build, so the renderer and client
+            # tests gated on clang and dxvk-native's headers run (#914).
+            cc: clang
+            dxvk-tests: 19
           - platform: Linux arm64
             runner: ubuntu-24.04-arm
             file-arch: aarch64
+            # GCC keeps the 64-bit suite building with it on one leg; only
+            # the dxvk-gated targets not gated on clang build here.
+            dxvk-tests: 1
           - platform: Windows amd64
             runner: windows-2025
             pe-arch: x64
@@ -76,6 +83,12 @@ jobs:
         if: matrix.openal
         run: sudo apt-get update && sudo apt-get install -y libopenal-dev libavformat-dev libavcodec-dev
 
+      - name: Install dxvk-native's D3D9 headers
+        if: matrix.dxvk-tests
+        run: |
+          scripts/ci/install-dxvk-headers.sh "$RUNNER_TEMP/dxvk"
+          echo "PKG_CONFIG_PATH=$RUNNER_TEMP/dxvk/lib/pkgconfig" >> "$GITHUB_ENV"
+
       - name: Configure
         run: >
           cmake -S . -B build-tests
@@ -85,6 +98,7 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DBUILD_TESTING=ON
           -DKISAK_TEST_OPENAL=${{ matrix.openal && 'ON' || 'OFF' }}
+          ${{ matrix.cc && format('-DCMAKE_C_COMPILER={0} -DCMAKE_CXX_COMPILER={0}++', matrix.cc) || '' }}
 
       - name: Build portable tests
         # A bare --parallel is an unbounded make -j with the Makefiles
@@ -98,6 +112,10 @@ jobs:
           scripts/ci/verify-artifact-arch.sh '${{ matrix.file-arch }}'
           build-tests/tests/kisakcod-pool-allocator-tests
           build-tests/tests/kisakcod-db-zone-runtime-table-tests
+
+      - name: Check the dxvk-gated tests are built
+        if: matrix.dxvk-tests
+        run: python3 scripts/ci/check-dxvk-tests.py build-tests ${{ matrix.dxvk-tests }}
 
       - name: Verify binary architecture (PE machine type)
         if: matrix.pe-arch
@@ -208,6 +226,11 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Install dxvk-native's D3D9 headers
+        run: |
+          scripts/ci/install-dxvk-headers.sh "$RUNNER_TEMP/dxvk"
+          echo "PKG_CONFIG_PATH=$RUNNER_TEMP/dxvk/lib/pkgconfig" >> "$GITHUB_ENV"
+
       - name: Configure portable sanitizer contracts
         run: >
           cmake -S . -B build-portable-sanitizers
@@ -224,6 +247,10 @@ jobs:
         # make -j, and the ASan objects outgrow the runner's memory, so the runner
         # loses the job ("received a shutdown signal").
         run: cmake --build build-portable-sanitizers --parallel 4
+
+      - name: Check the dxvk-gated tests are built
+        # r-skin-write-only needs no sanitizer, so 18 of the 19.
+        run: python3 scripts/ci/check-dxvk-tests.py build-portable-sanitizers 18
 
       - name: Run portable sanitizer contracts
         run: >
