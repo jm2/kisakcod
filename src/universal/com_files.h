@@ -188,6 +188,7 @@ const char **__cdecl FS_ListFilesInLocation(
 void __cdecl FS_FileClose(struct iobuf *stream);
 int __cdecl FS_FOpenFileWriteToDirForThread(const char *filename, const char *dir, FsThread thread);
 int __cdecl FS_FOpenFileWriteToDir(const char *filename, const char *dir);
+int __cdecl FS_FOpenFileReadFromDir(const char *filename, const char *dir, int *file);
 int __cdecl FS_WriteFileToDir(const char *filename, const char *path, char *buffer, uint32_t size);
 
 void __cdecl FS_Restart(int localClientNum, int checksumFeed);

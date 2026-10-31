@@ -521,7 +521,9 @@ bool __cdecl LiveStorage_ReadStatsFile(const char *qpath, unsigned __int8 *buffe
     FS_CheckFileSystemStarted();
     if (!qpath && !qpath[0])
         MyAssertHandler(".\\win32\\win_storage.cpp", 220, 0, "%s", "qpath || qpath[0]");
-    len = FS_FOpenFileRead(qpath, &h);
+    // KISAK: from the writable players dir LiveStorage_UploadStats writes,
+    // not a retail install's own file (#940).
+    len = FS_FOpenFileReadFromDir(qpath, "players", &h);
     if (h && len == lenToRead)
     {
         lena = FS_Read(buffer, lenToRead, h);
