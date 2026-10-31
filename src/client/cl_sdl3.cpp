@@ -409,13 +409,36 @@ void CL_SdlRaiseWindow()
         SDL_RaiseWindow(s_window);
 }
 
+namespace
+{
+// Back-buffer pixels per window unit. The menus take the cursor in back-buffer
+// pixels, as the Win32 client's are; macOS native fullscreen makes the window
+// the display's size while dxvk scales r_mode's back buffer to it (#977).
+void BackBufferPerWindowUnit(float *sx, float *sy)
+{
+    *sx = 1.0f;
+    *sy = 1.0f;
+    int w = 0;
+    int h = 0;
+    if (s_window && SDL_GetWindowSize(s_window, &w, &h) && w > 0 && h > 0 && vidConfig.displayWidth &&
+        vidConfig.displayHeight)
+    {
+        *sx = static_cast<float>(vidConfig.displayWidth) / static_cast<float>(w);
+        *sy = static_cast<float>(vidConfig.displayHeight) / static_cast<float>(h);
+    }
+}
+} // namespace
+
 void CL_SdlTakeMouseMotion(int *x, int *y, int *dx, int *dy)
 {
     float fx = 0.0f;
     float fy = 0.0f;
     SDL_GetMouseState(&fx, &fy);
-    *x = static_cast<int>(fx);
-    *y = static_cast<int>(fy);
+    float sx;
+    float sy;
+    BackBufferPerWindowUnit(&sx, &sy);
+    *x = static_cast<int>(fx * sx);
+    *y = static_cast<int>(fy * sy);
     *dx = static_cast<int>(s_motionX);
     *dy = static_cast<int>(s_motionY);
     s_motionX -= static_cast<float>(*dx);
@@ -430,8 +453,12 @@ void CL_SdlSetMouseCaptured(bool captured)
 
 void CL_SdlWarpMouse(int x, int y)
 {
-    if (s_window)
-        SDL_WarpMouseInWindow(s_window, static_cast<float>(x), static_cast<float>(y));
+    if (!s_window)
+        return;
+    float sx;
+    float sy;
+    BackBufferPerWindowUnit(&sx, &sy);
+    SDL_WarpMouseInWindow(s_window, static_cast<float>(x) / sx, static_cast<float>(y) / sy);
 }
 
 bool CL_SdlIsMinimized()
