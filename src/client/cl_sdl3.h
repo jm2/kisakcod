@@ -13,6 +13,9 @@ struct GfxWindowParms;
 bool CL_SdlCreateWindow(GfxWindowParms *wndParms, bool borderless);
 void CL_SdlShowWindow(void *nativeWindow);
 void CL_SdlDestroyWindow(void *nativeWindow);
+// Gives the window wndParms' size, position and fullscreen style in place, for
+// a display mode switch without a vid_restart (#953).
+void CL_SdlSetWindowMode(const GfxWindowParms *wndParms, bool borderless);
 
 // Drains SDL's queue into Sys_QueEvent, IN_MouseEvent and VID_AppActivate.
 // On Windows SDL also dispatches the thread's other windows (console, splash).

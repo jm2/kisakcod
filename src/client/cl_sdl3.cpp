@@ -293,6 +293,17 @@ void CL_SdlShowWindow(void *nativeWindow)
         SDL_ShowWindow(s_window);
 }
 
+void CL_SdlSetWindowMode(const GfxWindowParms *wndParms, bool borderless)
+{
+    if (!s_window || NativeHandle(s_window) != wndParms->hwnd)
+        return;
+    SDL_SetWindowBordered(s_window, !(wndParms->fullscreen || borderless));
+    SDL_SetWindowAlwaysOnTop(s_window, wndParms->fullscreen);
+    SDL_SetWindowSize(s_window, wndParms->displayWidth, wndParms->displayHeight);
+    SDL_SetWindowPosition(s_window, wndParms->x, wndParms->y);
+    SDL_ShowWindow(s_window);
+}
+
 void CL_SdlDestroyWindow(void *nativeWindow)
 {
     if (!s_window || NativeHandle(s_window) != nativeWindow)

@@ -801,6 +801,28 @@ static void CL_FreeVidRestartBuffers()
     s_vidRestartState = nullptr;
 }
 
+// #953: a restart that only changes the display mode switches it in place, so
+// the map, cgame and the connection stay up. Screen placement, the console
+// width and cgame's view size follow the new size; the rest reads
+// cls.vidConfig each frame.
+static bool CL_SwitchDisplayModeInPlace()
+{
+    if (!cls.rendererStarted || !R_SwitchDisplayModeInPlace(&cls.vidConfig))
+        return false;
+    ScrPlace_SetupUnsafeViewport(&scrPlaceFullUnsafe, 0, 0, cls.vidConfig.displayWidth, cls.vidConfig.displayHeight);
+    ScrPlace_SetupViewport(&scrPlaceFull, 0, 0, cls.vidConfig.displayWidth, cls.vidConfig.displayHeight);
+    for (int32_t localClientNum = 0; localClientNum < 1; ++localClientNum)
+    {
+        ScrPlace_SetupViewport(&scrPlaceView[localClientNum], 0, 0, cls.vidConfig.displayWidth, cls.vidConfig.displayHeight);
+        // CG_Init keeps the 3D view's size and aspect in cgs.
+        if (clientUIActives[localClientNum].cgameInitialized)
+            CG_InitViewDimensions(localClientNum);
+    }
+    g_console_field_width = cls.vidConfig.displayWidth - 48;
+    g_consoleField.widthInPixels = cls.vidConfig.displayWidth - 48;
+    return true;
+}
+
 void __cdecl CL_Vid_Restart_f()
 {
     uint8_t *v0; // eax
@@ -824,7 +846,7 @@ void __cdecl CL_Vid_Restart_f()
     {
         Com_Printf(0, "Listen server cannot video restart.\n");
     }
-    else
+    else if (!CL_SwitchDisplayModeInPlace())
     {
         localClientNum = 0;
         LocalClientGlobals = CL_GetLocalClientGlobals(0);

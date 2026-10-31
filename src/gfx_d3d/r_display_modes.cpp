@@ -1,5 +1,10 @@
 #include "r_display_modes.h"
 
+#include <algorithm>
+#include <cctype>
+#include <iterator>
+#include <string_view>
+
 #include <universal/assertive.h>
 
 namespace
@@ -85,4 +90,21 @@ bool R_KeepFullscreenAtDesktop(bool atDesktop, bool fullscreen, int mode, int *a
     if (*atDesktopMode < 0)
         *atDesktopMode = mode;
     return *atDesktopMode == mode;
+}
+
+bool R_CanSwitchModeInPlace(const char *const *latchedNames, uint32_t count, bool fullscreenChanged)
+{
+    static constexpr std::string_view displayModeDvars[] = {
+        "r_mode", "r_fullscreen", "r_displayRefresh", "r_aspectRatio", "r_customMode", "r_vsync"};
+    const auto sameName = [](std::string_view a, std::string_view b) {
+        return std::equal(a.begin(), a.end(), b.begin(), b.end(), [](char x, char y) {
+            return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y));
+        });
+    };
+    if (!count && !fullscreenChanged)
+        return false;
+    return std::all_of(latchedNames, latchedNames + count, [&](const char *name) {
+        return std::any_of(std::begin(displayModeDvars), std::end(displayModeDvars),
+                           [&](std::string_view dvar) { return sameName(dvar, name); });
+    });
 }
