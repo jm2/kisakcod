@@ -3212,6 +3212,30 @@ bool __cdecl FS_NeedRestart(int checksumFeed)
     return checksumFeed != fs_checksumFeed;
 }
 
+// KISAK: reads filename from fs_homepath's dir only, the counterpart of
+// FS_FOpenFileWriteToDir. FS_FOpenFileRead searches fs_basepath too, so the
+// persistent stats would read a retail install's own file, encrypted with its
+// CD key, call it corrupt and drop a launch +connect (#940).
+int __cdecl FS_FOpenFileReadFromDir(const char *filename, const char *dir, int *file)
+{
+    char ospath[260];
+
+    FS_CheckFileSystemStarted();
+    *file = 0;
+    FS_BuildOSPath((char *)fs_homepath->current.string, dir, filename, ospath);
+    if (fs_debug->current.integer)
+        Com_Printf(10, "FS_FOpenFileReadFromDir: %s\n", ospath);
+    FILE *fp = FS_FileOpenReadBinary(ospath);
+    if (!fp)
+        return -1;
+    *file = FS_HandleForFile(FS_THREAD_MAIN);
+    fsh[*file].zipFile = 0;
+    fsh[*file].handleFiles.file.o = fp;
+    I_strncpyz(fsh[*file].name, filename, 256);
+    fsh[*file].handleSync = 0;
+    return FS_filelength(*file);
+}
+
 int __cdecl FS_FOpenFileWriteToDir(const char *filename, const  char *dir)
 {
     return FS_FOpenFileWriteToDirForThread(filename, dir, FS_THREAD_MAIN);
