@@ -52,6 +52,14 @@ bool R_CanSwitchModeInPlace(const char *const *latchedNames, uint32_t count, boo
 // put the next window there.
 bool R_IsWindowedMove(bool fullscreen, bool windowFullscreen);
 
+// Whether the frame being built is the one an in-place display mode switch
+// left behind, clearing *dropFrame. The switch resets the device after
+// R_ToggleSmpFrame gave that frame its buffers, and the reset releases them:
+// its pretess index buffer is null until the next frame (#981).
+// R_IssueRenderCommands drops it, as it drops the frame R_CheckLostDevice
+// recovers a lost device in.
+bool R_TakeFrameToDrop(bool *dropFrame);
+
 // The first of latchedNames that doesn't set the display mode, so the restart
 // must be the full one; null when every latched dvar sets it. vid_restart
 // logs it when it falls back.

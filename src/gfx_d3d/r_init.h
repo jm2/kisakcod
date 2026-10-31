@@ -401,6 +401,9 @@ void R_SetFullscreenAtDesktop(bool atDesktop);
 // default-pool resources and copies the new vidConfig. Returns false, with the
 // device as it was, when the full restart is needed.
 bool R_SwitchDisplayModeInPlace(vidConfig_t *vidConfigOut);
+// Whether R_IssueRenderCommands drops the frame being built because an
+// in-place display mode switch reset the device after it began (#981).
+bool R_DropFrameAfterModeSwitch();
 #if defined(_WIN32) || defined(KISAK_DXVK_NATIVE)
 void __cdecl R_GetDirect3DCaps(uint32_t adapterIndex, _D3DCAPS9 *caps);
 void __cdecl R_SetD3DPresentParameters(_D3DPRESENT_PARAMETERS_ *d3dpp, const GfxWindowParms *wndParms);
