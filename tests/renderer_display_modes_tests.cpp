@@ -6,7 +6,8 @@
 // R_EnumDisplayModes. The modes here are sorted as R_CompareDisplayModes sorts
 // them. R_ChooseFullscreenSize, which R_SetWndParms calls, picks the desktop
 // mode for fullscreen entered with Alt+Enter. R_CanSwitchModeInPlace decides
-// whether CL_Vid_Restart_f switches the display mode in place.
+// whether CL_Vid_Restart_f switches the display mode in place. R_IsWindowedMove
+// decides which game-window moves are kept as the windowed position.
 
 #include <cstdio>
 #include <initializer_list>
@@ -121,6 +122,38 @@ int main()
     Expect(InPlace({"loc_language"}, true), 0, "and so does Alt+Enter with another latched dvar");
     Expect(InPlace({"r_mod"}), 0, "a prefix of a display dvar restarts");
     Expect(InPlace({"r_modex"}), 0, "a longer name restarts");
+
+    // R_IsWindowedMove over the moves MainWndProc's WM_MOVE sees through an
+    // Alt+Enter round trip (#946). On yoga the window came back at (0, 0).
+    int xpos = 3;
+    int ypos = 22;
+    bool fullscreenDvar = false;
+    bool windowFullscreen = false; // vidConfig.isFullscreen
+    const auto Move = [&](int x, int y) {
+        if (R_IsWindowedMove(fullscreenDvar, windowFullscreen))
+        {
+            xpos = x;
+            ypos = y;
+        }
+    };
+    const auto Kept = [&](int x, int y, const char *what) {
+        Expect(xpos, x, what);
+        Expect(ypos, y, what);
+    };
+    Move(40, 60);
+    Kept(40, 60, "a windowed move is kept");
+    fullscreenDvar = true; // Alt+Enter
+    Move(40, 60);
+    windowFullscreen = true; // vid_restart's fullscreen window
+    Move(0, 0);
+    Kept(40, 60, "fullscreen moves are not kept");
+    fullscreenDvar = false; // Alt+Enter again, before its vid_restart
+    Move(0, 0);
+    Kept(40, 60, "the still-fullscreen window's move to (0, 0) is not kept");
+    windowFullscreen = false; // vid_restart puts the window back at vid_xpos, vid_ypos
+    Move(xpos, ypos);
+    Move(120, 80);
+    Kept(120, 80, "the window's moves are kept again");
 
     if (g_failures)
         return 1;
