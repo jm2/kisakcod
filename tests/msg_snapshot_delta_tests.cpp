@@ -19,6 +19,7 @@
 #include <qcommon/qcommon.h>
 #include <qcommon/sys_time.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <functional>
@@ -186,7 +187,7 @@ using Decode = std::function<void(msg_t *)>;
 bool DecodeFrom(const Wire &wire, const int size, const Decode &decode)
 {
     auto block = std::make_unique<unsigned char[]>(size ? size : 1);
-    std::memcpy(block.get(), wire.bytes, size);
+    std::copy_n(wire.bytes, size, block.get());
     msg_t msg{};
     MSG_InitReadOnly(&msg, block.get(), size);
     MSG_BeginReading(&msg);
@@ -229,7 +230,7 @@ clientState_s MakeClient()
     s.modelindex = 12;
     s.attachModelIndex[5] = 3;
     s.attachTagIndex[5] = 4;
-    std::strcpy(s.name, "kc-win-arm64");
+    I_strncpyz(s.name, "kc-win-arm64", sizeof(s.name));
     s.rank = 54;
     s.prestige = 2;
     s.perks = 0x40000801;
