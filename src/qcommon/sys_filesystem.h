@@ -111,9 +111,27 @@ enum class SysFileSystemListStatus : std::uint8_t
     Error,
 };
 
+#if defined(_WIN32)
+// The read-only game data roots, fs_basepath and fs_cdpath (#948). Listing a
+// directory at or below one follows junctions and symbolic links, both in its
+// path and among its children, as retail's FindFirstFile did: players move a
+// Steam library to another drive and leave a junction behind. Everywhere
+// else, fs_homepath included, the listing still refuses them, and creating
+// or removing a directory refuses them below a data root too. Each call
+// replaces the previous roots; empty or invalid paths are skipped.
+void KISAK_CDECL Sys_FileSystemSetDataRoots(const char *const *utf8Roots, std::size_t count);
+
+// The first component of utf8Path below its volume root that is a junction,
+// symbolic link or other reparse point, as a UTF-8 path, so an error can say
+// a link was refused. False when there is none or the path can't be read.
+bool KISAK_CDECL Sys_FileSystemFindLink(const char *utf8Path, std::string *link);
+#endif
+
 // Enumerates immediate children of one real directory. Results contain only
 // regular files and real directories: symbolic links, reparse points, and
-// special files are omitted. Names are valid UTF-8 and sorted by a stable,
+// special files are omitted, except below a Windows data root
+// (Sys_FileSystemSetDataRoots), where a link to a file or directory is listed
+// as what it points at. Names are valid UTF-8 and sorted by a stable,
 // locale-independent ASCII case-insensitive ordering with a bytewise tie
 // break. At most maximumEntries are retained; Truncated reports that eligible
 // entries were omitted. Error always clears entries.

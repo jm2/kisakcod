@@ -2286,6 +2286,13 @@ void __cdecl FS_Startup(char *gameName)
         if (*root->current.string)
             (void)Sys_FileSystemTrustRoot(root->current.string);
     }
+#else
+    // KisakCOD port: the game data is only read, so its listings follow
+    // junctions and symbolic links, as retail's did: a Steam library moved to
+    // another drive leaves a junction behind (#948). fs_homepath, where the
+    // game writes, still refuses them.
+    const char *const dataRoots[] = { fs_basepath->current.string, fs_cdpath->current.string };
+    Sys_FileSystemSetDataRoots(dataRoots, sizeof(dataRoots) / sizeof(dataRoots[0]));
 #endif
     if (*(const unsigned char *)fs_basepath->current.string)
     {
@@ -3422,6 +3429,21 @@ void FS_RequireMainIwds(const char *path, const char *pszGameFolder)
 {
 #ifdef KISAK_MP
     if (!I_stricmp(pszGameFolder, "main") && !I_stricmp(path, fs_basepath->current.string) && !FS_HomePathHasMainIwds())
+    {
+#ifdef _WIN32
+        // fs_homepath's listings refuse links (#948), so name the link rather
+        // than leave the player guessing.
+        char mainPath[256];
+        std::string link;
+        FS_BuildOSPath((char *)fs_homepath->current.string, (char *)"main", (char *)"", mainPath);
+        if (*fs_homepath->current.string && I_stricmp(fs_homepath->current.string, fs_basepath->current.string)
+            && Sys_FileSystemFindLink(mainPath, &link))
+        {
+            Com_Error(ERR_FATAL, "No IWD files found in /main: %s is a junction or symbolic link, which fs_homepath doesn't follow",
+                      link.c_str());
+        }
+#endif
         Com_Error(ERR_FATAL, "No IWD files found in /main");
+    }
 #endif
 }

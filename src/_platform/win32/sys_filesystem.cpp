@@ -507,6 +507,95 @@ bool ReadRegularFileHandle(
     }
     return true;
 }
+
+// Sys_FileSystemSetDataRoots' roots: absolute, with no trailing separator
+// unless the root is a volume root.
+SRWLOCK dataRootsLock = SRWLOCK_INIT;
+std::vector<std::wstring> dataRoots;
+
+void TrimTrailingSeparators(std::wstring *const absolutePath)
+{
+    while (absolutePath->size() > 3 && absolutePath->back() == L'\\')
+        absolutePath->pop_back();
+}
+
+bool IsAtOrBelowDataRoot(std::wstring absolutePath)
+{
+    TrimTrailingSeparators(&absolutePath);
+    AcquireSRWLockShared(&dataRootsLock);
+    const bool below = std::any_of(dataRoots.begin(), dataRoots.end(), [&](const std::wstring &root) {
+        return absolutePath.size() >= root.size()
+            && CompareStringOrdinal(
+                   absolutePath.c_str(),
+                   static_cast<int>(root.size()),
+                   root.c_str(),
+                   static_cast<int>(root.size()),
+                   TRUE) == CSTR_EQUAL
+            && (absolutePath.size() == root.size()
+                || root.back() == L'\\'
+                || absolutePath[root.size()] == L'\\');
+    });
+    ReleaseSRWLockShared(&dataRootsLock);
+    return below;
+}
+
+// Opens path following any link, as a data root's listing does. Null for
+// anything that isn't a directory once followed.
+HANDLE OpenFollowedDirectory(const std::wstring &path)
+{
+    const HANDLE handle = CreateFileW(
+        path.c_str(),
+        FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS,
+        nullptr);
+    if (handle == INVALID_HANDLE_VALUE)
+        return INVALID_HANDLE_VALUE;
+    FILE_BASIC_INFO info{};
+    if (!GetFileInformationByHandleEx(handle, FileBasicInfo, &info, sizeof(info))
+        || (info.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0)
+    {
+        CloseHandle(handle);
+        return INVALID_HANDLE_VALUE;
+    }
+    return handle;
+}
+
+// What a link among a data root's children points at. False for a broken
+// link, which the listing leaves out.
+bool FollowedEntryKind(const std::wstring &path, SysFileSystemEntryKind *const kind)
+{
+    const HANDLE handle = CreateFileW(
+        path.c_str(),
+        FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS,
+        nullptr);
+    if (handle == INVALID_HANDLE_VALUE)
+        return false;
+    FILE_BASIC_INFO info{};
+    const bool read = GetFileInformationByHandleEx(handle, FileBasicInfo, &info, sizeof(info)) != 0;
+    CloseHandle(handle);
+    if (!read)
+        return false;
+    *kind = (info.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0
+        ? SysFileSystemEntryKind::Directory
+        : SysFileSystemEntryKind::RegularFile;
+    return true;
+}
+
+std::wstring WithoutExtendedPrefix(const std::wstring &path)
+{
+    if (path.rfind(L"\\\\?\\UNC\\", 0) == 0)
+        return L"\\\\" + path.substr(8);
+    if (path.rfind(L"\\\\?\\", 0) == 0)
+        return path.substr(4);
+    return path;
+}
 }
 
 bool KISAK_CDECL Sys_FileSystemCreateDirectory(const char *const utf8Path)
@@ -675,12 +764,16 @@ SysFileSystemListStatus KISAK_CDECL Sys_FileSystemListDirectoryFiltered(
     if (!GetAbsolutePath(path, &absolutePath))
         return SysFileSystemListStatus::Error;
     std::wstring extendedPath = AddExtendedPrefix(absolutePath);
+    // The read-only game data follows links, as retail's FindFirstFile did (#948).
+    const bool followLinks = IsAtOrBelowDataRoot(absolutePath);
 
     std::vector<HANDLE> heldAncestors;
     std::size_t leafBegin = 0;
-    if (!HoldRealAncestors(extendedPath, &heldAncestors, &leafBegin))
+    if (!followLinks && !HoldRealAncestors(extendedPath, &heldAncestors, &leafBegin))
         return SysFileSystemListStatus::Error;
-    const HANDLE heldDirectory = OpenHeldDirectory(extendedPath);
+    const HANDLE heldDirectory = followLinks
+        ? OpenFollowedDirectory(extendedPath)
+        : OpenHeldDirectory(extendedPath);
     if (heldDirectory == INVALID_HANDLE_VALUE)
     {
         CloseHeldDirectories(&heldAncestors);
@@ -693,6 +786,7 @@ SysFileSystemListStatus KISAK_CDECL Sys_FileSystemListDirectoryFiltered(
     {
         extendedPath.push_back(L'\\');
     }
+    const std::wstring childPrefix = extendedPath;
     extendedPath.push_back(L'*');
 
     WIN32_FIND_DATAW findData{};
@@ -723,12 +817,14 @@ SysFileSystemListStatus KISAK_CDECL Sys_FileSystemListDirectoryFiltered(
             && wideName[1] == L'.'
             && wideName[2] == L'\0';
         const DWORD attributes = findData.dwFileAttributes;
+        SysFileSystemEntryKind kind = (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0
+            ? SysFileSystemEntryKind::Directory
+            : SysFileSystemEntryKind::RegularFile;
         if (!dot
             && !dotDot
-            && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0)
+            && ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0
+                || (followLinks && FollowedEntryKind(childPrefix + wideName, &kind))))
         {
-            const bool directory =
-                (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
             std::string name;
             try
             {
@@ -737,9 +833,6 @@ SysFileSystemListStatus KISAK_CDECL Sys_FileSystemListDirectoryFiltered(
                     failed = true;
                     break;
                 }
-                const SysFileSystemEntryKind kind = directory
-                    ? SysFileSystemEntryKind::Directory
-                    : SysFileSystemEntryKind::RegularFile;
                 if (!filter || filter(name.c_str(), kind, filterContext))
                 {
                     InsertBoundedEntry(
@@ -788,6 +881,79 @@ SysFileSystemListStatus KISAK_CDECL Sys_FileSystemListDirectory(
 {
     return Sys_FileSystemListDirectoryFiltered(
         utf8Path, maximumEntries, nullptr, nullptr, entries);
+}
+
+void KISAK_CDECL Sys_FileSystemSetDataRoots(
+    const char *const *const utf8Roots,
+    const std::size_t count)
+{
+    std::vector<std::wstring> roots;
+    try
+    {
+        for (std::size_t index = 0; utf8Roots && index < count; ++index)
+        {
+            std::wstring path;
+            std::wstring absolutePath;
+            if (!utf8Roots[index]
+                || utf8Roots[index][0] == '\0'
+                || !Utf8ToWide(utf8Roots[index], &path)
+                || HasUnsafeRawComponent(path)
+                || !GetAbsolutePath(path, &absolutePath))
+            {
+                continue;
+            }
+            TrimTrailingSeparators(&absolutePath);
+            roots.push_back(std::move(absolutePath));
+        }
+    }
+    catch (const std::bad_alloc &)
+    {
+        // Fail closed: no root follows links.
+        roots.clear();
+    }
+    AcquireSRWLockExclusive(&dataRootsLock);
+    dataRoots.swap(roots);
+    ReleaseSRWLockExclusive(&dataRootsLock);
+}
+
+bool KISAK_CDECL Sys_FileSystemFindLink(
+    const char *const utf8Path,
+    std::string *const link)
+{
+    if (!link)
+        return false;
+    link->clear();
+    std::wstring path;
+    std::wstring absolutePath;
+    if (!utf8Path
+        || !Utf8ToWide(utf8Path, &path)
+        || HasUnsafeRawComponent(path)
+        || !GetAbsolutePath(path, &absolutePath))
+    {
+        return false;
+    }
+    const std::wstring extendedPath = AddExtendedPrefix(absolutePath);
+    const std::size_t rootLength = ExtendedRootLength(extendedPath);
+    if (rootLength == 0)
+        return false;
+    // From the component below the volume root, which under Wine is a link
+    // itself, down to the leaf.
+    for (std::size_t cursor = rootLength; cursor < extendedPath.size();)
+    {
+        const std::size_t separator = extendedPath.find(L'\\', cursor);
+        const std::size_t end = separator == std::wstring::npos ? extendedPath.size() : separator;
+        if (end > cursor)
+        {
+            const std::wstring component = extendedPath.substr(0, end);
+            const DWORD attributes = GetFileAttributesW(component.c_str());
+            if (attributes == INVALID_FILE_ATTRIBUTES)
+                return false;
+            if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+                return WideToUtf8String(WithoutExtendedPrefix(component).c_str(), link);
+        }
+        cursor = end + 1;
+    }
+    return false;
 }
 
 // The Windows SDK gained POSIX-semantics deletion in 10.0.1709. The flag
