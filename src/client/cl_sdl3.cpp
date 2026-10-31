@@ -270,11 +270,18 @@ bool CL_SdlCreateWindow(GfxWindowParms *wndParms, bool borderless)
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_Y_NUMBER, wndParms->y);
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, wndParms->displayWidth);
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, wndParms->displayHeight);
+#ifdef __APPLE__
+    // macOS fullscreen is the window's own native (Spaces) fullscreen, over a
+    // windowed device (R_SetD3DPresentParameters, #974).
+    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_BORDERLESS_BOOLEAN, borderless);
+    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_FULLSCREEN_BOOLEAN, wndParms->fullscreen);
+#else
     // The Win32 path makes fullscreen a hidden topmost popup that
     // R_CreateGameWindow shows once the device exists.
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_BORDERLESS_BOOLEAN, wndParms->fullscreen || borderless);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_HIDDEN_BOOLEAN, wndParms->fullscreen);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_ALWAYS_ON_TOP_BOOLEAN, wndParms->fullscreen);
+#endif
     s_window = SDL_CreateWindowWithProperties(props);
     s_windowThread = SDL_GetCurrentThreadID();
     SDL_DestroyProperties(props);
@@ -315,6 +322,28 @@ void CL_SdlSetWindowMode(const GfxWindowParms *wndParms, bool borderless)
 {
     if (!s_window || NativeHandle(s_window) != wndParms->hwnd)
         return;
+#ifdef __APPLE__
+    // Native (Spaces) fullscreen, as other macOS games do: with a fullscreen
+    // device instead, dxvk's own mode switch fought this window's and the
+    // screen went black (#974). The back buffer keeps r_mode's size, and dxvk
+    // scales it to the window.
+    if (wndParms->fullscreen)
+    {
+        SDL_SetWindowFullscreenMode(s_window, nullptr);
+        SDL_SetWindowFullscreen(s_window, true);
+    }
+    else
+    {
+        SDL_SetWindowFullscreen(s_window, false);
+        SDL_SyncWindow(s_window);
+        SDL_SetWindowBordered(s_window, !borderless);
+        SDL_SetWindowSize(s_window, wndParms->displayWidth, wndParms->displayHeight);
+        SDL_SetWindowPosition(s_window, wndParms->x, wndParms->y);
+    }
+    SDL_SyncWindow(s_window);
+    SDL_ShowWindow(s_window);
+    return;
+#endif
     SDL_SetWindowBordered(s_window, !(wndParms->fullscreen || borderless));
     SDL_SetWindowAlwaysOnTop(s_window, wndParms->fullscreen);
     SDL_SetWindowSize(s_window, wndParms->displayWidth, wndParms->displayHeight);

@@ -3987,7 +3987,14 @@ void __cdecl R_SetD3DPresentParameters(_D3DPRESENT_PARAMETERS_ *d3dpp, const Gfx
     iassert( wndParms->hwnd );
     d3dpp->hDeviceWindow = wndParms->hwnd;
     d3dpp->Flags = 0;
-    if (wndParms->fullscreen)
+#if defined(KISAK_DXVK_NATIVE) && defined(__APPLE__)
+    // macOS fullscreen is the window's native fullscreen (CL_SdlSetWindowMode),
+    // so the device stays windowed and dxvk never switches modes (#974).
+    const bool exclusive = false;
+#else
+    const bool exclusive = wndParms->fullscreen;
+#endif
+    if (exclusive)
     {
         d3dpp->Windowed = 0;
         d3dpp->FullScreen_RefreshRateInHz = wndParms->hz;
