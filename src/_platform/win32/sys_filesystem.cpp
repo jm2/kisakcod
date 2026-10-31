@@ -588,6 +588,32 @@ bool FollowedEntryKind(const std::wstring &path, SysFileSystemEntryKind *const k
     return true;
 }
 
+// The leading part of extendedPath up to its first component that is a
+// reparse point, from the component below the volume root (under Wine a link
+// itself) down to the leaf. False when there is none or a component is missing.
+bool FirstLinkComponent(const std::wstring &extendedPath, std::wstring *const component)
+{
+    const std::size_t rootLength = ExtendedRootLength(extendedPath);
+    if (rootLength == 0)
+        return false;
+    for (std::size_t cursor = rootLength; cursor < extendedPath.size();)
+    {
+        const std::size_t separator = extendedPath.find(L'\\', cursor);
+        const std::size_t end = separator == std::wstring::npos ? extendedPath.size() : separator;
+        if (end > cursor)
+        {
+            *component = extendedPath.substr(0, end);
+            const DWORD attributes = GetFileAttributesW(component->c_str());
+            if (attributes == INVALID_FILE_ATTRIBUTES)
+                return false;
+            if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+                return true;
+        }
+        cursor = end + 1;
+    }
+    return false;
+}
+
 std::wstring WithoutExtendedPrefix(const std::wstring &path)
 {
     if (path.rfind(L"\\\\?\\UNC\\", 0) == 0)
@@ -932,28 +958,9 @@ bool KISAK_CDECL Sys_FileSystemFindLink(
     {
         return false;
     }
-    const std::wstring extendedPath = AddExtendedPrefix(absolutePath);
-    const std::size_t rootLength = ExtendedRootLength(extendedPath);
-    if (rootLength == 0)
-        return false;
-    // From the component below the volume root, which under Wine is a link
-    // itself, down to the leaf.
-    for (std::size_t cursor = rootLength; cursor < extendedPath.size();)
-    {
-        const std::size_t separator = extendedPath.find(L'\\', cursor);
-        const std::size_t end = separator == std::wstring::npos ? extendedPath.size() : separator;
-        if (end > cursor)
-        {
-            const std::wstring component = extendedPath.substr(0, end);
-            const DWORD attributes = GetFileAttributesW(component.c_str());
-            if (attributes == INVALID_FILE_ATTRIBUTES)
-                return false;
-            if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
-                return WideToUtf8String(WithoutExtendedPrefix(component).c_str(), link);
-        }
-        cursor = end + 1;
-    }
-    return false;
+    std::wstring component;
+    return FirstLinkComponent(AddExtendedPrefix(absolutePath), &component)
+        && WideToUtf8String(WithoutExtendedPrefix(component).c_str(), link);
 }
 
 // The Windows SDK gained POSIX-semantics deletion in 10.0.1709. The flag
