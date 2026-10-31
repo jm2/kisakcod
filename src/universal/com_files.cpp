@@ -2287,11 +2287,19 @@ void __cdecl FS_Startup(char *gameName)
             (void)Sys_FileSystemTrustRoot(root->current.string);
     }
 #else
-    // KisakCOD port: the game data is only read, so its listings follow
-    // junctions and symbolic links, as retail's did: a Steam library moved to
-    // another drive leaves a junction behind (#948). fs_homepath, where the
-    // game writes, still refuses them.
-    const char *const dataRoots[] = { fs_basepath->current.string, fs_cdpath->current.string };
+    // KisakCOD port: the game data's listings follow junctions and symbolic
+    // links, as retail's did: a Steam library moved to another drive leaves a
+    // junction behind (#948). That's fs_basepath, fs_cdpath and the retail
+    // data ADR-0012 lets players put in fs_homepath's main and zone. The rest
+    // of fs_homepath still refuses them.
+    char homeMain[256] = "";
+    char homeZone[256] = "";
+    if (*fs_homepath->current.string)
+    {
+        FS_BuildOSPath((char *)fs_homepath->current.string, (char *)"main", (char *)"", homeMain);
+        FS_BuildOSPath((char *)fs_homepath->current.string, (char *)"zone", (char *)"", homeZone);
+    }
+    const char *const dataRoots[] = { fs_basepath->current.string, fs_cdpath->current.string, homeMain, homeZone };
     Sys_FileSystemSetDataRoots(dataRoots, sizeof(dataRoots) / sizeof(dataRoots[0]));
 #endif
     if (*(const unsigned char *)fs_basepath->current.string)
@@ -3431,16 +3439,19 @@ void FS_RequireMainIwds(const char *path, const char *pszGameFolder)
     if (!I_stricmp(pszGameFolder, "main") && !I_stricmp(path, fs_basepath->current.string) && !FS_HomePathHasMainIwds())
     {
 #ifdef _WIN32
-        // fs_homepath's listings refuse links (#948), so name the link rather
+        // A main reached through a junction or symbolic link that leads
+        // nowhere useful is the likely cause (#948), so name the link rather
         // than leave the player guessing.
-        char mainPath[256];
         std::string link;
-        FS_BuildOSPath((char *)fs_homepath->current.string, (char *)"main", (char *)"", mainPath);
-        if (*fs_homepath->current.string && I_stricmp(fs_homepath->current.string, fs_basepath->current.string)
-            && Sys_FileSystemFindLink(mainPath, &link))
+        for (const dvar_s *const root : { fs_basepath, fs_homepath })
         {
-            Com_Error(ERR_FATAL, "No IWD files found in /main: %s is a junction or symbolic link, which fs_homepath doesn't follow",
-                      link.c_str());
+            char mainPath[256];
+            FS_BuildOSPath((char *)root->current.string, (char *)"main", (char *)"", mainPath);
+            if (*root->current.string && Sys_FileSystemFindLink(mainPath, &link))
+            {
+                Com_Error(ERR_FATAL, "No IWD files found in /main: it's reached through %s, a junction or symbolic link. Check where it points.",
+                          link.c_str());
+            }
         }
 #endif
         Com_Error(ERR_FATAL, "No IWD files found in /main");

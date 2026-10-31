@@ -2986,8 +2986,9 @@ int RunWin32RemoveTreeContracts(const std::string &workingDirectory)
 }
 
 // Sys_FileSystemSetDataRoots (#948): a game folder whose main is a junction,
-// and a data root that is itself one, list through them; a home folder's
-// junction is still refused, and Sys_FileSystemFindLink names it.
+// a data root that is itself one, and a home main that is one (ADR-0012's
+// layout) list through them; another home junction is still refused, and
+// Sys_FileSystemFindLink names a link.
 bool ListsOnly(
     const std::string &path,
     const char *const name,
@@ -3017,6 +3018,7 @@ bool TestDataRootsFollowLinks(const std::string &workingDirectory)
     const std::string library = MakeUniquePath(workingDirectory) + "-library";
     const std::string home = MakeUniquePath(workingDirectory) + "-home";
     const std::string homeMain = Join(home, "main");
+    const std::string homeMods = Join(home, "mods");
     if (!Check(Sys_FileSystemCreateDirectory(store.c_str()))
         || !Check(Sys_FileSystemCreateDirectory(storeMain.c_str()))
         || !Check(WriteFile(iwd))
@@ -3027,8 +3029,10 @@ bool TestDataRootsFollowLinks(const std::string &workingDirectory)
     }
     const bool gameLinked = CreateJunctionNative(gameMain, storeMain);
     const bool homeLinked = gameLinked && CreateJunctionNative(homeMain, storeMain);
-    const bool libraryLinked = homeLinked && CreateJunctionNative(library, game);
+    const bool libraryLinked = homeLinked && CreateJunctionNative(library, game)
+        && CreateJunctionNative(homeMods, storeMain);
     const auto cleanUp = [&]() {
+        (void)RemoveDirectoryNative(homeMods);
         (void)RemoveDirectoryNative(library);
         (void)RemoveDirectoryNative(homeMain);
         (void)RemoveDirectoryNative(gameMain);
@@ -3050,16 +3054,22 @@ bool TestDataRootsFollowLinks(const std::string &workingDirectory)
     std::string link;
     SetCheckStage("data-roots/refused-before-roots");
     bool ok = Check(Refused(gameMain));
-    const char *const roots[] = {game.c_str(), library.c_str()};
-    Sys_FileSystemSetDataRoots(roots, 2);
+    SetCheckStage("data-roots/home-main-refused-before-roots");
+    ok = ok && Check(Refused(homeMain));
+    // FS_Startup's home main ends in a separator.
+    const std::string homeMainRoot = homeMain + "\\";
+    const char *const roots[] = {game.c_str(), library.c_str(), homeMainRoot.c_str()};
+    Sys_FileSystemSetDataRoots(roots, 3);
     SetCheckStage("data-roots/main-junction-followed");
     ok = ok && Check(ListsOnly(gameMain, "iw_00.iwd", SysFileSystemEntryKind::RegularFile));
     SetCheckStage("data-roots/junction-child-listed-as-directory");
     ok = ok && Check(ListsOnly(game, "main", SysFileSystemEntryKind::Directory));
     SetCheckStage("data-roots/root-itself-a-junction");
     ok = ok && Check(ListsOnly(Join(library, "main"), "iw_00.iwd", SysFileSystemEntryKind::RegularFile));
-    SetCheckStage("data-roots/home-still-refused");
-    ok = ok && Check(Refused(homeMain));
+    SetCheckStage("data-roots/home-main-junction-followed");
+    ok = ok && Check(ListsOnly(homeMain, "iw_00.iwd", SysFileSystemEntryKind::RegularFile));
+    SetCheckStage("data-roots/rest-of-home-still-refused");
+    ok = ok && Check(Refused(homeMods));
     SetCheckStage("data-roots/creating-through-a-link-refused");
     ok = ok && Check(!Sys_FileSystemCreateDirectory(Join(gameMain, "new").c_str()));
     SetCheckStage("data-roots/find-link");
@@ -3067,7 +3077,7 @@ bool TestDataRootsFollowLinks(const std::string &workingDirectory)
     ok = ok && Check(!Sys_FileSystemFindLink(iwd.c_str(), &link) && link.empty());
     Sys_FileSystemSetDataRoots(nullptr, 0);
     SetCheckStage("data-roots/cleared");
-    ok = ok && Check(Refused(gameMain));
+    ok = ok && Check(Refused(gameMain)) && Check(Refused(homeMain));
     cleanUp();
     return ok;
 }

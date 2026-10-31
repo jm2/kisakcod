@@ -112,13 +112,14 @@ enum class SysFileSystemListStatus : std::uint8_t
 };
 
 #if defined(_WIN32)
-// The read-only game data roots, fs_basepath and fs_cdpath (#948). Listing a
+// The game data roots: fs_basepath, fs_cdpath, and fs_homepath's main and
+// zone, where ADR-0012 lets players put the retail data (#948). Listing a
 // directory at or below one follows junctions and symbolic links, both in its
 // path and among its children, as retail's FindFirstFile did: players move a
 // Steam library to another drive and leave a junction behind. Everywhere
-// else, fs_homepath included, the listing still refuses them, and creating
-// or removing a directory refuses them below a data root too. Each call
-// replaces the previous roots; empty or invalid paths are skipped.
+// else, the rest of fs_homepath included, the listing still refuses them,
+// and creating or removing a directory refuses them below a data root too.
+// Each call replaces the previous roots; empty or invalid paths are skipped.
 void KISAK_CDECL Sys_FileSystemSetDataRoots(const char *const *utf8Roots, std::size_t count);
 
 // The first component of utf8Path below its volume root that is a junction,
