@@ -319,13 +319,14 @@ void CL_SdlDestroyWindow(void *nativeWindow)
 
 namespace
 {
-// Text input only while the console, the script debugger, a menu or the chat
-// line takes keys (catchers 0x1, 0x2, 0x10, 0x20). In play it stays off: on
-// macOS an active text input shows the press-and-hold accent picker while a
-// movement key is held, and IME composition would swallow keys.
+// Text input only when CL_CharEvent would take the characters: the console
+// (catcher 0x1), the chat line (0x20), a menu (0x10), or the full-screen
+// console while disconnected. In play it stays off: on macOS an active text
+// input shows the press-and-hold accent picker while a movement key is held.
 void SyncTextInput()
 {
-    const bool wanted = (clientUIActives[0].keyCatchers & 0x33) != 0;
+    const bool wanted = (clientUIActives[0].keyCatchers & 0x31) != 0
+        || clientUIActives[0].connectionState == CA_DISCONNECTED;
     if (wanted == SDL_TextInputActive(s_window))
         return;
     if (wanted)
