@@ -103,6 +103,9 @@ struct BufCursor
     uint32_t maxTriIdx;
     uint32_t maxStringLen;
     bool failed;
+    // The failed flag when Begin took txnCheckpoint; Rollback restores it,
+    // so a failure from before the transaction stays latched.
+    bool txnFailedAtBegin;
     // Activation identity of this cursor (the per-thread generation
     // minted by the Activate that installed it, restored with the rest
     // of the saved parent scope on a nested pop). Tell() captures it
@@ -139,8 +142,9 @@ void Fail();
 // Transactional control. Begin records the current position. Commit
 // releases the checkpoint (the read sequence is now permanent).
 // Rollback rewinds both the cursor and the *pos pointer that the cursor
-// owns back to the checkpoint and clears the failed flag if the failure
-// was recorded during the in-flight transaction.
+// owns back to the checkpoint and restores the failed flag to its value
+// at Begin: a failure inside the transaction is cleared, one from before
+// it is kept.
 void Begin();
 bool Commit();
 void Rollback();

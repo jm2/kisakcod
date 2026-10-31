@@ -237,6 +237,7 @@ void Begin()
     if (g_activeValid)
     {
         g_active.txnCheckpoint = g_active.current;
+        g_active.txnFailedAtBegin = g_active.failed;
     }
 }
 
@@ -260,7 +261,7 @@ void Rollback()
     if (g_active.txnCheckpoint != nullptr)
     {
         g_active.current = g_active.txnCheckpoint;
-        g_active.failed = false;
+        g_active.failed = g_active.txnFailedAtBegin;
         g_active.txnCheckpoint = nullptr;
         SyncAnchoredPos();
     }
