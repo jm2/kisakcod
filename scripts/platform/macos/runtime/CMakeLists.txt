@@ -112,8 +112,19 @@ add_custom_target(runtime_licenses
     COMMENT "license texts: ${_kisak_license_dir}"
     VERBATIM)
 
+# The loader and KosmicKrisp together offer the surface extensions the client's
+# window needs: a driver built without its macOS platform has none, and the
+# client fails at startup on every Mac.
+add_custom_target(runtime_vulkan_wsi_check
+    COMMAND ${KISAK_PYTHON3} ${CMAKE_CURRENT_LIST_DIR}/../check_vulkan_wsi.py
+        ${KISAK_RUNTIME_PREFIX}/lib/libvulkan.1.dylib
+        ${KISAK_MESA_PREFIX}/share/vulkan/icd.d/kosmickrisp_mesa_icd.aarch64.json
+    DEPENDS kisak_runtime_vulkan_loader kisak_runtime_mesa
+    COMMENT "Vulkan surface extensions from the runtime's loader and KosmicKrisp"
+    VERBATIM)
+
 add_custom_target(runtime ALL
     DEPENDS kisak_runtime_vulkan_loader kisak_runtime_spirv_tools
             kisak_runtime_sdl3 kisak_runtime_openal kisak_runtime_ffmpeg kisak_runtime_ffmpeg_check
-            kisak_runtime_mesa runtime_licenses
+            kisak_runtime_mesa runtime_licenses runtime_vulkan_wsi_check
     COMMENT "macOS runtime prefix: ${KISAK_RUNTIME_PREFIX}, mesa: ${KISAK_MESA_PREFIX}")
