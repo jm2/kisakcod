@@ -51,3 +51,8 @@ bool R_CanSwitchModeInPlace(const char *const *latchedNames, uint32_t count, boo
 // fullscreen window a window, and that window's moves to (0, 0) in between
 // put the next window there.
 bool R_IsWindowedMove(bool fullscreen, bool windowFullscreen);
+
+// The first of latchedNames that doesn't set the display mode, so the restart
+// must be the full one; null when every latched dvar sets it. vid_restart
+// logs it when it falls back.
+const char *R_FirstFullRestartDvar(const char *const *latchedNames, uint32_t count);
