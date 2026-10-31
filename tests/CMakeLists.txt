@@ -45,3 +45,16 @@ include(cmake/voice_audio.cmake)
 include(cmake/renderer.cmake)
 include(cmake/upstream.cmake)
 include(cmake/misc.cmake)
+
+# The test targets that link dxvk-native's d3d9 module, one per line. CI
+# checks their tests are all registered (scripts/ci/check-dxvk-tests.py), so
+# they can't silently stop building again (#914).
+get_property(_kisak_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+set(_kisak_dxvk_targets "")
+foreach (_kisak_target IN LISTS _kisak_targets)
+    get_target_property(_kisak_libs ${_kisak_target} LINK_LIBRARIES)
+    if (_kisak_libs MATCHES "PkgConfig::KISAK_(CIN_)?TEST_DXVK_D3D9")
+        string(APPEND _kisak_dxvk_targets "${_kisak_target}\n")
+    endif()
+endforeach()
+file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/dxvk-test-targets.txt "${_kisak_dxvk_targets}")
