@@ -212,7 +212,8 @@ int main(int argc, char **argv)
 
     while (true)
     {
-        if (CL_SdlIsMinimized() || com_dedicated->current.integer)
+        // Off screen, as minimized: nothing presents to pace the frame (#997).
+        if (CL_SdlIsMinimized() || CL_SdlPresentPaused() || com_dedicated->current.integer)
             Sys_Sleep(5);
         Cbuf_AddRequestedQuit();
         Com_Frame();
