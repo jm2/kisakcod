@@ -65,6 +65,47 @@ void *NativeHandle(SDL_Window *window)
 }
 
 #ifdef __APPLE__
+// r_mode sizes are pixels, but macOS sizes windows in points, and a Retina
+// point is two pixels. Size the (high-DPI) window so its drawable has r_mode's
+// pixels, shrunk to fit the display's usable area with the title bar (#993).
+void FitWindowSize(SDL_DisplayID display, float pixelsPerPoint, int borderW, int borderH, int *w, int *h)
+{
+    if (pixelsPerPoint > 1.0f)
+    {
+        *w = static_cast<int>(static_cast<float>(*w) / pixelsPerPoint + 0.5f);
+        *h = static_cast<int>(static_cast<float>(*h) / pixelsPerPoint + 0.5f);
+    }
+    SDL_Rect usable;
+    if (!display || !SDL_GetDisplayUsableBounds(display, &usable))
+        return;
+    const int maxW = usable.w - borderW;
+    const int maxH = usable.h - borderH;
+    if (maxW <= 0 || maxH <= 0 || (*w <= maxW && *h <= maxH))
+        return;
+    // Keep the aspect ratio; dxvk scales the back buffer to the window.
+    const float fit = SDL_min(static_cast<float>(maxW) / static_cast<float>(*w),
+                              static_cast<float>(maxH) / static_cast<float>(*h));
+    *w = SDL_max(1, static_cast<int>(static_cast<float>(*w) * fit));
+    *h = SDL_max(1, static_cast<int>(static_cast<float>(*h) * fit));
+}
+
+// Fit the windowed window, once it exists and has a title bar to measure.
+void FitWindowedWindow(int pixelW, int pixelH)
+{
+    int top = 0;
+    int left = 0;
+    int bottom = 0;
+    int right = 0;
+    SDL_GetWindowBordersSize(s_window, &top, &left, &bottom, &right);
+    int w = pixelW;
+    int h = pixelH;
+    FitWindowSize(SDL_GetDisplayForWindow(s_window), SDL_GetWindowPixelDensity(s_window), left + right, top + bottom,
+                  &w, &h);
+    SDL_SetWindowSize(s_window, w, h);
+}
+#endif
+
+#ifdef __APPLE__
 // An Objective-C message through the runtime, so this file stays C++.
 template <typename R, typename... Args> R ObjcSend(void *receiver, const char *selector, Args... args)
 {
@@ -315,8 +356,22 @@ bool CL_SdlCreateWindow(GfxWindowParms *wndParms, bool borderless)
     SDL_SetStringProperty(props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, "Call of Duty 4");
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_X_NUMBER, wndParms->x);
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_Y_NUMBER, wndParms->y);
+#ifdef __APPLE__
+    int createW = wndParms->displayWidth;
+    int createH = wndParms->displayHeight;
+    const SDL_Point createAt = {wndParms->x, wndParms->y};
+    SDL_DisplayID display = SDL_GetDisplayForPoint(&createAt);
+    if (!display)
+        display = SDL_GetPrimaryDisplay();
+    const SDL_DisplayMode *desktop = display ? SDL_GetDesktopDisplayMode(display) : nullptr;
+    FitWindowSize(display, desktop ? desktop->pixel_density : 1.0f, 0, 0, &createW, &createH);
+    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, createW);
+    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, createH);
+    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_HIGH_PIXEL_DENSITY_BOOLEAN, true);
+#else
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, wndParms->displayWidth);
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, wndParms->displayHeight);
+#endif
 #ifdef __APPLE__
     // macOS fullscreen is the window's own native (Spaces) fullscreen, over a
     // windowed device (R_SetD3DPresentParameters, #974).
@@ -339,6 +394,10 @@ bool CL_SdlCreateWindow(GfxWindowParms *wndParms, bool borderless)
         return false;
     }
 
+#ifdef __APPLE__
+    if (!wndParms->fullscreen)
+        FitWindowedWindow(wndParms->displayWidth, wndParms->displayHeight);
+#endif
     wndParms->hwnd = static_cast<decltype(wndParms->hwnd)>(NativeHandle(s_window));
     s_buttons = 0;
     s_motionX = s_motionY = 0.0f;
@@ -384,7 +443,7 @@ void CL_SdlSetWindowMode(const GfxWindowParms *wndParms, bool borderless)
         SDL_SetWindowFullscreen(s_window, false);
         SDL_SyncWindow(s_window);
         SDL_SetWindowBordered(s_window, !borderless);
-        SDL_SetWindowSize(s_window, wndParms->displayWidth, wndParms->displayHeight);
+        FitWindowedWindow(wndParms->displayWidth, wndParms->displayHeight);
         SDL_SetWindowPosition(s_window, wndParms->x, wndParms->y);
     }
     SDL_SyncWindow(s_window);
