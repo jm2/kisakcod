@@ -19,6 +19,13 @@
 #include <win32/win_local.h>
 #endif
 
+#ifdef __APPLE__
+// The Objective-C runtime, declared here: <objc/objc.h> redefines BOOL.
+extern "C" void *objc_getClass(const char *name);
+extern "C" void *sel_registerName(const char *name);
+extern "C" void objc_msgSend(void);
+#endif
+
 // The key table hard-codes SDL_Scancode numbers so it builds without SDL.
 static_assert(SDL_SCANCODE_RETURN == 40 && SDL_SCANCODE_GRAVE == 53 && SDL_SCANCODE_F1 == 58);
 static_assert(SDL_SCANCODE_F12 == 69 && SDL_SCANCODE_PAUSE == 72 && SDL_SCANCODE_UP == 82);
@@ -54,6 +61,40 @@ void *NativeHandle(SDL_Window *window)
     return window;
 #endif
 }
+
+#ifdef __APPLE__
+// An Objective-C message through the runtime, so this file stays C++.
+template <typename R, typename... Args> R ObjcSend(void *receiver, const char *selector, Args... args)
+{
+    return reinterpret_cast<R (*)(void *, void *, Args...)>(objc_msgSend)(receiver, sel_registerName(selector), args...);
+}
+
+// macOS shows an opaque layer that fills a fullscreen display straight on the
+// panel, past the window compositor. With KosmicKrisp's drawables that path
+// went black or froze until an overlay such as Spotlight brought the
+// compositor back, and once it hung WindowServer (#991). A non-opaque layer
+// always goes through the compositor. KosmicKrisp makes the layer opaque again
+// whenever dxvk rebuilds the swapchain, so each pump checks it. Windowed keeps
+// the opaque layer; it is composited anyway.
+void KeepFullscreenComposited()
+{
+    void *nsWindow =
+        SDL_GetPointerProperty(SDL_GetWindowProperties(s_window), SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, nullptr);
+    if (!nsWindow)
+        return;
+    // Objective-C's BOOL is bool on arm64.
+    const bool opaque = (SDL_GetWindowFlags(s_window) & SDL_WINDOW_FULLSCREEN) == 0;
+    void *const metalLayer = objc_getClass("CAMetalLayer");
+    void *subviews = ObjcSend<void *>(ObjcSend<void *>(nsWindow, "contentView"), "subviews");
+    const unsigned long count = ObjcSend<unsigned long>(subviews, "count");
+    for (unsigned long i = 0; i < count; ++i)
+    {
+        void *layer = ObjcSend<void *>(ObjcSend<void *>(subviews, "objectAtIndex:", i), "layer");
+        if (layer && ObjcSend<bool>(layer, "isKindOfClass:", metalLayer) && ObjcSend<bool>(layer, "isOpaque") != opaque)
+            ObjcSend<void>(layer, "setOpaque:", opaque);
+    }
+}
+#endif
 
 // SDL stamps events in nanoseconds on its own clock; the queue wants the
 // engine's millisecond clock, as Win32 gets from the message time.
@@ -395,6 +436,9 @@ bool CL_SdlPumpEvents()
     SDL_Event ev;
     while (SDL_PollEvent(&ev))
         HandleEvent(ev);
+#ifdef __APPLE__
+    KeepFullscreenComposited();
+#endif
     return true;
 }
 
