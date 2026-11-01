@@ -364,6 +364,14 @@ void HandleEvent(const SDL_Event &ev)
     case SDL_EVENT_WINDOW_FOCUS_GAINED:
     case SDL_EVENT_WINDOW_FOCUS_LOST:
         s_focused = ev.type == SDL_EVENT_WINDOW_FOCUS_GAINED;
+        // The lock screen keeps key focus, so focus means unlocked, even if the
+        // unlock notification never came.
+        if (s_focused && s_screenLocked)
+        {
+            Com_DPrintf(14, "Window focused: clearing the screen lock\n");
+            s_screenLocked = false;
+            UpdatePresentPaused();
+        }
         // A button released while another application had focus never
         // reaches us, so release them all on the way out.
         if (!s_focused && s_buttons)
