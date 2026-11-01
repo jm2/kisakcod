@@ -1220,16 +1220,19 @@ void __cdecl CL_AdjustTimeDelta(int32_t localClientNum)
         }
         else
         {
-            Com_PrintWarning(
-                14,
-                "Cl_AdjustTimeDelta RESET: snap is %i, last snap was %i, walltime is %i, current delta is %i, old server time was"
-                " %i, server time is %i\n",
-                LocalClientGlobals->snap.serverTime,
-                LocalClientGlobals->oldSnapServerTime,
-                cls.realtime,
-                LocalClientGlobals->serverTimeDelta,
-                LocalClientGlobals->oldServerTime,
-                LocalClientGlobals->serverTime);
+            // Retail always printed this warning. Every vid_restart stalls the client long enough
+            // to trigger it, so it now shows only with developer mode on (#994).
+            if (com_developer && com_developer->current.integer)
+                Com_PrintWarning(
+                    14,
+                    "Cl_AdjustTimeDelta RESET: snap is %i, last snap was %i, walltime is %i, current delta is %i, old server time was"
+                    " %i, server time is %i\n",
+                    LocalClientGlobals->snap.serverTime,
+                    LocalClientGlobals->oldSnapServerTime,
+                    cls.realtime,
+                    LocalClientGlobals->serverTimeDelta,
+                    LocalClientGlobals->oldServerTime,
+                    LocalClientGlobals->serverTime);
             LocalClientGlobals->serverTimeDelta = LocalClientGlobals->snap.serverTime - cls.realtime - 5;
             LocalClientGlobals->oldServerTime = LocalClientGlobals->snap.serverTime;
             LocalClientGlobals->serverTime = LocalClientGlobals->snap.serverTime;
