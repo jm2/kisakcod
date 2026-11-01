@@ -24,6 +24,8 @@
 extern "C" void *objc_getClass(const char *name);
 extern "C" void *sel_registerName(const char *name);
 extern "C" void objc_msgSend(void);
+extern "C" void *objc_autoreleasePoolPush(void);
+extern "C" void objc_autoreleasePoolPop(void *pool);
 #endif
 
 // The key table hard-codes SDL_Scancode numbers so it builds without SDL.
@@ -82,6 +84,9 @@ void KeepFullscreenComposited()
         SDL_GetPointerProperty(SDL_GetWindowProperties(s_window), SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, nullptr);
     if (!nsWindow)
         return;
+    // Nothing else drains a pool on this thread, and the getters below can
+    // return autoreleased objects, so each pump gets its own.
+    void *const pool = objc_autoreleasePoolPush();
     // Objective-C's BOOL is bool on arm64.
     const bool opaque = (SDL_GetWindowFlags(s_window) & SDL_WINDOW_FULLSCREEN) == 0;
     void *const metalLayer = objc_getClass("CAMetalLayer");
@@ -93,6 +98,7 @@ void KeepFullscreenComposited()
         if (layer && ObjcSend<bool>(layer, "isKindOfClass:", metalLayer) && ObjcSend<bool>(layer, "isOpaque") != opaque)
             ObjcSend<void>(layer, "setOpaque:", opaque);
     }
+    objc_autoreleasePoolPop(pool);
 }
 #endif
 
