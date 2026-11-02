@@ -23,7 +23,7 @@ Owner, 2026-10-27: bugs first. Rule-4 PRs with a test that fails without
 the fix and a `Retail check:` line (ADR-0009); new crash and memory bugs
 join by rank.
 
-Drained 2026-11-01 (LAN bugs #940-#997 via #943-#998). Left: SP-only
+Worked 2026-11-01 (LAN bugs #940-#997; fixes merged through #996, #997's fix is draft #998). Left: SP-only
 issues #195 and #204; #270 (parked); #278 items 2-3; #954 (x86 address
 space: 0.1.0 known limit, owner); #988 (lost-device warning split, after
 0.1.0); #997 (macOS WindowServer hang on unlock: draft #998 waits for the

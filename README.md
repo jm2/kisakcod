@@ -138,7 +138,14 @@ However, there is a non-zero chance of some type of binary exploitation when pla
 Use the **[fork issues](https://github.com/jm2/kisakcod/issues)** for this fork's
 implementation and delivery backlog; upstream reports remain available in
 [SwagSoftware/KisakCOD](https://github.com/SwagSoftware/KisakCOD/issues).
+Each gate in the [roadmap](docs/ROADMAP.md) has a `gate` issue, and the
+current queue and KPIs live in [NOW](docs/NOW.md). Changes that touch the wire
+must keep Steam 1.8 compatibility
+([NET_STEAM18](docs/design/NET_STEAM18.md)). Contributors and agents start
+with [AGENTS.md](AGENTS.md).
+
 Known limits in 0.1.0:
+
 - The Windows x86 client can run short of its 2 GiB address space at high
   resolutions with MSAA in fullscreen
   ([#954](https://github.com/jm2/kisakcod/issues/954)). The 64-bit clients
@@ -147,18 +154,17 @@ Known limits in 0.1.0:
   renderer comes after 0.1.0
   ([#713](https://github.com/jm2/kisakcod/issues/713)).
 
-Each gate in the [roadmap](docs/ROADMAP.md) has a `gate` issue, and the
-current queue and KPIs live in [NOW](docs/NOW.md). Changes that touch the wire
-must keep Steam 1.8 compatibility
-([NET_STEAM18](docs/design/NET_STEAM18.md)). Contributors and agents start
-with [AGENTS.md](AGENTS.md).
-
 ## Troubleshooting
+
 - ***LAN server list is empty*** :
-  - The server and the LAN browser use UDP 28960-28963. Allow them through the
-    host firewall: `firewall-cmd --add-port=28960-28963/udp` (add
-    `--permanent` to keep it), or `ufw allow 28960:28963/udp`. On Windows,
-    allow the game on private networks when the firewall asks.
+  - The LAN browser looks for servers on UDP 28960-28963 only. Allow that
+    range through the host firewall: `firewall-cmd --add-port=28960-28963/udp`
+    (to keep it, add `--permanent` and then run `firewall-cmd --reload`), or
+    `ufw allow 28960:28963/udp`. On Windows, allow the game on private
+    networks when the firewall asks.
+  - A server whose port was taken moves up to a higher one, and above 28963
+    the browser won't find it. Set `net_port` to a free port in the range, or
+    join with `connect <ip>:<port>`.
 - ***Can't Connect to Dedicated Server*** :
   -  Check `net_ip` and `net_port`, the server will increment the port if the preferred one isn't available but the client won't sweep upwards.
  - ***DLL Error upon launch*** :
