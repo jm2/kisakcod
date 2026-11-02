@@ -3,6 +3,11 @@
 
 #include <SDL3/SDL.h>
 
+#include <atomic>
+#ifdef __APPLE__
+#include <CoreFoundation/CoreFoundation.h>
+#endif
+
 #include <client/client.h>
 #include <gfx_d3d/r_display_modes.h>
 #include <gfx_d3d/r_dvars.h>
@@ -51,9 +56,55 @@ SDL_ThreadID s_windowThread;
 bool s_minimized;
 SDL_MouseButtonFlags s_buttons;
 bool s_focused;
+// Why the window is off screen (CL_SdlPresentPaused); main thread only.
+bool s_occluded;
+bool s_hidden;
+bool s_screenLocked;
+std::atomic<bool> s_presentPaused;
+#ifdef __APPLE__
+int s_lockObserver; // an address-only token for the lock observers
+#endif
 // Motion since the last CL_SdlTakeMouseMotion; fractions carry over.
 float s_motionX;
 float s_motionY;
+
+void UpdatePresentPaused()
+{
+#ifdef __APPLE__
+    const bool paused = s_window && (s_minimized || s_occluded || s_hidden || s_screenLocked);
+    if (paused != s_presentPaused.load())
+        Com_DPrintf(14, "Present %s (minimized %i, occluded %i, hidden %i, screen locked %i)\n",
+                    paused ? "paused" : "resumed", s_minimized, s_occluded, s_hidden, s_screenLocked);
+    s_presentPaused.store(paused);
+#endif
+}
+
+#ifdef __APPLE__
+// The lock screen hides the window, and unlocking after a long lock while the
+// game kept presenting hung WindowServer (#997). The session's lock and unlock
+// come as distributed notifications, delivered on the main run loop that
+// SDL_PollEvent pumps.
+void ScreenLockChanged(CFNotificationCenterRef, void *, CFNotificationName name, const void *, CFDictionaryRef)
+{
+    s_screenLocked = CFStringCompare(name, CFSTR("com.apple.screenIsLocked"), 0) == kCFCompareEqualTo;
+    UpdatePresentPaused();
+}
+
+void WatchScreenLock(bool watch)
+{
+    CFNotificationCenterRef center = CFNotificationCenterGetDistributedCenter();
+    if (watch)
+    {
+        for (CFStringRef name : {CFSTR("com.apple.screenIsLocked"), CFSTR("com.apple.screenIsUnlocked")})
+            CFNotificationCenterAddObserver(center, &s_lockObserver, ScreenLockChanged, name, nullptr,
+                                            CFNotificationSuspensionBehaviorDeliverImmediately);
+    }
+    else
+    {
+        CFNotificationCenterRemoveEveryObserver(center, &s_lockObserver);
+    }
+}
+#endif
 
 void *NativeHandle(SDL_Window *window)
 {
@@ -267,6 +318,7 @@ void WindowMoved(const SDL_WindowEvent &window)
 void __cdecl VID_AppActivate(uint32_t activeState, int minimize)
 {
     s_minimized = minimize != 0;
+    UpdatePresentPaused();
     Key_ClearStates(0);
     const bool active = activeState && !s_minimized;
 #ifdef _WIN32
@@ -314,6 +366,14 @@ void HandleEvent(const SDL_Event &ev)
     case SDL_EVENT_WINDOW_FOCUS_GAINED:
     case SDL_EVENT_WINDOW_FOCUS_LOST:
         s_focused = ev.type == SDL_EVENT_WINDOW_FOCUS_GAINED;
+        // The lock screen keeps key focus, so focus means unlocked, even if the
+        // unlock notification never came.
+        if (s_focused && s_screenLocked)
+        {
+            Com_DPrintf(14, "Window focused: clearing the screen lock\n");
+            s_screenLocked = false;
+            UpdatePresentPaused();
+        }
         // A button released while another application had focus never
         // reaches us, so release them all on the way out.
         if (!s_focused && s_buttons)
@@ -331,6 +391,17 @@ void HandleEvent(const SDL_Event &ev)
         break;
     case SDL_EVENT_WINDOW_MOVED:
         WindowMoved(ev.window);
+        break;
+    case SDL_EVENT_WINDOW_OCCLUDED:
+    case SDL_EVENT_WINDOW_EXPOSED:
+        // EXPOSED also means "redraw"; occlusion is read back from the flags.
+        s_occluded = (SDL_GetWindowFlags(s_window) & SDL_WINDOW_OCCLUDED) != 0;
+        UpdatePresentPaused();
+        break;
+    case SDL_EVENT_WINDOW_HIDDEN:
+    case SDL_EVENT_WINDOW_SHOWN:
+        s_hidden = ev.type == SDL_EVENT_WINDOW_HIDDEN;
+        UpdatePresentPaused();
         break;
     default:
         break;
@@ -402,6 +473,12 @@ bool CL_SdlCreateWindow(GfxWindowParms *wndParms, bool borderless)
     s_buttons = 0;
     s_motionX = s_motionY = 0.0f;
     s_focused = (SDL_GetWindowFlags(s_window) & SDL_WINDOW_INPUT_FOCUS) != 0;
+    s_occluded = (SDL_GetWindowFlags(s_window) & SDL_WINDOW_OCCLUDED) != 0;
+    s_hidden = (SDL_GetWindowFlags(s_window) & SDL_WINDOW_HIDDEN) != 0;
+#ifdef __APPLE__
+    WatchScreenLock(true);
+#endif
+    UpdatePresentPaused();
     // Text input follows the key catchers (SyncTextInput, each pump).
 
     // MainWndProc's WM_CREATE work.
@@ -462,8 +539,12 @@ void CL_SdlDestroyWindow(void *nativeWindow)
     if (!s_window || NativeHandle(s_window) != nativeWindow)
         return;
     SDL_StopTextInput(s_window);
+#ifdef __APPLE__
+    WatchScreenLock(false);
+#endif
     SDL_DestroyWindow(s_window);
     s_window = nullptr;
+    UpdatePresentPaused();
 #ifdef _WIN32
     g_wv.hWnd = nullptr;
 #endif
@@ -573,4 +654,9 @@ void CL_SdlWarpMouse(int x, int y)
 bool CL_SdlIsMinimized()
 {
     return s_minimized;
+}
+
+bool CL_SdlPresentPaused()
+{
+    return s_presentPaused.load(std::memory_order_relaxed);
 }

@@ -1,4 +1,7 @@
 #include "rb_backend.h"
+#ifdef KISAK_CLIENT_SDL3
+#include <client/cl_sdl3.h>
+#endif
 #include <qcommon/hudicon.h>
 #include <qcommon/sys_time.h>
 #include <qcommon/mem_track.h>
@@ -2580,6 +2583,13 @@ GfxIndexBufferState *RB_SwapBuffers()
 
 #ifdef KISAK_BACKBUFFER_SCREENSHOT
     RB_CaptureSwapchainScreenshot(); // the finished frame, before Present discards it
+#endif
+#ifdef KISAK_CLIENT_SDL3
+    // Port-only: with the macOS window off screen, Present would only wait on
+    // WindowServer for a drawable; skip it and keep the frame (#997).
+    if (CL_SdlPresentPaused())
+        hr = 0;
+    else
 #endif
     {
         PROF_SCOPED("Present");

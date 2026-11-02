@@ -36,3 +36,9 @@ void CL_SdlWarpMouse(int x, int y);
 
 // What WinMain's loop reads from g_wv.isMinimized, for platforms without it.
 bool CL_SdlIsMinimized();
+
+// macOS: true while nothing of the game window is on screen (minimized,
+// hidden, occluded, another Space, or the screen locked). The renderer skips
+// Present then, so no Metal drawable is acquired off screen (#997). Read from
+// the render thread. Always false elsewhere.
+bool CL_SdlPresentPaused();
