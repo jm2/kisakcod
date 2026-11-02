@@ -23,9 +23,11 @@ Owner, 2026-10-27: bugs first. Rule-4 PRs with a test that fails without
 the fix and a `Retail check:` line (ADR-0009); new crash and memory bugs
 join by rank.
 
-Drained 2026-10-31 (LAN bugs #940-#988 via #943-#989). Left: SP-only
+Worked 2026-11-01 (LAN bugs #940-#997, fixed via #943-#996). Left: SP-only
 issues #195 and #204; #270 (parked); #278 items 2-3; #954 (x86 address
-space: 0.1.0 known limit, owner); #964 and #965 (owner check on #977).
+space: 0.1.0 known limit, owner); #988 (lost-device warning split, after
+0.1.0); #997 (macOS WindowServer hang on unlock: draft #998 waits for the
+owner's lock and unlock test at the Mac).
 
 ## Queue
 
@@ -33,14 +35,14 @@ S = 1-2 days, M = 3-5, L = 1-2 weeks. `#n` is a GitHub PR or issue. Row numbers 
 
 | # | Bead | Gate | Moves | Done-test | Size | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| 69 | Alt+Enter fullscreen at desktop size (#917) | G6 | K6 | window, fullscreen, window on each OS | S | #923, #955, #983 merged; macOS native fullscreen #976, #977 merged, owner check left |
+| 69 | Alt+Enter fullscreen at desktop size (#917) | G6 | K6 | window, fullscreen, window on each OS | S | #923, #955, #983 merged; macOS #976, #977, #992 (composited fullscreen, #991), #996 (Retina window, #993) merged; owner Retina check left |
 | 71 | Windows amd64/arm64 installer and `.zip` (ADR-0012) | G6 | K6 | the ADR-0012 done-test | M | #931, #956 merged; console checks done |
 | 73 | macOS arm64 `.dmg` (ADR-0011, ADR-0012; extends 66) | G6 | K6 | as 66, from the `.dmg` | L | #925, #926, #933, #962, #973 merged; clean-account check left |
 | 66 | G6: the macOS `.app` bundles its runtime ([ADR-0011](decisions/0011-macos-client-bundles-its-runtime.md)) | G6 | K6 | a clean account without Homebrew plays a LAN round; `otool -L` shows no `/opt/homebrew` | L | clean-account round left |
 
 Done 2026-10-29: rows 67 (#921), 68 (#922), 70 (#927), 72 (#929, #930), 74 (#935, #936, #937: dry run 41039821931 green on all 10 legs); G3 (#181), G4a (#182), G5 (#184).
 
-**Resume here:** dry run 41242913270 at a8a5d70b is green; the recut waits for the owner's go-ahead. Row 66's clean-account round and the #189 decision remain. Before #962 no macOS client ran on the bundled Vulkan driver. Host: #804.
+**Resume here:** zlib 1.3.1 shipped in #814 (#189 closed). The recut waits for #998 and the owner's go-ahead (dry run 41382564662 at 137488d8). Row 66's clean-account round remains. Before #962 no macOS client ran on the bundled Vulkan driver. Host: #804.
 
 ## Blocked on owner
 
