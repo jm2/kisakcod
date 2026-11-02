@@ -61,6 +61,9 @@ bool s_occluded;
 bool s_hidden;
 bool s_screenLocked;
 std::atomic<bool> s_presentPaused;
+#ifdef __APPLE__
+int s_lockObserver; // an address-only token for the lock observers
+#endif
 // Motion since the last CL_SdlTakeMouseMotion; fractions carry over.
 float s_motionX;
 float s_motionY;
@@ -90,16 +93,15 @@ void ScreenLockChanged(CFNotificationCenterRef, void *, CFNotificationName name,
 void WatchScreenLock(bool watch)
 {
     CFNotificationCenterRef center = CFNotificationCenterGetDistributedCenter();
-    static int s_observer;
     if (watch)
     {
         for (CFStringRef name : {CFSTR("com.apple.screenIsLocked"), CFSTR("com.apple.screenIsUnlocked")})
-            CFNotificationCenterAddObserver(center, &s_observer, ScreenLockChanged, name, nullptr,
+            CFNotificationCenterAddObserver(center, &s_lockObserver, ScreenLockChanged, name, nullptr,
                                             CFNotificationSuspensionBehaviorDeliverImmediately);
     }
     else
     {
-        CFNotificationCenterRemoveEveryObserver(center, &s_observer);
+        CFNotificationCenterRemoveEveryObserver(center, &s_lockObserver);
     }
 }
 #endif
