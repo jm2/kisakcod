@@ -251,7 +251,8 @@ void CG_RegisterDvars()
     limits.value.max = 640.0f;
     //cg_debugInfoCornerOffset = Dvar_RegisterVec2("cg_debugInfoCornerOffset", 20.0, -20.0, -200.0, 640.0, v5, v4);
     cg_debugInfoCornerOffset = Dvar_RegisterVec2("cg_debugInfoCornerOffset", 20.0, -20.0, limits, DVAR_ARCHIVE, "Offset from top-right corner, for cg_drawFPS, etc");
-    cg_drawVersion = Dvar_RegisterBool("cg_drawVersion", 1, 0, "Draw the game version");
+    // Off by default: retail 1.8 shows no version string in game (owner, 2026-11-04).
+    cg_drawVersion = Dvar_RegisterBool("cg_drawVersion", 0, 0, "Draw the game version");
     cg_drawVersionX = Dvar_RegisterFloat("cg_drawVersionX", 50.0, 0.0, 512.0, DVAR_NOFLAG, "X offset for the version string");
     cg_drawVersionY = Dvar_RegisterFloat("cg_drawVersionY", 18.0, 0.0, 512.0, DVAR_NOFLAG, "Y offset for the version string");
     snd_drawInfo = Dvar_RegisterEnum("snd_drawInfo", snd_drawInfoStrings, 0, 0, "Draw debugging information for sounds");

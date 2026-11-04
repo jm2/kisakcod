@@ -408,7 +408,8 @@ void __cdecl CG_RegisterDvars()
         minc,
         DVAR_ARCHIVE,
         "Offset from top-right corner, for cg_drawFPS, etc");
-    cg_drawVersion = Dvar_RegisterBool("cg_drawVersion", 1, DVAR_NOFLAG, "Draw the game version");
+    // Off by default: retail 1.8 shows no version string in game (owner, 2026-11-04).
+    cg_drawVersion = Dvar_RegisterBool("cg_drawVersion", 0, DVAR_NOFLAG, "Draw the game version");
     mind.value.max = 512.0f;
     mind.value.min = 0.0f;
     cg_drawVersionX = Dvar_RegisterFloat("cg_drawVersionX", 50.0f, mind, DVAR_NOFLAG, "X offset for the version string");
