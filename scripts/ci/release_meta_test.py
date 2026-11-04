@@ -83,10 +83,9 @@ HEADLESS_LINKS = manifest_with({(t["id"], "headless-server"): "links"
                                 for t in REAL_MANIFEST["targets"] if t.get("required")})
 
 
-def real_stem(target: str, platform: str, version: str) -> str:
-    """The headless stem the real manifest gives a target, at its current level."""
-    cell = next(c for c in REAL_MANIFEST["cells"] if (c["target"], c["role"]) == (target, "headless-server"))
-    return f"kisakcod-{version}-{platform}-headless{rm.TIER_SUFFIX[rm.tier(cell['level'])]}"
+def real_stem(platform: str, version: str) -> str:
+    """The headless stem the real manifest gives a platform; the tier isn't in it."""
+    return f"kisakcod-{version}-{platform}-headless"
 
 
 class VersionTest(unittest.TestCase):
@@ -109,7 +108,7 @@ class MatrixTest(unittest.TestCase):
     def test_real_manifest_builds_the_linux_headless_leg(self):
         legs, _ = rm.build_matrix(REAL_MANIFEST, "1.2.3")
         leg = next(leg for leg in legs if (leg["target"], leg["role"]) == ("linux-amd64", "headless-server"))
-        self.assertEqual(leg["stem"], real_stem("linux-amd64", "linux-x64", "1.2.3"))
+        self.assertEqual(leg["stem"], real_stem("linux-x64", "1.2.3"))
         self.assertEqual((leg["role"], leg["recipe"], leg["runner"], leg["binary"]),
                          ("headless-server", "linux-headless", "ubuntu-24.04", "KisakCOD-dedi"))
 
@@ -119,9 +118,9 @@ class MatrixTest(unittest.TestCase):
         self.assertEqual(missing, [])
         self.assertEqual([(leg["stem"], leg["recipe"], leg["runner"], leg["archive"], leg["exe"], leg["file_arch"])
                           for leg in legs], [
-            ("kisakcod-1.2.3-windows-arm64-headless-preview", "windows-headless", "windows-11-arm", "zip", ".exe",
+            ("kisakcod-1.2.3-windows-arm64-headless", "windows-headless", "windows-11-arm", "zip", ".exe",
              "ARM64"),
-            ("kisakcod-1.2.3-windows-x64-headless-preview", "windows-headless", "windows-2025", "zip", ".exe", "x64"),
+            ("kisakcod-1.2.3-windows-x64-headless", "windows-headless", "windows-2025", "zip", ".exe", "x64"),
         ])
 
     def test_windows_client_legs_build_with_their_vcpkg_triplet(self):
@@ -130,9 +129,9 @@ class MatrixTest(unittest.TestCase):
         self.assertEqual(missing, [])
         self.assertEqual([(leg["stem"], leg["recipe"], leg["runner"], leg["binary"], leg["file_arch"], leg["triplet"],
                            leg["also"]) for leg in legs], [
-            ("kisakcod-1.2.3-windows-arm64-client-beta", "windows-client", "windows-11-arm", "KisakCOD-mp", "ARM64",
+            ("kisakcod-1.2.3-windows-arm64-client", "windows-client", "windows-11-arm", "KisakCOD-mp", "ARM64",
              "arm64-windows", ["exe"]),
-            ("kisakcod-1.2.3-windows-x64-client-beta", "windows-client", "windows-2025", "KisakCOD-mp", "x64",
+            ("kisakcod-1.2.3-windows-x64-client", "windows-client", "windows-2025", "KisakCOD-mp", "x64",
              "x64-windows", ["exe"]),
         ])
 
@@ -140,7 +139,7 @@ class MatrixTest(unittest.TestCase):
         legs, missing = rm.build_matrix(manifest_with({("macos-arm64", "headless-server"): "links"}), "1.2.3")
         self.assertEqual(missing, [])
         self.assertEqual([(leg["stem"], leg["recipe"], leg["runner"], leg["archive"], leg["exe"], leg["file_arch"])
-                          for leg in legs], [("kisakcod-1.2.3-macos-arm64-headless-preview", "macos-headless",
+                          for leg in legs], [("kisakcod-1.2.3-macos-arm64-headless", "macos-headless",
                                               "macos-26", "tar.xz", "", "arm64")])
 
     def test_macos_client_leg_ships_a_dmg(self):
@@ -148,7 +147,7 @@ class MatrixTest(unittest.TestCase):
         self.assertEqual(missing, [])
         self.assertEqual([(leg["stem"], leg["recipe"], leg["runner"], leg["binary"], leg["archive"],
                            leg.get("also"), leg["file_arch"]) for leg in legs],
-                         [("kisakcod-1.2.3-macos-arm64-client-beta", "macos-client", "macos-26", "KisakCOD-mp",
+                         [("kisakcod-1.2.3-macos-arm64-client", "macos-client", "macos-26", "KisakCOD-mp",
                            "dmg", None, "arm64")])
 
     def test_linux_client_legs_ship_every_format(self):
@@ -157,9 +156,9 @@ class MatrixTest(unittest.TestCase):
         self.assertEqual(missing, [])
         self.assertEqual([(leg["stem"], leg["recipe"], leg["runner"], leg["binary"], leg["pkg_arch"], leg["also"])
                           for leg in legs], [
-            ("kisakcod-1.2.3-linux-arm64-client-beta", "linux-client", "ubuntu-24.04-arm", "KisakCOD-mp", "arm64",
+            ("kisakcod-1.2.3-linux-arm64-client", "linux-client", "ubuntu-24.04-arm", "KisakCOD-mp", "arm64",
              ["deb", "rpm", "pkg.tar.zst"]),
-            ("kisakcod-1.2.3-linux-x64-client-beta", "linux-client", "ubuntu-24.04", "KisakCOD-mp", "amd64",
+            ("kisakcod-1.2.3-linux-x64-client", "linux-client", "ubuntu-24.04", "KisakCOD-mp", "amd64",
              ["deb", "rpm", "pkg.tar.zst"]),
         ])
 
@@ -172,7 +171,7 @@ class MatrixTest(unittest.TestCase):
         }), "2.0.0")
         self.assertEqual([(leg["stem"], leg["tier"]) for leg in legs], [
             ("kisakcod-2.0.0-linux-arm64-headless", "first-class"),
-            ("kisakcod-2.0.0-linux-x64-headless-beta", "beta"),
+            ("kisakcod-2.0.0-linux-x64-headless", "beta"),
         ])
         self.assertEqual(missing, [])
 
@@ -205,7 +204,7 @@ class CliTest(unittest.TestCase):
         out = dict(line.split("=", 1) for line in run.stdout.splitlines())
         self.assertEqual((out["tag"], out["version"], out["prerelease"]), ("v1.2.3", "1.2.3", "true"))
         stems = [leg["stem"] for leg in json.loads(out["matrix"])["include"]]
-        self.assertIn(real_stem("linux-amd64", "linux-x64", "1.2.3"), stems)
+        self.assertIn(real_stem("linux-x64", "1.2.3"), stems)
 
     def test_metadata_fails_closed(self):
         run = cli("metadata", "--version", "1.2.3", "--dry-run", "false")
@@ -239,7 +238,7 @@ class CliTest(unittest.TestCase):
         self.assertLessEqual(max(map(len, run.stdout.splitlines())), 76)
         words = " ".join(run.stdout.split())
         for text in ("KisakCOD 1.2.3: linux-x64 headless dedicated server (preview)", SHA_A,
-                     "no Call of Duty 4 content", "kisakcod-1.2.3-linux-x64-headless-preview-debugsymbols.tar.xz",
+                     "no Call of Duty 4 content", "kisakcod-1.2.3-linux-x64-headless-debugsymbols.tar.xz",
                      "Requires: glibc 2.39.", "GNU GPL v3"):
             self.assertIn(text, words)
 
@@ -249,7 +248,7 @@ class CliTest(unittest.TestCase):
         self.assertEqual(run.returncode, 0, run.stderr)
         words = " ".join(run.stdout.split())
         for text in ("windows-x64 headless dedicated server (preview)",
-                     "kisakcod-1.2.3-windows-x64-headless-preview-debugsymbols.zip",
+                     "kisakcod-1.2.3-windows-x64-headless-debugsymbols.zip",
                      "debuggers find KisakCOD-dedi.pdb next to KisakCOD-dedi.exe"):
             self.assertIn(text, words)
 
@@ -260,7 +259,7 @@ class CliTest(unittest.TestCase):
         self.assertEqual(run.returncode, 0, run.stderr)
         words = " ".join(run.stdout.split())
         for text in ("macos-arm64 headless dedicated server (preview)",
-                     "kisakcod-1.2.3-macos-arm64-headless-preview-debugsymbols.tar.xz",
+                     "kisakcod-1.2.3-macos-arm64-headless-debugsymbols.tar.xz",
                      "lldb finds KisakCOD-dedi.dSYM next to KisakCOD-dedi by its UUID"):
             self.assertIn(text, words)
 
@@ -391,7 +390,7 @@ class NotesTest(unittest.TestCase):
         body = run.stdout.split("## Changes since v0.1.0\n\n", 1)[1]
         fix = self.git("rev-parse", "--short=8", "HEAD~1")
         self.assertEqual(body, f"- Add a thing (#7)\n- Fix a typo ({fix})\n")
-        for text in ("# KisakCOD 0.2.0", "`kisakcod-0.2.0-linux-x64-headless-preview.tar.xz` | linux-amd64",
+        for text in ("# KisakCOD 0.2.0", "`kisakcod-0.2.0-linux-x64-headless.tar.xz` | linux-amd64",
                      "kisakcod-0.2.0-source.tar.gz", "no Call of Duty 4 content", self.commit):
             self.assertIn(text, run.stdout)
 
@@ -399,7 +398,7 @@ class NotesTest(unittest.TestCase):
         self.legs, _ = rm.build_matrix(manifest_with({("linux-amd64", "mp-client"): "fork_peer"}), "0.2.0")
         run = self.notes("v0.2.0")
         self.assertEqual(run.returncode, 0, run.stderr)
-        stem = "kisakcod-0.2.0-linux-x64-client-beta"
+        stem = "kisakcod-0.2.0-linux-x64-client"
         files = f"`{stem}.tar.xz`, `{stem}.deb`, `{stem}.rpm`, `{stem}.pkg.tar.zst`"
         self.assertIn(f"| {files} | linux-amd64 | mp-client |", run.stdout)
 
@@ -407,7 +406,7 @@ class NotesTest(unittest.TestCase):
         self.legs, _ = rm.build_matrix(manifest_with({("windows-amd64", "mp-client"): "fork_peer"}), "0.2.0")
         run = self.notes("v0.2.0")
         self.assertEqual(run.returncode, 0, run.stderr)
-        stem = "kisakcod-0.2.0-windows-x64-client-beta"
+        stem = "kisakcod-0.2.0-windows-x64-client"
         self.assertIn(f"| `{stem}.zip`, `{stem}-setup.exe` | windows-amd64 | mp-client |", run.stdout)
 
     def test_first_release_lists_the_history(self):

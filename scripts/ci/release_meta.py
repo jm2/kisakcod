@@ -103,7 +103,6 @@ ROLES = {
     "headless-server": ("headless", "KisakCOD-dedi", "headless dedicated server"),
     "mp-client": ("client", "KisakCOD-mp", "multiplayer client"),
 }
-TIER_SUFFIX = {"preview": "-preview", "beta": "-beta", "first-class": ""}
 LEVEL_NOTES = {
     "links": "it builds, links and passes an assetless smoke run. It cannot load "
              "retail fast files yet, so it cannot host a game.",
@@ -150,7 +149,8 @@ def build_matrix(manifest: dict, version: str) -> tuple[list[dict[str, str]], li
         recipe = RECIPES[key]
         role_part, binary, _ = ROLES[key[1]]
         leg_tier = tier(cell["level"])
-        stem = f"kisakcod-{version}-{recipe['platform']}-{role_part}{TIER_SUFFIX[leg_tier]}"
+        # The tier is in the README and the notes, not the file names.
+        stem = f"kisakcod-{version}-{recipe['platform']}-{role_part}"
         legs.append({"target": key[0], "role": key[1], "level": cell["level"], "tier": leg_tier,
                      "binary": binary, "stem": stem, **recipe,
                      "label": f"{recipe['platform']} {role_part} ({leg_tier})"})
