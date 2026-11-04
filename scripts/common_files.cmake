@@ -830,8 +830,6 @@ set(XANIM
 # Dependencies
 set(BINKLIB
     "${DEPS_DIR}/binklib/bink.h"
-    "${DEPS_DIR}/binklib/binktextures.cpp"
-    "${DEPS_DIR}/binklib/binktextures.h"
     "${DEPS_DIR}/binklib/rad3d.h"
     "${DEPS_DIR}/binklib/radbase.h"
 )

@@ -22,10 +22,86 @@
 #ifdef CINEMA
 
 #ifndef USE_SEPARATE_BLIT_TEXTURE
-#error You need to turn on this Flag for the Separate Y, Cb, Cr, A Texture decoding in bink (see: binktextures.cpp)
+#error The cinematic renderer copies each decoded frame into tex_draw; build with USE_SEPARATE_BLIT_TEXTURE
 #endif
 
 CinematicGlob cinematicGlob;
+
+namespace
+{
+void LockPlane(IDirect3DTexture9 *texture, DWORD flags, BINKPLANE *plane)
+{
+    D3DLOCKED_RECT locked;
+    if (SUCCEEDED(texture->LockRect(0, &locked, nullptr, flags)))
+    {
+        plane->Buffer = locked.pBits;
+        plane->BufferPitch = locked.Pitch;
+    }
+}
+
+void UnlockPlane(IDirect3DTexture9 *texture, BINKPLANE *plane)
+{
+    texture->UnlockRect(0);
+    plane->Buffer = nullptr;
+}
+} // namespace
+
+// Map every frame buffer's planes for BinkDoFrame. Only the frame being
+// decoded is written; the others are mapped read-only for Bink's references.
+static void R_Cinematic_LockFrameTextures(BINKTEXTURESET *set)
+{
+    BINKFRAMEBUFFERS *buffers = &set->bink_buffers;
+    for (S32 frame = 0; frame < buffers->TotalFrames; ++frame)
+    {
+        const DWORD flags = static_cast<U32>(frame) == buffers->FrameNum ? 0 : D3DLOCK_READONLY;
+        BINKFRAMETEXTURES *textures = &set->textures[frame];
+        BINKFRAMEPLANESET *planes = &buffers->Frames[frame];
+        LockPlane(textures->Ytexture, flags, &planes->YPlane);
+        LockPlane(textures->cRtexture, flags, &planes->cRPlane);
+        LockPlane(textures->cBtexture, flags, &planes->cBPlane);
+        if (textures->Atexture)
+            LockPlane(textures->Atexture, flags, &planes->APlane);
+    }
+}
+
+// Unmap the planes, then copy the regions Bink changed in the decoded frame
+// into tex_draw, the textures the renderer samples. Chroma is half size.
+static void R_Cinematic_UnlockFrameTextures(IDirect3DDevice9 *device, BINKTEXTURESET *set, BINK *bink)
+{
+    BINKFRAMEBUFFERS *buffers = &set->bink_buffers;
+    for (S32 frame = 0; frame < buffers->TotalFrames; ++frame)
+    {
+        BINKFRAMETEXTURES *textures = &set->textures[frame];
+        BINKFRAMEPLANESET *planes = &buffers->Frames[frame];
+        UnlockPlane(textures->Ytexture, &planes->YPlane);
+        UnlockPlane(textures->cRtexture, &planes->cRPlane);
+        UnlockPlane(textures->cBtexture, &planes->cBPlane);
+        if (textures->Atexture)
+            UnlockPlane(textures->Atexture, &planes->APlane);
+    }
+
+    const S32 rectCount = BinkGetRects(bink, BINKSURFACEFAST);
+    if (rectCount <= 0)
+        return;
+    BINKFRAMETEXTURES *decoded = &set->textures[buffers->FrameNum];
+    for (S32 rectIndex = 0; rectIndex < rectCount; ++rectIndex)
+    {
+        const BINKRECT &changed = bink->FrameRects[rectIndex];
+        RECT full = {changed.Left, changed.Top, changed.Left + changed.Width, changed.Top + changed.Height};
+        decoded->Ytexture->AddDirtyRect(&full);
+        if (decoded->Atexture)
+            decoded->Atexture->AddDirtyRect(&full);
+        RECT half = {full.left >> 1, full.top >> 1, full.right >> 1, full.bottom >> 1};
+        decoded->cRtexture->AddDirtyRect(&half);
+        decoded->cBtexture->AddDirtyRect(&half);
+    }
+    BINKFRAMETEXTURES *draw = &set->tex_draw;
+    device->UpdateTexture(decoded->Ytexture, draw->Ytexture);
+    device->UpdateTexture(decoded->cRtexture, draw->cRtexture);
+    device->UpdateTexture(decoded->cBtexture, draw->cBtexture);
+    if (decoded->Atexture)
+        device->UpdateTexture(decoded->Atexture, draw->Atexture);
+}
 bool g_cinematicThreadInitialized;
 CinematicThreadState g_cinematicThreadState;
 
@@ -319,7 +395,7 @@ char __cdecl R_Cinematic_Advance()
     
     if (!wait && !cinematicGlob.underrun)
     {
-        Lock_Bink_textures(&cinematicGlob.binkTextureSet);
+        R_Cinematic_LockFrameTextures(&cinematicGlob.binkTextureSet);
         {
             PROF_SCOPED("BinkDoFrame");
             skipped = BinkDoFrame(cinematicGlob.bink);
@@ -330,7 +406,7 @@ char __cdecl R_Cinematic_Advance()
             cinematicGlob.activeImageFrame = cinematicGlob.binkTextureSet.bink_buffers.FrameNum;
             cinematicGlob.activeImageFrameTextureSet = cinematicGlob.activeTextureSet;
         }
-        Unlock_Bink_textures(dx.device, &cinematicGlob.binkTextureSet, cinematicGlob.bink);
+        R_Cinematic_UnlockFrameTextures(dx.device, &cinematicGlob.binkTextureSet, cinematicGlob.bink);
         if ((cinematicGlob.playbackFlags & 2) != 0 || cinematicGlob.bink->FrameNum != cinematicGlob.bink->Frames)
         {
             {

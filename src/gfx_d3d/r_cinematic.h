@@ -2,10 +2,32 @@
 
 #include <d3d9.h>
 #include <binklib/bink.h>
-#include <binklib/binktextures.h>
 #include "r_material.h"
 
 #define CINEMATIC_INVALID_IMAGE_FRAME -1
+
+// The GPU side of one Bink frame: an L8 texture per plane (Y, Cr, Cb and the
+// optional alpha), with each plane's allocation size.
+struct BINKFRAMETEXTURES
+{
+    U32 Ysize;
+    U32 cRsize;
+    U32 cBsize;
+    U32 Asize;
+    IDirect3DTexture9 *Ytexture;
+    IDirect3DTexture9 *cRtexture;
+    IDirect3DTexture9 *cBtexture;
+    IDirect3DTexture9 *Atexture;
+};
+
+// The frame buffers Bink decodes into (BINKNOFRAMEBUFFERS): one locked set of
+// textures per frame buffer, and the set the renderer samples (tex_draw).
+struct BINKTEXTURESET
+{
+    BINKFRAMEBUFFERS bink_buffers;
+    BINKFRAMETEXTURES textures[BINKMAXFRAMEBUFFERS];
+    BINKFRAMETEXTURES tex_draw;
+};
 
 enum CinematicEnum : __int32
 {                                       // ...

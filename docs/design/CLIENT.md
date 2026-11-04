@@ -16,7 +16,7 @@ Steps 1 and 2 are the 0.1.0 clients; step 3 is post-0.1.0 work (#713).
 
 D3DX9 has no ARM64 library, so `KISAK_USE_D3DX` (set by `pre_build.cmake` for 32-bit Windows clients only) keeps D3DX on x86. Changes under the switch must leave x86 Release objects byte-identical.
 
-- **Replacements:** 6 sites (`r_material_load_obj.cpp` ×4, `binktextures.cpp` ×2) use `gfx_d3d/r_shader_reflect` (CTAB constant table, semantics) and `gfx_d3d/r_shader_compile` (`ShaderBuffer`, D3DCompile).
+- **Replacements:** 4 sites in `r_material_load_obj.cpp` use `gfx_d3d/r_shader_reflect` (CTAB constant table, semantics) and `gfx_d3d/r_shader_compile` (`ShaderBuffer`, D3DCompile).
 - **Native D3DX9_43 rules the reflection matches:** ps_2_x reads `COLOR1` as COLOR0, as retail did (don't fix it); ps_1_x always outputs COLOR0; an SM1 CTAB sits only in the comments after the version token; pixel outputs are `oC#`/`oDepth`.
 - **Dependencies:** no `d3dx9.lib`; the Microsoft.DXSDK.D3DX 9.29.952.8 NuGet supplies the headers.
 - **ARM64 build:** VS 2026 `-A ARM64` (CMake ≥ 4.2) with `-DKISAK_ALLOW_UNSUPPORTED_64BIT=ON -DKISAK_ENABLE_STEAM=OFF -DCICD=ON -DDXSDK_DIR=…`; check with `scripts/ci/verify-artifact-arch.ps1 -Expected ARM64`. MSVC defines `_M_ARM64`, not `__aarch64__`; `Sys_CycleCounter` reads CNTVCT_EL0. OpenAL Soft 1.25.x Release arm64 hangs in `alcDestroyContext` at shutdown, so vcpkg pins 1.24.3 until an arm64 Release re-test (overrides need a full vcpkg clone). One arm64 host also runs the x86 targets under emulation.
