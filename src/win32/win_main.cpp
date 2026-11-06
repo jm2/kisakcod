@@ -839,8 +839,11 @@ WinMain
 */
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
 
-	// KISAK: make a pretty console in debug mode, redirect in/out/err stream
+	// KISAK: make a pretty console in debug builds only, redirect in/out/err
+	// stream. Release builds open no terminal window, like retail; redirected
+	// output (CI, `> log.txt`) still reaches its handles either way.
 #ifndef KISAK_DEDI_HEADLESS
+#ifdef _DEBUG
 	if (!Sys_ConsoleIsRedirected(SysConsoleOutputStream::StandardOutput)
 		&& !Sys_ConsoleIsRedirected(SysConsoleOutputStream::StandardError))
 	{
@@ -860,6 +863,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 		freopen("CONOUT$", "w", stdout);
 		freopen("CONOUT$", "w", stderr);
 	}
+#endif
 #else
 	// A console program: started on a console, it reads commands typed there,
 	// and Ctrl+C, Ctrl+Break or closing the console quit it in order.
