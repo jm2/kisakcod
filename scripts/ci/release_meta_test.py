@@ -237,17 +237,20 @@ class CliTest(unittest.TestCase):
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertLessEqual(max(map(len, run.stdout.splitlines())), 76)
         words = " ".join(run.stdout.split())
-        for text in ("KisakCOD 1.2.3: linux-x64 headless dedicated server (preview)", SHA_A,
+        for text in ("KisakCOD 1.2.3: linux-x64 headless dedicated server", SHA_A,
+                     "Status: capability level `links`. The build links",
                      "no Call of Duty 4 content", "kisakcod-1.2.3-linux-x64-headless-debugsymbols.tar.xz",
                      "Requires: glibc 2.39.", "GNU GPL v3"):
             self.assertIn(text, words)
+        for tier in ("preview", "beta", "first-class"):
+            self.assertNotIn(tier, words)
 
     def test_windows_readme_points_at_the_pdb(self):
         legs, _ = rm.build_matrix(manifest_with({("windows-amd64", "headless-server"): "links"}), "1.2.3")
         run = cli("readme", "--leg", json.dumps(legs[0]), "--version", "1.2.3", "--commit", SHA_A)
         self.assertEqual(run.returncode, 0, run.stderr)
         words = " ".join(run.stdout.split())
-        for text in ("windows-x64 headless dedicated server (preview)",
+        for text in ("windows-x64 headless dedicated server",
                      "kisakcod-1.2.3-windows-x64-headless-debugsymbols.zip",
                      "debuggers find KisakCOD-dedi.pdb next to KisakCOD-dedi.exe"):
             self.assertIn(text, words)
@@ -258,7 +261,7 @@ class CliTest(unittest.TestCase):
         run = cli("readme", "--leg", json.dumps(legs[0]), "--version", "1.2.3", "--commit", SHA_A)
         self.assertEqual(run.returncode, 0, run.stderr)
         words = " ".join(run.stdout.split())
-        for text in ("macos-arm64 headless dedicated server (preview)",
+        for text in ("macos-arm64 headless dedicated server",
                      "kisakcod-1.2.3-macos-arm64-headless-debugsymbols.tar.xz",
                      "lldb finds KisakCOD-dedi.dSYM next to KisakCOD-dedi by its UUID"):
             self.assertIn(text, words)
@@ -408,6 +411,27 @@ class NotesTest(unittest.TestCase):
         self.assertEqual(run.returncode, 0, run.stderr)
         stem = "kisakcod-0.2.0-windows-x64-client"
         self.assertIn(f"| `{stem}.zip`, `{stem}-setup.exe` | windows-amd64 | mp-client |", run.stdout)
+
+    def test_one_level_is_one_status_sentence_with_no_tier(self):
+        self.legs, _ = rm.build_matrix(manifest_with({
+            ("linux-amd64", "mp-client"): "fork_peer", ("linux-amd64", "headless-server"): "fork_peer"}), "0.2.0")
+        run = self.notes("v0.2.0")
+        self.assertEqual(run.returncode, 0, run.stderr)
+        status = run.stdout.split("## Status\n\n", 1)[1].split("\n\n", 1)[0]
+        self.assertEqual(status, "Every package is at capability level `fork_peer`. " + rm.LEVEL_NOTES["fork_peer"])
+        self.assertIn("| Package | Target | Role | Level |", run.stdout)
+        self.assertNotIn("beta", run.stdout)
+
+    def test_mixed_levels_get_one_status_line_each(self):
+        self.legs, _ = rm.build_matrix(manifest_with({
+            ("linux-amd64", "headless-server"): "fork_peer", ("linux-arm64", "headless-server"): "links",
+            ("linux-amd64", "mp-client"): "links"}), "0.2.0")
+        run = self.notes("v0.2.0")
+        self.assertEqual(run.returncode, 0, run.stderr)
+        status = run.stdout.split("## Status\n\n", 1)[1].split("\n\n", 1)[0]
+        self.assertEqual(status.splitlines(), [
+            "- **`links`** (linux-arm64 headless, linux-x64 client): " + rm.LEVEL_NOTES["links"],
+            "- **`fork_peer`** (linux-x64 headless): " + rm.LEVEL_NOTES["fork_peer"]])
 
     def test_first_release_lists_the_history(self):
         self.git("tag", "-d", "v0.1.0")

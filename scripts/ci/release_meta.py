@@ -10,7 +10,9 @@ stdout, and reports problems as workflow annotations on stderr.
       takes vX.Y.Z-suffix and defaults to v0.0.0-dryrun. Every required
       target x role cell at `links` or above is one build leg. Its tier
       follows the level: preview below fork_peer, beta at fork_peer,
-      first-class from steam18_peer. A qualifying cell with no recipe in
+      first-class from steam18_peer. The tier only sets the GitHub
+      prerelease flag; names, READMEs and notes show the level instead.
+      A qualifying cell with no recipe in
       RECIPES fails the run, so a release never silently drops a target.
   gate --commit SHA --ref REF --ci-runs N [--tag-commit SHA] [--dry-run B]
       Publishing needs a dispatch from master, a successful ci.yml push run
@@ -30,7 +32,7 @@ stdout, and reports problems as workflow annotations on stderr.
       (sorted names, one mtime, owner 0), for the macOS leg, whose runner
       image has no xz for GNU tar to call.
   notes --tag T --commit SHA --matrix JSON --run-url URL [--repo-dir DIR]
-      Prints the release notes: the packages and their tiers, then the
+      Prints the release notes: the packages and their levels, then the
       first-parent changes on master since the previous vX.Y.Z tag.
 """
 
@@ -103,13 +105,18 @@ ROLES = {
     "headless-server": ("headless", "KisakCOD-dedi", "headless dedicated server"),
     "mp-client": ("client", "KisakCOD-mp", "multiplayer client"),
 }
+# Whole sentences with no pronoun, so one note serves a single package's
+# README and a group of packages in the release notes.
 LEVEL_NOTES = {
-    "links": "it builds, links and passes an assetless smoke run. It cannot load "
-             "retail fast files yet, so it cannot host a game.",
-    "boots_map": "it loads stock maps from unmodified Steam 1.8 data. No client has played on it yet.",
-    "fork_peer": "KisakCOD clients play full rounds on it. Steam 1.8 clients are not verified yet.",
-    "steam18_peer": "it plays with unmodified Steam 1.8 clients in both directions.",
-    "packaged": "it is a packaged release target.",
+    "links": "The build links and passes an assetless smoke run, but can't load retail "
+             "fast files yet, so it can't host or join a game.",
+    "boots_map": "The build loads stock maps from unmodified Steam 1.8 data; no full round "
+                 "has been played on it yet.",
+    "fork_peer": "KisakCOD clients and servers play full rounds together. Play with "
+                 "unmodified Steam 1.8 clients and servers isn't verified yet.",
+    "steam18_peer": "KisakCOD and unmodified Steam 1.8 clients and servers play together "
+                    "in both directions.",
+    "packaged": "The build is a packaged release target.",
 }
 
 
@@ -149,11 +156,11 @@ def build_matrix(manifest: dict, version: str) -> tuple[list[dict[str, str]], li
         recipe = RECIPES[key]
         role_part, binary, _ = ROLES[key[1]]
         leg_tier = tier(cell["level"])
-        # The tier is in the README and the notes, not the file names.
+        # The tier only picks the GitHub prerelease flag; no name or text shows it.
         stem = f"kisakcod-{version}-{recipe['platform']}-{role_part}"
         legs.append({"target": key[0], "role": key[1], "level": cell["level"], "tier": leg_tier,
                      "binary": binary, "stem": stem, **recipe,
-                     "label": f"{recipe['platform']} {role_part} ({leg_tier})"})
+                     "label": f"{recipe['platform']} {role_part}"})
     return sorted(legs, key=lambda leg: leg["stem"]), missing
 
 
@@ -171,10 +178,10 @@ def gate_problems(commit: str, ref: str, ci_runs: int, tag_commit: str) -> list[
 def readme(leg: dict, version: str, commit: str, requires: str) -> str:
     _, binary, description = ROLES[leg["role"]]
     paragraphs = [
-        f"KisakCOD {version}: {leg['platform']} {description} ({leg['tier']})",
+        f"KisakCOD {version}: {leg['platform']} {description}",
         f"{binary} is the KisakCOD {description} for Call of Duty 4 multiplayer, built for "
         + f"{leg['platform']} from {REPO_URL} commit {commit}.",
-        f"Status: {leg['tier']}. At capability level `{leg['level']}`, {LEVEL_NOTES[leg['level']]}",
+        f"Status: capability level `{leg['level']}`. {LEVEL_NOTES[leg['level']]}",
         "No game data: this package contains no Call of Duty 4 content. Retail data is the "
         + "user's own; set fs_basepath to your own copy of the game.",
         f"Debug symbols: {leg['stem']}-debugsymbols.{leg['archive']}. Extract it into the same directory; "
@@ -209,20 +216,29 @@ def _change_line(record: str) -> str:
     return f"- {title} (#{pr.group(1)})"
 
 
+def status_lines(legs: list[dict]) -> list[str]:
+    """One line per capability level, in level order; one sentence when every leg shares it."""
+    levels = sorted({leg["level"] for leg in legs}, key=LEVELS.index)
+    if len(levels) == 1:
+        return [f"Every package is at capability level `{levels[0]}`. {LEVEL_NOTES[levels[0]]}"]
+    return [f"- **`{level}`** ({', '.join(leg['label'] for leg in legs if leg['level'] == level)}): "
+            + LEVEL_NOTES[level] for level in levels]
+
+
 def notes(legs: list[dict], tag: str, commit: str, run_url: str, repo: Path, limit: int = 100) -> str:
     version = tag[1:]
     out = [f"# KisakCOD {version}", "",
            f"Built from [`{commit[:12]}`]({REPO_URL}/commit/{commit}) by [this workflow run]({run_url}).", "",
-           "## Packages", "", "| Package | Target | Role | Tier | Level |", "| --- | --- | --- | --- | --- |"]
+           "## Packages", "", "| Package | Target | Role | Level |", "| --- | --- | --- | --- |"]
     # An installer (`exe`) is named <stem>-setup.exe.
     out += ["| " + ", ".join(f"`{leg['stem']}{'-setup' * (ext == 'exe')}.{ext}`"
                              for ext in [leg["archive"], *leg.get("also", [])])
-            + f" | {leg['target']} | {leg['role']} | {leg['tier']} | `{leg['level']}` |" for leg in legs]
+            + f" | {leg['target']} | {leg['role']} | `{leg['level']}` |" for leg in legs]
     out += ["", "Each package row has a `-debugsymbols` archive (.tar.xz for a dmg row, otherwise the row's "
             + "first format), which serves every format in the row (extract it beside the binaries), and a "
             + f"`-provenance.json`. `kisakcod-{version}-source.tar.gz` is the commit's source without the vendor "
             + "runtime binaries (Steamworks). `SHA256SUMS.txt` covers every file.", "", "## Status", ""]
-    out += [f"- **{leg['label']}**: at capability level `{leg['level']}`, {LEVEL_NOTES[leg['level']]}" for leg in legs]
+    out += status_lines(legs)
     out += ["", "## No game data", "", "These packages contain no Call of Duty 4 content. Retail data is the "
             + "user's own.", ""]
     previous, lines = changes(repo, commit, tag)
