@@ -22,16 +22,23 @@
 # so every rebuild kept one of the CAMetalLayer's three drawables checked out;
 # after a fullscreen round trip nextDrawable blocked for good and the window
 # stayed black (#974).
+#
+# mesa-kk-wait-for-drawable.patch is upstream bfe08f7c ("kk: Wait on drawable
+# availability before rendering to it", first in 26.3). On the Metal 4 queue
+# the GPU doesn't wait for a CAMetalLayer drawable on its own, so the present
+# copy could write a new frame into a drawable the display was still showing:
+# a newer frame flashed up, then the older queued one came back (#1003).
 # The greps fail the build if an edit stops applying. ExternalProject splits
-# commands on ";", so a pattern spells it $<SEMICOLON>. Drop the patch once a
-# Mesa bump carries the fixes.
+# commands on ";", so a pattern spells it $<SEMICOLON>. Drop the patch and the
+# edits once a Mesa bump carries the fixes.
 ExternalProject_Add(kisak_runtime_mesa
     URL https://archive.mesa3d.org/mesa-26.2.4.tar.xz
     URL_HASH SHA256=bce5f7fbebb934373b86c999a064d52fb5065878dc57f287f95346648ec832e9
     DOWNLOAD_DIR ${KISAK_SOURCE_CACHE}
     DOWNLOAD_NO_PROGRESS ON
     UPDATE_COMMAND ""
-    PATCH_COMMAND sed -i "" "s/\\[\\[MTL4RenderPassDescriptor new\\] init\\]/[MTL4RenderPassDescriptor new]/" src/kosmickrisp/bridge/mtl_render_state.m
+    PATCH_COMMAND patch -p1 --forward -i ${CMAKE_CURRENT_SOURCE_DIR}/mesa-kk-wait-for-drawable.patch
+        COMMAND sed -i "" "s/\\[\\[MTL4RenderPassDescriptor new\\] init\\]/[MTL4RenderPassDescriptor new]/" src/kosmickrisp/bridge/mtl_render_state.m
         COMMAND sed -i "" "s/mtl_drawable_present(cmd_buffer->drawable)$<SEMICOLON>$/& mtl_release(cmd_buffer->drawable)$<SEMICOLON>/" src/kosmickrisp/vulkan/kk_queue.c
         COMMAND sed -i "" "s/^   mtl_release(cmd->argument_table)$<SEMICOLON>$/   if (cmd->drawable) mtl_release(cmd->drawable)$<SEMICOLON> &/" src/kosmickrisp/vulkan/kk_cmd_buffer.c
         COMMAND sed -i "" "s/^   mtl_retain(drawable)$<SEMICOLON>$/   if (cmd->drawable) mtl_release(cmd->drawable)$<SEMICOLON> &/" src/kosmickrisp/vulkan/kk_wsi.c
@@ -39,6 +46,7 @@ ExternalProject_Add(kisak_runtime_mesa
         COMMAND grep -q "mtl_drawable_present(cmd_buffer->drawable)$<SEMICOLON> mtl_release(cmd_buffer->drawable)$<SEMICOLON>" src/kosmickrisp/vulkan/kk_queue.c
         COMMAND grep -q "if (cmd->drawable) mtl_release(cmd->drawable)$<SEMICOLON>    mtl_release(cmd->argument_table)" src/kosmickrisp/vulkan/kk_cmd_buffer.c
         COMMAND grep -q "if (cmd->drawable) mtl_release(cmd->drawable)$<SEMICOLON>    mtl_retain(drawable)" src/kosmickrisp/vulkan/kk_wsi.c
+        COMMAND grep -q "mtl_command_queue_wait_for_drawable(queue->mtl_handle," src/kosmickrisp/vulkan/kk_queue.c
     DEPENDS kisak_runtime_zstd kisak_runtime_spirv_tools
     CONFIGURE_COMMAND ${CMAKE_COMMAND} -E env
         PATH=${KISAK_MESA_PYTHON_BIN_DIR}:${KISAK_LLVM_BIN_DIR}:$ENV{PATH}
