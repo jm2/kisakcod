@@ -84,7 +84,7 @@ HEADLESS_LINKS = manifest_with({(t["id"], "headless-server"): "links"
 
 
 def real_stem(platform: str, version: str) -> str:
-    """The headless stem the real manifest gives a platform; the tier isn't in it."""
+    """The headless stem the real manifest gives a platform."""
     return f"kisakcod-{version}-{platform}-headless"
 
 
@@ -162,26 +162,22 @@ class MatrixTest(unittest.TestCase):
              ["deb", "rpm", "pkg.tar.zst"]),
         ])
 
-    def test_levels_pick_legs_tiers_and_names(self):
+    def test_levels_pick_legs_and_names(self):
         legs, missing = rm.build_matrix(manifest_with({
             ("linux-amd64", "headless-server"): "fork_peer",
             ("linux-arm64", "headless-server"): "steam18_peer",
             ("linux-amd64", "mp-client"): "compiles",       # below links: no leg
             ("windows-x86", "headless-server"): "packaged",  # not required: no leg
         }), "2.0.0")
-        self.assertEqual([(leg["stem"], leg["tier"]) for leg in legs], [
-            ("kisakcod-2.0.0-linux-arm64-headless", "first-class"),
-            ("kisakcod-2.0.0-linux-x64-headless", "beta"),
+        self.assertEqual([(leg["stem"], leg["level"]) for leg in legs], [
+            ("kisakcod-2.0.0-linux-arm64-headless", "steam18_peer"),
+            ("kisakcod-2.0.0-linux-x64-headless", "fork_peer"),
         ])
         self.assertEqual(missing, [])
 
     def test_a_required_cell_without_a_recipe_is_reported(self):
         legs, missing = rm.build_matrix(requiring_x86({("windows-x86", "headless-server"): "links"}), "2.0.0")
         self.assertEqual((legs, missing), ([], ["windows-x86/headless-server"]))
-
-    def test_every_level_maps_to_a_tier(self):
-        self.assertEqual([rm.tier(level) for level in rm.LEVELS[2:]],
-                         ["preview", "preview", "beta", "first-class", "first-class"])
 
     def test_malformed_manifest_fails(self):
         m = copy.deepcopy(REAL_MANIFEST)
@@ -202,7 +198,8 @@ class CliTest(unittest.TestCase):
         run = cli("metadata", "--version", "v1.2.3", "--dry-run", "false")
         self.assertEqual(run.returncode, 0, run.stderr)
         out = dict(line.split("=", 1) for line in run.stdout.splitlines())
-        self.assertEqual((out["tag"], out["version"], out["prerelease"]), ("v1.2.3", "1.2.3", "true"))
+        self.assertEqual((out["tag"], out["version"]), ("v1.2.3", "1.2.3"))
+        self.assertNotIn("prerelease", out)
         stems = [leg["stem"] for leg in json.loads(out["matrix"])["include"]]
         self.assertIn(real_stem("linux-x64", "1.2.3"), stems)
 
@@ -237,17 +234,20 @@ class CliTest(unittest.TestCase):
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertLessEqual(max(map(len, run.stdout.splitlines())), 76)
         words = " ".join(run.stdout.split())
-        for text in ("KisakCOD 1.2.3: linux-x64 headless dedicated server (preview)", SHA_A,
+        for text in ("KisakCOD 1.2.3: linux-x64 headless dedicated server", SHA_A,
+                     "Status: capability level `links`. The build links",
                      "no Call of Duty 4 content", "kisakcod-1.2.3-linux-x64-headless-debugsymbols.tar.xz",
                      "Requires: glibc 2.39.", "GNU GPL v3"):
             self.assertIn(text, words)
+        for tier in ("preview", "beta", "first-class"):
+            self.assertNotIn(tier, words)
 
     def test_windows_readme_points_at_the_pdb(self):
         legs, _ = rm.build_matrix(manifest_with({("windows-amd64", "headless-server"): "links"}), "1.2.3")
         run = cli("readme", "--leg", json.dumps(legs[0]), "--version", "1.2.3", "--commit", SHA_A)
         self.assertEqual(run.returncode, 0, run.stderr)
         words = " ".join(run.stdout.split())
-        for text in ("windows-x64 headless dedicated server (preview)",
+        for text in ("windows-x64 headless dedicated server",
                      "kisakcod-1.2.3-windows-x64-headless-debugsymbols.zip",
                      "debuggers find KisakCOD-dedi.pdb next to KisakCOD-dedi.exe"):
             self.assertIn(text, words)
@@ -258,7 +258,7 @@ class CliTest(unittest.TestCase):
         run = cli("readme", "--leg", json.dumps(legs[0]), "--version", "1.2.3", "--commit", SHA_A)
         self.assertEqual(run.returncode, 0, run.stderr)
         words = " ".join(run.stdout.split())
-        for text in ("macos-arm64 headless dedicated server (preview)",
+        for text in ("macos-arm64 headless dedicated server",
                      "kisakcod-1.2.3-macos-arm64-headless-debugsymbols.tar.xz",
                      "lldb finds KisakCOD-dedi.dSYM next to KisakCOD-dedi by its UUID"):
             self.assertIn(text, words)
@@ -408,6 +408,27 @@ class NotesTest(unittest.TestCase):
         self.assertEqual(run.returncode, 0, run.stderr)
         stem = "kisakcod-0.2.0-windows-x64-client"
         self.assertIn(f"| `{stem}.zip`, `{stem}-setup.exe` | windows-amd64 | mp-client |", run.stdout)
+
+    def test_one_level_is_one_status_sentence_with_no_tier(self):
+        self.legs, _ = rm.build_matrix(manifest_with({
+            ("linux-amd64", "mp-client"): "fork_peer", ("linux-amd64", "headless-server"): "fork_peer"}), "0.2.0")
+        run = self.notes("v0.2.0")
+        self.assertEqual(run.returncode, 0, run.stderr)
+        status = run.stdout.split("## Status\n\n", 1)[1].split("\n\n", 1)[0]
+        self.assertEqual(status, "Every package is at capability level `fork_peer`. " + rm.LEVEL_NOTES["fork_peer"])
+        self.assertIn("| Package | Target | Role | Level |", run.stdout)
+        self.assertNotIn("beta", run.stdout)
+
+    def test_mixed_levels_get_one_status_line_each(self):
+        self.legs, _ = rm.build_matrix(manifest_with({
+            ("linux-amd64", "headless-server"): "fork_peer", ("linux-arm64", "headless-server"): "links",
+            ("linux-amd64", "mp-client"): "links"}), "0.2.0")
+        run = self.notes("v0.2.0")
+        self.assertEqual(run.returncode, 0, run.stderr)
+        status = run.stdout.split("## Status\n\n", 1)[1].split("\n\n", 1)[0]
+        self.assertEqual(status.splitlines(), [
+            "- **`links`** (linux-arm64 headless, linux-x64 client): " + rm.LEVEL_NOTES["links"],
+            "- **`fork_peer`** (linux-x64 headless): " + rm.LEVEL_NOTES["fork_peer"]])
 
     def test_first_release_lists_the_history(self):
         self.git("tag", "-d", "v0.1.0")
