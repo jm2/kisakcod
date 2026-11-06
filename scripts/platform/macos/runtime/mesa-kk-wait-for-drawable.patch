@@ -1,0 +1,85 @@
+From bfe08f7c878448ea7112c449862684dc03772528 Mon Sep 17 00:00:00 2001
+From: Aitor Camacho <aitor@lunarg.com>
+Date: Thu, 9 Jul 2026 15:52:50 +0900
+Subject: [PATCH] kk: Wait on drawable availability before rendering to it
+
+Reviewed-by: squidbus <squidbus@proton.me>
+Signed-off-by: Aitor Camacho <aitor@lunarg.com>
+Part-of: <https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/42811>
+---
+ src/kosmickrisp/bridge/mtl_command_queue.h       |  3 +++
+ src/kosmickrisp/bridge/mtl_command_queue.m       | 10 ++++++++++
+ src/kosmickrisp/bridge/stubs/mtl_command_queue.c |  5 +++++
+ src/kosmickrisp/vulkan/kk_queue.c                |  5 +++++
+ 4 files changed, 23 insertions(+)
+
+diff --git a/src/kosmickrisp/bridge/mtl_command_queue.h b/src/kosmickrisp/bridge/mtl_command_queue.h
+index 423e37180ef2..11b2ba275209 100644
+--- a/src/kosmickrisp/bridge/mtl_command_queue.h
++++ b/src/kosmickrisp/bridge/mtl_command_queue.h
+@@ -36,6 +36,9 @@ void mtl_command_queue_commit(mtl_command_queue *queue,
+                               mtl_command_buffer **command_buffers,
+                               uint32_t count, mtl_commit_options *options);
+ 
++void mtl_command_queue_wait_for_drawable(mtl_command_queue *queue,
++                                         void *drawable);
++
+ void mtl_command_queue_signal_drawable(mtl_command_queue *queue,
+                                        void *drawable);
+ 
+diff --git a/src/kosmickrisp/bridge/mtl_command_queue.m b/src/kosmickrisp/bridge/mtl_command_queue.m
+index 9b7725a4dfdd..4dc6332974f4 100644
+--- a/src/kosmickrisp/bridge/mtl_command_queue.m
++++ b/src/kosmickrisp/bridge/mtl_command_queue.m
+@@ -109,6 +109,16 @@ mtl_command_queue_commit(mtl_command_queue *queue,
+    }
+ }
+ 
++void
++mtl_command_queue_wait_for_drawable(mtl_command_queue *queue, void *drawable)
++{
++   @autoreleasepool {
++      id<MTL4CommandQueue> q = (id<MTL4CommandQueue>)queue;
++      id<MTLDrawable> d = (id<MTLDrawable>)drawable;
++      [q waitForDrawable:d];
++   }
++}
++
+ void
+ mtl_command_queue_signal_drawable(mtl_command_queue *queue, void *drawable)
+ {
+diff --git a/src/kosmickrisp/bridge/stubs/mtl_command_queue.c b/src/kosmickrisp/bridge/stubs/mtl_command_queue.c
+index 454d24f49d9a..e5687e5f7f88 100644
+--- a/src/kosmickrisp/bridge/stubs/mtl_command_queue.c
++++ b/src/kosmickrisp/bridge/stubs/mtl_command_queue.c
+@@ -56,6 +56,11 @@ mtl_command_queue_commit(mtl_command_queue *queue,
+ {
+ }
+ 
++void
++mtl_command_queue_wait_for_drawable(mtl_command_queue *queue, void *drawable)
++{
++}
++
+ void
+ mtl_command_queue_signal_drawable(mtl_command_queue *queue, void *drawable)
+ {
+diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
+index 2cd553e5a8c5..fd4e03dac457 100644
+--- a/src/kosmickrisp/vulkan/kk_queue.c
++++ b/src/kosmickrisp/vulkan/kk_queue.c
+@@ -81,6 +81,11 @@ kk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
+       uint32_t count = util_dynarray_num_elements(&cmd_buffer->submit_cmd_bufs,
+                                                   mtl_command_buffer *);
+ 
++      if (cmd_buffer->drawable) {
++         mtl_command_queue_wait_for_drawable(queue->mtl_handle,
++                                             cmd_buffer->drawable);
++      }
++
+       /* Metal complains with empty submissions. */
+       if (count > 0u) {
+          mtl_commit_options_add_feedback_handler(queue->commit_options,
+-- 
+GitLab
+
