@@ -47,6 +47,11 @@ on:
         required: false
         default: true
         type: boolean
+      prerelease:
+        description: Mark the release as a GitHub prerelease
+        required: false
+        default: false
+        type: boolean
       dry_run:
         description: Build and package only; never create a release
         required: false
@@ -78,7 +83,6 @@ jobs:
       version: ${{ steps.meta.outputs.version }}
       name: ${{ steps.meta.outputs.name }}
       matrix: ${{ steps.meta.outputs.matrix }}
-      prerelease: ${{ steps.meta.outputs.prerelease }}
       publish: ${{ steps.gate.outputs.publish }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -898,7 +902,7 @@ jobs:
       TAG: ${{ needs.metadata.outputs.tag }}
       NAME: ${{ needs.metadata.outputs.name }}
       COMMIT: ${{ needs.metadata.outputs.commit }}
-      PRERELEASE: ${{ needs.metadata.outputs.prerelease }}
+      PRERELEASE: ${{ inputs.prerelease }}
       DRAFT: ${{ inputs.draft }}
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0

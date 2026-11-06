@@ -84,7 +84,7 @@ HEADLESS_LINKS = manifest_with({(t["id"], "headless-server"): "links"
 
 
 def real_stem(platform: str, version: str) -> str:
-    """The headless stem the real manifest gives a platform; the tier isn't in it."""
+    """The headless stem the real manifest gives a platform."""
     return f"kisakcod-{version}-{platform}-headless"
 
 
@@ -162,26 +162,22 @@ class MatrixTest(unittest.TestCase):
              ["deb", "rpm", "pkg.tar.zst"]),
         ])
 
-    def test_levels_pick_legs_tiers_and_names(self):
+    def test_levels_pick_legs_and_names(self):
         legs, missing = rm.build_matrix(manifest_with({
             ("linux-amd64", "headless-server"): "fork_peer",
             ("linux-arm64", "headless-server"): "steam18_peer",
             ("linux-amd64", "mp-client"): "compiles",       # below links: no leg
             ("windows-x86", "headless-server"): "packaged",  # not required: no leg
         }), "2.0.0")
-        self.assertEqual([(leg["stem"], leg["tier"]) for leg in legs], [
-            ("kisakcod-2.0.0-linux-arm64-headless", "first-class"),
-            ("kisakcod-2.0.0-linux-x64-headless", "beta"),
+        self.assertEqual([(leg["stem"], leg["level"]) for leg in legs], [
+            ("kisakcod-2.0.0-linux-arm64-headless", "steam18_peer"),
+            ("kisakcod-2.0.0-linux-x64-headless", "fork_peer"),
         ])
         self.assertEqual(missing, [])
 
     def test_a_required_cell_without_a_recipe_is_reported(self):
         legs, missing = rm.build_matrix(requiring_x86({("windows-x86", "headless-server"): "links"}), "2.0.0")
         self.assertEqual((legs, missing), ([], ["windows-x86/headless-server"]))
-
-    def test_every_level_maps_to_a_tier(self):
-        self.assertEqual([rm.tier(level) for level in rm.LEVELS[2:]],
-                         ["preview", "preview", "beta", "first-class", "first-class"])
 
     def test_malformed_manifest_fails(self):
         m = copy.deepcopy(REAL_MANIFEST)
@@ -202,7 +198,8 @@ class CliTest(unittest.TestCase):
         run = cli("metadata", "--version", "v1.2.3", "--dry-run", "false")
         self.assertEqual(run.returncode, 0, run.stderr)
         out = dict(line.split("=", 1) for line in run.stdout.splitlines())
-        self.assertEqual((out["tag"], out["version"], out["prerelease"]), ("v1.2.3", "1.2.3", "true"))
+        self.assertEqual((out["tag"], out["version"]), ("v1.2.3", "1.2.3"))
+        self.assertNotIn("prerelease", out)
         stems = [leg["stem"] for leg in json.loads(out["matrix"])["include"]]
         self.assertIn(real_stem("linux-x64", "1.2.3"), stems)
 

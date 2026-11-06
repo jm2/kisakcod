@@ -8,12 +8,11 @@ stdout, and reports problems as workflow annotations on stderr.
       Validates V and builds the release matrix from
       docs/capability/manifest.json. Publishing needs vX.Y.Z; a dry run also
       takes vX.Y.Z-suffix and defaults to v0.0.0-dryrun. Every required
-      target x role cell at `links` or above is one build leg. Its tier
-      follows the level: preview below fork_peer, beta at fork_peer,
-      first-class from steam18_peer. The tier only sets the GitHub
-      prerelease flag; names, READMEs and notes show the level instead.
-      A qualifying cell with no recipe in
-      RECIPES fails the run, so a release never silently drops a target.
+      target x role cell at `links` or above is one build leg; names,
+      READMEs and notes show its capability level. Whether the release is
+      a GitHub prerelease is the workflow's `prerelease` input. A
+      qualifying cell with no recipe in RECIPES fails the run, so a
+      release never silently drops a target.
   gate --commit SHA --ref REF --ci-runs N [--tag-commit SHA] [--dry-run B]
       Publishing needs a dispatch from master, a successful ci.yml push run
       on master for this exact commit, and no tag of this version on another
@@ -112,8 +111,8 @@ LEVEL_NOTES = {
              "fast files yet, so it can't host or join a game.",
     "boots_map": "The build loads stock maps from unmodified Steam 1.8 data; no full round "
                  "has been played on it yet.",
-    "fork_peer": "KisakCOD clients and servers play full rounds together. Play with "
-                 "unmodified Steam 1.8 clients and servers isn't verified yet.",
+    "fork_peer": "KisakCOD clients and servers play full rounds together. Unmodified "
+                 "Steam 1.8 clients aren't verified on KisakCOD servers yet.",
     "steam18_peer": "KisakCOD and unmodified Steam 1.8 clients and servers play together "
                     "in both directions.",
     "packaged": "The build is a packaged release target.",
@@ -122,13 +121,6 @@ LEVEL_NOTES = {
 
 class ReleaseError(Exception):
     pass
-
-
-def tier(level: str) -> str:
-    i = LEVELS.index(level)
-    if i < LEVELS.index("fork_peer"):
-        return "preview"
-    return "beta" if i < LEVELS.index("steam18_peer") else "first-class"
 
 
 def parse_version(raw: str, dry_run: bool) -> dict[str, str]:
@@ -155,10 +147,8 @@ def build_matrix(manifest: dict, version: str) -> tuple[list[dict[str, str]], li
             continue
         recipe = RECIPES[key]
         role_part, binary, _ = ROLES[key[1]]
-        leg_tier = tier(cell["level"])
-        # The tier only picks the GitHub prerelease flag; no name or text shows it.
         stem = f"kisakcod-{version}-{recipe['platform']}-{role_part}"
-        legs.append({"target": key[0], "role": key[1], "level": cell["level"], "tier": leg_tier,
+        legs.append({"target": key[0], "role": key[1], "level": cell["level"],
                      "binary": binary, "stem": stem, **recipe,
                      "label": f"{recipe['platform']} {role_part}"})
     return sorted(legs, key=lambda leg: leg["stem"]), missing
@@ -345,7 +335,6 @@ def run_metadata(args: argparse.Namespace) -> int:
     if not legs:
         raise ReleaseError("no required target x role cell is at links or above")
     meta["matrix"] = json.dumps({"include": legs}, separators=(",", ":"))
-    meta["prerelease"] = str(all(leg["tier"] != "first-class" for leg in legs)).lower()
     print("\n".join(f"{k}={v}" for k, v in meta.items()))
     return 0
 
