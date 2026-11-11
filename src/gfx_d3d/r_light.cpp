@@ -4,6 +4,7 @@
 #include <qcommon/qcommon.h>
 #include <universal/com_files.h>
 #include <universal/com_memory.h>
+#include <universal/kisak_abi.h>
 #include "r_image.h"
 #include "r_init.h"
 #include "r_scene.h"
@@ -37,11 +38,11 @@ StaticModelLightCallback g_staticModelLightCallback;
 int(__cdecl *allowSurf_0[1])(int, void *) = { R_AllowBspOmniLight };
 int(__cdecl *allowSurf_1[2])(int, void *) = { R_AllowBspSpotLight, R_AllowBspSpotLightShadows };
 
-// The BSP surface lists borrow the back half of a visible light's draw surfs;
-// the draw surfs emitted from them fill the front half. That half holds 1024
-// surface pointers on x86 and 512 on x64.
-static constexpr uint32_t kVisLightSurfListCapacity
-    = (sizeof(GfxVisibleLight::drawSurfs) - 512 * sizeof(GfxDrawSurf)) / sizeof(GfxSurface *);
+// Retail keeps the BSP surface lists in the back half of a visible light's
+// draw surfs; the draw surfs emitted from them fill the front half. That half
+// holds 1024 surface pointers on x86 but only 512 on 64-bit, so 64-bit builds
+// keep the lists in a stack buffer of retail's 1024 instead (upstream a8ce50cb).
+static constexpr uint32_t kVisLightSurfListCapacity = 0x400;
 
 void __cdecl R_EnumLightDefs(void(__cdecl *func)(GfxLightDef *, void *), void *data)
 {
@@ -301,7 +302,12 @@ void __cdecl R_GetBspOmniLightSurfs(const GfxLight *light, int lightIndex, GfxBs
     maxs[1] = light->origin[1] + light->radius;
     maxs[2] = light->origin[2] + light->radius;
     drawSurfs = scene.visLight[lightIndex].drawSurfs;
+#if KISAK_ARCH_64BIT
+    GfxSurface *surfaceScratch[kVisLightSurfListCapacity];
+    surfaces[0] = surfaceScratch;
+#else
     surfaces[0] = (GfxSurface **)&drawSurfs[512];
+#endif
     bspLightCallback.surfaceVisData = surfaceVisData;
     bspLightCallback.position[0] = light->origin[0];
     bspLightCallback.position[1] = light->origin[1];
@@ -394,11 +400,20 @@ void __cdecl R_GetBspSpotLightSurfs(const GfxLight *light, int lightIndex, GfxBs
     maxs[2] = light->origin[2] + light->radius;
 
     drawSurfs[0] = scene.visLight[lightIndex].drawSurfs;
+#if KISAK_ARCH_64BIT
+    GfxSurface *surfaceScratch[2][kVisLightSurfListCapacity];
+    surfaces[0] = surfaceScratch[0];
+#else
     surfaces[0] = (GfxSurface **)&drawSurfs[0][512];
+#endif
     if (shadowable)
     {
         drawSurfs[1] = scene.visLightShadow[lightIndex].drawSurfs;
+#if KISAK_ARCH_64BIT
+        surfaces[1] = surfaceScratch[1];
+#else
         surfaces[1] = (GfxSurface **)&drawSurfs[1][512];
+#endif
     }
     bspLightCallback.surfaceVisData = surfaceVisData;
     R_CalcSpotLightPlanes(light, bspLightCallback.planes);

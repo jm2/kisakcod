@@ -3,6 +3,7 @@
 #include "r_pretess.h"
 #include "r_scene.h"
 #include <qcommon/mem_track.h>
+#include <universal/kisak_abi.h>
 
 #include <algorithm>
 #include <xanim/dobj.h>
@@ -601,10 +602,17 @@ void __cdecl R_GenerateBspShadowReceivers(ShadowCookieList *shadowCookieList)
         Vec3Mad(start, 10000.0, cookie->shadowViewParms->axis[0], end);
         radius = DObjGetRadius(sceneEnt->obj);
         drawSurfs = scene.cookie[cookieIndex].drawSurfs;
-        // The surface list borrows the back half of the cookie's draw surfs;
-        // the draw surfs emitted from it fill the front half. That half holds
-        // 256 surface pointers on x86 and 128 on x64.
+        // Retail keeps the surface list in the back half of the cookie's draw
+        // surfs; the draw surfs emitted from it fill the front half. That half
+        // holds 256 surface pointers on x86 but only 128 on 64-bit, so 64-bit
+        // builds keep the list in a stack buffer of retail's 256 instead
+        // (upstream a8ce50cb).
+#if KISAK_ARCH_64BIT
+        GfxSurface *surfaceScratch[0x100];
+        surfaces = surfaceScratch;
+#else
         surfaces = (GfxSurface **)&drawSurfs[128];
+#endif
         cookieDrawSurfCount = R_CylinderSurfaces(
             start,
             end,
@@ -614,7 +622,7 @@ void __cdecl R_GenerateBspShadowReceivers(ShadowCookieList *shadowCookieList)
             R_AllowBspShadowReceiver,
             &shadowReceiverCallback,
             surfaces,
-            (sizeof(scene.cookie[cookieIndex].drawSurfs) - 128 * sizeof(GfxDrawSurf)) / sizeof(GfxSurface *));
+            0x100u);
         if (cookieDrawSurfCount)
         {
             surfData.drawSurfList.current = drawSurfs;
